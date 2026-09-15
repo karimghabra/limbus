@@ -1,0 +1,13 @@
+# Captured data — subject images and video stay off the repo
+recordings/
+*.mp4
+*.mkv
+*.png
+*.tif
+*.tiff
+*.raw
+
+# Python virtual environment (recreate with the command in README.md)
+venv/
+__pycache__/
+*.py[cod]
