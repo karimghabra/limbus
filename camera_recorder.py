@@ -34,6 +34,15 @@ try:
 except ImportError:
     HAVE_TIFFFILE = False
 
+# The pylon installer sets GENICAM_GENTL64_PATH so every process loads its
+# GenTL producers, including one for CoaXPress frame grabbers. That DLL needs
+# a newer MSVC C++ runtime than the one PyQt5 has already loaded by the time
+# we get here (msvcp140 14.26), and it crashes with an access violation during
+# camera enumeration, so the app never shows a window. pypylon brings its own
+# USB/GigE transport layers and needs none of these, so ignore the variable in
+# this process only — pylon Viewer and other tools still see it.
+os.environ.pop("GENICAM_GENTL64_PATH", None)
+
 try:
     from pypylon import pylon
     HAVE_PYLON = True
