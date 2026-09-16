@@ -32,19 +32,67 @@ Double-click **Camera Recorder** on the Desktop, or run:
    is always at least that long. Videos are saved as `.mp4` files in the
    `recordings` folder, named by date and time.
 3. **📷 Snapshot** saves a single still image (`.png`).
-4. Camera settings (right-hand panel):
+4. **⦿ Capture burst** saves a fixed number of frames as individual
+   lossless TIFFs — see *TIFF bursts* below. This is the mode to use for
+   measurement: unlike video, it keeps all 12 bits.
+5. Camera settings (right-hand panel):
    - **Frame rate** — frames per second of preview and recording.
    - **Auto brightness** — let the camera pick exposure and gain
-     automatically (on by default). Turn it off for manual control.
-   - **Bit depth** — 8-bit (256 grey levels) or 12-bit (4096 levels) on
-     cameras that support it. 12-bit gives far more dynamic range for
-     measurement. Snapshots keep all 12 bits as 16-bit PNG files; video
-     keeps 10 of them, and records at a lower frame rate (see below).
-     Changing this reconnects the camera, which takes a few seconds.
-   - **Exposure** — how long each frame gathers light (longer = brighter,
-     but limits the maximum frame rate).
+     automatically (on by default). Turn it off for manual control. Either
+     way, the *Live values* panel shows what the camera is currently
+     using, and bursts record it frame by frame.
+   - **Pixel format** — `Mono8` (256 grey levels, fastest), `Mono12`
+     (4096 levels, the full measurement range) or `Mono12p` (the same 12
+     bits packed smaller on the bus; on the acA1920-40um it reads out no
+     faster than `Mono12`). Changing this reconnects the camera, which
+     takes a few seconds; the camera reloads its factory defaults, but the
+     app re-applies your exposure, gain, frame rate and advanced settings
+     afterwards.
+   - **Resolution** — the region of interest. **Set** applies the typed
+     size, **Full** returns to the sensor's specified imaging area. The
+     hint underneath shows the highest frame rate possible at that ROI,
+     measured from the camera rather than assumed.
+   - **Exposure** — how long each frame gathers light, in microseconds.
+     Longer means brighter, but caps the frame rate: a warning appears
+     when the exposure is what's limiting the rate.
    - **Gain** — electronic brightness boost (higher = brighter but noisier).
-5. **Save to** — change or open the folder where videos are stored.
+   - **Advanced** — black level, gamma, and the limits auto-brightness
+     works within (target brightness, longest exposure and highest gain it
+     may choose). Controls the camera doesn't offer are hidden.
+   - **Live values** — exposure, gain, black level, measured and maximum
+     frame rate, readout time, sensor temperature and the count of
+     incomplete frames, re-read from the camera twice a second. Values
+     marked *(auto)* are being chosen by the camera, and you can watch
+     them adapt.
+6. **Save to** — change or open the folder where recordings are stored.
+
+## TIFF bursts
+
+Set the **Length** — either a number of frames or a number of seconds
+(the frame count is then worked out from the rate the camera is actually
+achieving) — press **⦿ Capture burst**, and every frame is saved as a
+16-bit TIFF in a new `burst_<date>_<time>` folder. Pixel values are true
+sensor DN (0–4095 for 12-bit), *not* rescaled to fill the 16-bit range, so
+measurements match what the sensor reported.
+
+Each burst folder holds:
+
+- `frame_000000.tif`, … — one lossless image per frame. Each file also
+  carries its own metadata in the TIFF description tag.
+- `manifest.json` — camera model, serial, firmware and link speed; the
+  requested pixel format, ROI and frame rate; the camera's own reported
+  state read at the *start* and at the *end* of the burst; how many frames
+  were written and dropped and the effective frame rate; and the software
+  versions used.
+- `frames.csv` — one row per frame: index, host timestamp, the camera's
+  own timestamp, and the **exposure and gain that frame was actually taken
+  with**. These come from the camera's chunk data, attached to each image
+  by the camera itself, so auto-exposure adaptation can be reconstructed
+  frame by frame afterwards rather than inferred.
+
+If the disk can't keep up, frames are dropped rather than silently
+delaying the burst, and the count is reported both on screen and in
+`manifest.json`.
 
 ## Troubleshooting
 
@@ -53,31 +101,55 @@ Double-click **Camera Recorder** on the Desktop, or run:
   at a time), then press ⟳ or Retry.
 - Frame rate lower than requested — the exposure time is too long for that
   frame rate. Shorten the exposure or lower the frame rate.
-- Videos are standard H.264 `.mp4` files and play in VLC, browsers, etc.
-- High-resolution cameras (like the 5-megapixel DZK 33UX250) default to
-  15 fps because that is what the Raspberry Pi can encode at full
-  resolution. You can raise the frame rate, but if the encoder can't keep
-  up the app will report dropped frames; either way the saved video is
-  re-stamped so it always plays at true speed.
-- **Quality** setting: *High quality* (default) preserves full image
-  detail but noisy scenes can produce very large files (up to ~1 GB per
-  minute) — the status bar shows file size and free disk space while
-  recording, and recording stops automatically if the disk is nearly
-  full. *Balanced* and *Compact files* limit the bitrate for smaller,
-  predictable file sizes at some cost in fine detail.
+- If the encoder can't keep up, the app reports dropped frames; either way
+  the saved video is re-stamped so it always plays at true speed.
+- **Quality / codec.** The first three presets are H.264 `.mp4`, playable
+  anywhere, but **H.264 here carries only 10 of the camera's 12 bits** —
+  libx264 in this build has no 12-bit support and silently downgrades a
+  12-bit request. *High quality* preserves full detail but noisy scenes
+  make large files (up to ~1 GB/min); *Balanced* and *Compact* cap the
+  bitrate for predictable sizes at some cost in fine detail. Two presets
+  keep all 12 bits, both `.mkv`:
+  - **12-bit HEVC** — visually lossy but true 12-bit, and fast enough to
+    keep up with this camera at any rate it can produce.
+  - **12-bit lossless (FFV1)** — mathematically identical to the sensor
+    data, but the slowest and by far the largest (~2.5 MB per frame).
 - Less image noise = smaller files and cleaner video: more light on the
   subject lets auto-brightness use less gain.
-- **12-bit frame rates.** The Pi encodes 12-bit video at roughly 10 fps
-  at 1928×1208, so that is the default in 12-bit mode. The camera itself
-  still grabs much faster, so the live preview and snapshots are
-  unaffected. You can raise the frame rate, but the app will start
-  reporting dropped frames. For full-speed recording use 8-bit; for
-  maximum measurement accuracy use 12-bit snapshots.
+- **For measurement, prefer TIFF bursts** over any video format: they are
+  lossless, keep all 12 bits, and carry per-frame metadata.
 - The DZK 33UX250 is a *polarization* camera: every 2×2 pixel block holds
   four polarizer angles (0°/45°/90°/135°). Recordings store this raw
   mosaic, so polarization analysis can be done later on the saved files.
 
 ## Technical notes
+
+### Measured performance (i7-10810U, 6 cores / 12 threads, NVMe SSD)
+
+With the Basler acA1920-40um. Re-measure with the scripts in
+`benchmarks/` after any hardware change — `ENCODER_THROUGHPUT_MBS` and the
+per-codec `throughput_mbs` values in `camera_recorder.py` come from them,
+and drive the default frame rates and "can't keep up" warnings.
+
+| Stage | Sustained rate (1928×1208, 12-bit) |
+|---|---|
+| Camera, Mono12 (full frame) | **32.0 fps** — the hard limit |
+| Camera, Mono12 at 1928×958 ROI | **40.0 fps** |
+| Camera, Mono8 (full frame) | 41.3 fps |
+| H.264 10-bit encode | 86–113 fps (400–530 MB/s) |
+| HEVC 12-bit encode | 45 fps (210 MB/s) |
+| FFV1 lossless encode | 22 fps (103 MB/s) |
+| TIFF to disk | 407 fps (1895 MB/s) |
+
+The 12-bit frame rate is limited by **sensor readout**, roughly 25 µs per
+row, not by the bus, the encoder or the disk: `Mono12p` packing and
+raising `DeviceLinkThroughputLimit` both change nothing. Shorter ROIs are
+therefore the only way to go faster — the app shows the achievable rate
+for the current ROI, measured from the camera, under the Resolution row.
+
+Encoder figures come from realistic noisy vessel imagery; a flat or
+blank test pattern encodes far faster (149 fps versus 86) and would
+overstate every one of them.
 
 - Python + PyQt5 GUI; frames are piped to `ffmpeg` for H.264 encoding.
   Basler cameras are driven with
