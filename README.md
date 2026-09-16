@@ -52,6 +52,13 @@ Double-click **Camera Recorder** on the Desktop, or run:
      size, **Full** returns to the sensor's specified imaging area. The
      hint underneath shows the highest frame rate possible at that ROI,
      measured from the camera rather than assumed.
+   - **Top of ROI** — which sensor row the region starts at, so a short,
+     fast band can be placed over the vessel you care about instead of
+     sitting in the middle of the sensor. **Centre** re-centres it.
+   - **Speed preset** — picks an ROI height for a target frame rate and
+     asks the camera for that rate, which also caps how long
+     auto-exposure may expose. Frame rate costs vertical field of view:
+     see *Measured performance* below.
    - **Exposure** — how long each frame gathers light, in microseconds.
      Longer means brighter, but caps the frame rate: a warning appears
      when the exposure is what's limiting the rate.
@@ -93,6 +100,28 @@ Each burst folder holds:
 If the disk can't keep up, frames are dropped rather than silently
 delaying the burst, and the count is reported both on screen and in
 `manifest.json`.
+
+## Review tab
+
+Every capture can be played back without leaving the app. The **Review**
+tab lists what is in the output folder, newest first, and selects each new
+burst or recording as soon as it finishes.
+
+- **Scrub and step** through the frames, or play them at any rate;
+  **Real time** plays at the rate they were actually captured.
+- **This frame** shows the exposure, gain and camera timestamp recorded
+  for the frame on screen — the values that frame was taken with, so you
+  can see auto-exposure adapting as it plays.
+- **Capture** summarises the burst: frames, effective rate, frames
+  dropped, pixel format, ROI and where the band sat on the sensor.
+- **Stretch contrast** scales each frame between its own darkest and
+  brightest pixel, which makes faint detail visible. It changes frame to
+  frame, so don't judge brightness by it.
+
+TIFF bursts and H.264 `.mp4` files play here. Lossless FFV1 usually plays
+too; 12-bit HEVC may not, since it depends on the codecs OpenCV was built
+with — those files open in VLC or ImageJ, and the tab says so rather than
+failing silently.
 
 ## Troubleshooting
 

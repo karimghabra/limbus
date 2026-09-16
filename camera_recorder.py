@@ -80,6 +80,24 @@ DEFAULT_FPS = 30.0
 ENCODER_THROUGHPUT_MBS = 380.0
 
 
+# Sensor readout timing, measured on the acA1920-40um: the frame period is
+# a fixed overhead plus a cost per row, and rows are the only lever on frame
+# rate (packing, binning and a narrower ROI were each measured to change
+# nothing). {bits: (overhead_s, seconds_per_row)}.
+#   12-bit: 1.003 ms + 25.05 us/row  -> 32 fps at 1200 rows, 399 at 60
+#    8-bit: 0.777 ms + 19.39 us/row  -> 41 fps at 1200 rows, 515 at 60
+# Used only to suggest a row count for a target rate; the camera is then
+# asked what it can really do.
+READOUT_MODEL = {12: (1.003e-3, 25.05e-6), 8: (0.777e-3, 19.39e-6)}
+
+
+def rows_for_fps(target_fps, bit_depth=12):
+    """Roughly how many rows fit inside the frame period of target_fps."""
+    overhead, per_row = READOUT_MODEL[8 if bit_depth <= 8 else 12]
+    rows = (1.0 / max(target_fps, 0.001) - overhead) / per_row
+    return max(1, int(rows))
+
+
 def encoder_limit_fps(width, height, bytes_per_px=1, throughput_mbs=None):
     """Frame rate above which recording starts dropping frames. Codecs differ
     widely — lossless FFV1 and 12-bit HEVC are far slower than H.264 — so the
@@ -804,8 +822,19 @@ class PylonCamera:
         except Exception:
             return None
 
-    def _apply_roi(self, width, height):
-        """Set a centered ROI, snapped to the increments the camera allows."""
+    @staticmethod
+    def _snap(node, want):
+        inc = max(getattr(node, "Inc", 1) or 1, 1)
+        val = int(min(max(want, node.Min), node.Max))
+        return val - ((val - node.Min) % inc)
+
+    def _apply_roi(self, width, height, offset=None):
+        """Set the ROI, snapped to the increments the camera allows.
+
+        offset=None centres it, so cropping for speed keeps the same view
+        centre; pass (x, y) to place the band over a chosen part of the
+        sensor — which is the point of a short ROI, since it is the rows you
+        read, not how many, that decide what you are looking at."""
         cam = self.cam
         try:
             # zero the offsets first, so a larger new size always fits
@@ -813,19 +842,25 @@ class PylonCamera:
                 node = self._n(name)
                 if node is not None:
                     node.Value = node.Min
-            def snap(node, want):
-                inc = max(getattr(node, "Inc", 1) or 1, 1)
-                val = int(min(max(want, node.Min), node.Max))
-                return val - ((val - node.Min) % inc)
-            cam.Width.Value = snap(cam.Width, width)
-            cam.Height.Value = snap(cam.Height, height)
-            # centre the ROI so cropping for speed keeps the same view centre
-            for name, size, full in (("OffsetX", cam.Width.Value, cam.Width.Max),
-                                     ("OffsetY", cam.Height.Value,
-                                      cam.Height.Max)):
+            cam.Width.Value = self._snap(cam.Width, width)
+            cam.Height.Value = self._snap(cam.Height, height)
+            wants = (offset if offset is not None
+                     else ((cam.Width.Max - cam.Width.Value) // 2,
+                           (cam.Height.Max - cam.Height.Value) // 2))
+            for name, want in (("OffsetX", wants[0]), ("OffsetY", wants[1])):
                 node = self._n(name)
                 if node is not None:
-                    node.Value = snap(node, (full - size) // 2)
+                    node.Value = self._snap(node, want)
+        except Exception:
+            pass
+
+    def _set_offset(self, offset):
+        """Move the ROI without resizing it."""
+        try:
+            for name, want in (("OffsetX", offset[0]), ("OffsetY", offset[1])):
+                node = self._n(name)
+                if node is not None and want is not None:
+                    node.Value = self._snap(node, want)
         except Exception:
             pass
 
@@ -874,6 +909,8 @@ class PylonCamera:
                 ("auto_exposure_min_us", ("AutoExposureTimeLowerLimit",
                                           "AutoExposureTimeAbsLowerLimit")),
                 ("auto_gain_max", ("AutoGainUpperLimit", "AutoGainRawUpperLimit")),
+                ("offset_x", ("OffsetX",)),
+                ("offset_y", ("OffsetY",)),
                 ("payload_bytes", ("PayloadSize",)),
                 ("link_throughput", ("DeviceLinkCurrentThroughput",)),
                 ("link_speed_mode", ("BslUSBSpeedMode", "DeviceLinkSpeedMode")),
@@ -961,12 +998,20 @@ class PylonCamera:
                 pass
         elif key == "roi":
             # size can only change while the stream is stopped
-            width, height = value
+            width, height = value[0], value[1]
+            offset = value[2] if len(value) > 2 else None
             grabbing = cam.IsGrabbing()
             if grabbing:
                 cam.StopGrabbing()
-            self._apply_roi(width, height)
+            self._apply_roi(width, height, offset)
             self.max_fps = self.measure_max_fps()   # the ceiling moved
+            if grabbing:
+                cam.StartGrabbing(pylon.GrabStrategy_OneByOne)
+        elif key == "roi_offset":
+            grabbing = cam.IsGrabbing()
+            if grabbing:
+                cam.StopGrabbing()
+            self._set_offset(value)
             if grabbing:
                 cam.StartGrabbing(pylon.GrabStrategy_OneByOne)
         elif key == "black_level":
@@ -1616,6 +1661,431 @@ class CameraThread(QtCore.QThread):
 
 
 # ----------------------------------------------------------------------------
+# Review: play back what was just captured, without leaving the app
+# ----------------------------------------------------------------------------
+
+def _num(value, fmt="{:.0f}", default="—"):
+    try:
+        return fmt.format(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+class BurstSource:
+    """A folder of TIFFs written by TiffBurstWriter, plus its metadata."""
+
+    kind = "burst"
+
+    def __init__(self, path):
+        self.path = path
+        self.name = os.path.basename(path.rstrip("\\/"))
+        self.files = sorted(glob.glob(os.path.join(path, "frame_*.tif")))
+        if not self.files:
+            raise RuntimeError("No TIFF frames in this folder.")
+        if not HAVE_TIFFFILE:
+            raise RuntimeError("Reading TIFFs needs the tifffile package.")
+        self.manifest = {}
+        self.rows = []
+        try:
+            with open(os.path.join(path, "manifest.json"),
+                      encoding="utf-8") as f:
+                self.manifest = json.load(f)
+        except (OSError, ValueError):
+            pass
+        try:
+            with open(os.path.join(path, "frames.csv"), encoding="utf-8",
+                      newline="") as f:
+                self.rows = list(csv.DictReader(f))
+        except (OSError, ValueError):
+            pass
+        values = self.manifest.get("pixel_values") or {}
+        self.bit_depth = int(values.get("bit_depth") or 12)
+        capture = self.manifest.get("capture") or {}
+        self.fps = float(capture.get("effective_fps") or 0) or 30.0
+
+    def __len__(self):
+        return len(self.files)
+
+    def frame(self, index):
+        return tifffile.imread(self.files[index])
+
+    def meta(self, index):
+        if index >= len(self.rows):
+            return []
+        row = self.rows[index]
+        out = [("Exposure", _num(row.get("exposure_us"), "{:.0f} µs")),
+               ("Gain", _num(row.get("gain"), "{:.1f}"))]
+        stamp = row.get("camera_timestamp_ns")
+        if stamp:
+            out.append(("Camera clock", f"{int(stamp) / 1e9:.4f} s"))
+        host = row.get("host_time_utc") or ""
+        if host:
+            out.append(("Saved (UTC)", host[11:23]))
+        return out
+
+    def summary(self):
+        cap = self.manifest.get("capture") or {}
+        acq = self.manifest.get("acquisition_requested") or {}
+        start = self.manifest.get("camera_state_at_start") or {}
+        dropped = cap.get("frames_dropped", 0)
+        return [
+            ("Frames", f"{len(self)}"
+                       + (f"  ({dropped} dropped)" if dropped else "")),
+            ("Rate", _num(cap.get("effective_fps"), "{:.1f} fps")),
+            ("Pixels", f"{acq.get('width', '?')}×{acq.get('height', '?')}"
+                       f" · {acq.get('pixel_format', '?')}"),
+            ("ROI top row", f"{acq.get('offset_y', '—')}"),
+            ("Exposure", _num(start.get("exposure_us"), "{:.0f} µs")),
+            ("Gain", _num(start.get("gain"), "{:.1f}")),
+            ("Auto brightness",
+             "on" if acq.get("auto_brightness_enabled") else "off"),
+            ("Started", str(cap.get("started_utc", ""))[:19].replace("T", " ")),
+        ]
+
+
+class VideoSource:
+    """A recorded video file, read back through OpenCV."""
+
+    kind = "video"
+
+    def __init__(self, path):
+        self.path = path
+        self.name = os.path.basename(path)
+        self.cap = cv2.VideoCapture(path)
+        ok, first = (self.cap.read() if self.cap.isOpened() else (False, None))
+        if not ok or first is None:
+            self.close()
+            raise RuntimeError(
+                "This file can't be decoded here.\n\n"
+                "12-bit HEVC and lossless FFV1 recordings play in VLC or "
+                "ImageJ, but OpenCV won't open them. H.264 .mp4 files and "
+                "TIFF bursts play in this tab.")
+        self.count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+        self.bit_depth = 8
+        self._pos = 0
+        self._cached = self._gray(first)
+
+    @staticmethod
+    def _gray(frame):
+        if frame is not None and frame.ndim == 3:
+            return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return frame
+
+    def __len__(self):
+        return self.count
+
+    def frame(self, index):
+        if index == self._pos and self._cached is not None:
+            return self._cached
+        # sequential reads are much faster than seeking every frame
+        if index != self._pos + 1:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, index)
+        ok, frame = self.cap.read()
+        if not ok or frame is None:
+            return self._cached
+        self._pos = index
+        self._cached = self._gray(frame)
+        return self._cached
+
+    def meta(self, index):
+        return []
+
+    def summary(self):
+        return [
+            ("Frames", f"{self.count}"),
+            ("Rate", f"{self.fps:.1f} fps"),
+            ("Pixels", f"{int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))}×"
+                       f"{int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))}"),
+            ("Depth", "8-bit (as decoded)"),
+        ]
+
+    def close(self):
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+
+class ReviewTab(QtWidgets.QWidget):
+    """Play back a capture immediately after taking it: scrub through the
+    frames, and see the settings each one was taken with."""
+
+    def __init__(self, main, parent=None):
+        super().__init__(parent)
+        self.main = main
+        self.source = None
+        self.index = 0
+        self._build_ui()
+        self.timer = QtCore.QTimer(self)
+        self.timer.timeout.connect(self._advance)
+
+    def _build_ui(self):
+        layout = QtWidgets.QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(6)
+
+        left = QtWidgets.QVBoxLayout()
+        layout.addLayout(left, stretch=1)
+
+        self.view = QtWidgets.QLabel("Nothing selected yet.")
+        self.view.setAlignment(QtCore.Qt.AlignCenter)
+        self.view.setMinimumSize(320, 240)
+        self.view.setStyleSheet(
+            "background-color: #202020; color: #aaaaaa; font-size: 15px;")
+        self.view.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                QtWidgets.QSizePolicy.Expanding)
+        left.addWidget(self.view, stretch=1)
+
+        transport = QtWidgets.QHBoxLayout()
+        left.addLayout(transport)
+        self.play_btn = QtWidgets.QPushButton("▶")
+        self.play_btn.setFixedWidth(44)
+        self.play_btn.clicked.connect(self._toggle_play)
+        self.play_btn.setEnabled(False)
+        transport.addWidget(self.play_btn)
+        for text, step in (("⏮", -1000000), ("◀", -1), ("▶|", 1)):
+            btn = QtWidgets.QPushButton(text)
+            btn.setFixedWidth(36)
+            btn.clicked.connect(lambda _, s=step: self._step(s))
+            transport.addWidget(btn)
+        self.slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.slider.setEnabled(False)
+        self.slider.valueChanged.connect(self._slider_moved)
+        transport.addWidget(self.slider, stretch=1)
+        self.counter = QtWidgets.QLabel("—")
+        self.counter.setStyleSheet("font-family: monospace;")
+        self.counter.setMinimumWidth(96)
+        self.counter.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        transport.addWidget(self.counter)
+
+        options = QtWidgets.QHBoxLayout()
+        left.addLayout(options)
+        options.addWidget(QtWidgets.QLabel("Play at"))
+        self.play_fps = QtWidgets.QDoubleSpinBox()
+        self.play_fps.setRange(0.1, 240.0)
+        self.play_fps.setValue(15.0)
+        self.play_fps.setDecimals(1)
+        self.play_fps.setSuffix(" fps")
+        self.play_fps.valueChanged.connect(self._retime)
+        options.addWidget(self.play_fps)
+        self.real_time = QtWidgets.QPushButton("Real time")
+        self.real_time.setToolTip(
+            "Play at the rate the frames were actually captured.")
+        self.real_time.clicked.connect(self._use_real_time)
+        options.addWidget(self.real_time)
+        self.auto_contrast = QtWidgets.QCheckBox("Stretch contrast")
+        self.auto_contrast.setToolTip(
+            "Scale each frame between its own darkest and brightest pixel. "
+            "Good for seeing faint detail — but it changes frame to frame, "
+            "so don't judge brightness by it.")
+        self.auto_contrast.toggled.connect(lambda _: self._render())
+        options.addWidget(self.auto_contrast)
+        options.addStretch(1)
+
+        # sidebar: what there is to play, and what it was taken with
+        side = QtWidgets.QVBoxLayout()
+        panel = QtWidgets.QWidget()
+        panel.setLayout(side)
+        panel.setFixedWidth(300)
+        layout.addWidget(panel)
+
+        buttons = QtWidgets.QHBoxLayout()
+        side.addLayout(buttons)
+        refresh = QtWidgets.QPushButton("⟳ Refresh")
+        refresh.clicked.connect(lambda: self.refresh())
+        buttons.addWidget(refresh)
+        browse = QtWidgets.QPushButton("Open…")
+        browse.clicked.connect(self._browse)
+        buttons.addWidget(browse)
+
+        self.listing = QtWidgets.QListWidget()
+        self.listing.itemSelectionChanged.connect(self._selection_changed)
+        side.addWidget(self.listing, stretch=1)
+
+        info_box = QtWidgets.QGroupBox("Capture")
+        self.info_form = QtWidgets.QFormLayout(info_box)
+        side.addWidget(info_box)
+
+        frame_box = QtWidgets.QGroupBox("This frame")
+        self.frame_form = QtWidgets.QFormLayout(frame_box)
+        side.addWidget(frame_box)
+
+    # ---- listing -----------------------------------------------------------
+    def refresh(self, select=None):
+        """Rescan the output folder; optionally select a given capture."""
+        folder = self.main.output_dir
+        entries = []
+        try:
+            for name in os.listdir(folder):
+                path = os.path.join(folder, name)
+                if os.path.isdir(path) and glob.glob(
+                        os.path.join(path, "frame_*.tif")):
+                    entries.append(path)
+                elif name.lower().endswith((".mp4", ".mkv", ".avi")):
+                    entries.append(path)
+        except OSError:
+            pass
+        entries.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        self.listing.blockSignals(True)
+        self.listing.clear()
+        for path in entries:
+            label = os.path.basename(path)
+            if os.path.isdir(path):
+                label += f"   ({len(glob.glob(os.path.join(path, '*.tif')))} tif)"
+            item = QtWidgets.QListWidgetItem(label)
+            item.setData(QtCore.Qt.UserRole, path)
+            self.listing.addItem(item)
+        self.listing.blockSignals(False)
+        if select:
+            select = os.path.normcase(os.path.abspath(select))
+            for row in range(self.listing.count()):
+                item = self.listing.item(row)
+                stored = os.path.normcase(os.path.abspath(
+                    item.data(QtCore.Qt.UserRole)))
+                if stored == select:
+                    self.listing.setCurrentRow(row)
+                    return
+        if self.source is None and self.listing.count():
+            self.listing.setCurrentRow(0)
+
+    def _selection_changed(self):
+        item = self.listing.currentItem()
+        if item:
+            self.load(item.data(QtCore.Qt.UserRole))
+
+    def _browse(self):
+        path = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Choose a folder of captures", self.main.output_dir)
+        if path:
+            self.main.output_dir = path
+            self.refresh()
+
+    # ---- loading and playback ---------------------------------------------
+    def load(self, path):
+        self._stop()
+        if self.source is not None and hasattr(self.source, "close"):
+            self.source.close()
+        try:
+            self.source = (BurstSource(path) if os.path.isdir(path)
+                           else VideoSource(path))
+        except Exception as exc:
+            self.source = None
+            self.view.setPixmap(QtGui.QPixmap())
+            self.view.setText(str(exc))
+            self._fill(self.info_form, [])
+            self._fill(self.frame_form, [])
+            self.play_btn.setEnabled(False)
+            self.slider.setEnabled(False)
+            self.counter.setText("—")
+            return
+        count = len(self.source)
+        self.index = 0
+        self.slider.blockSignals(True)
+        self.slider.setRange(0, max(0, count - 1))
+        self.slider.setValue(0)
+        self.slider.blockSignals(False)
+        self.slider.setEnabled(count > 1)
+        self.play_btn.setEnabled(count > 1)
+        self._use_real_time()
+        self._fill(self.info_form, self.source.summary())
+        self._render()
+
+    def _use_real_time(self):
+        if self.source is not None:
+            self.play_fps.setValue(
+                min(max(self.source.fps, self.play_fps.minimum()),
+                    self.play_fps.maximum()))
+
+    def _retime(self, value):
+        if self.timer.isActive():
+            self.timer.start(max(4, int(1000.0 / max(value, 0.1))))
+
+    def _toggle_play(self):
+        if self.timer.isActive():
+            self._stop()
+        elif self.source is not None:
+            self.play_btn.setText("⏸")
+            self.timer.start(max(4, int(1000.0 / self.play_fps.value())))
+
+    def _stop(self):
+        self.timer.stop()
+        self.play_btn.setText("▶")
+
+    def _advance(self):
+        if self.source is None:
+            self._stop()
+            return
+        if self.index + 1 >= len(self.source):
+            self.index = 0          # loop: a burst is usually seconds long
+        else:
+            self.index += 1
+        self.slider.blockSignals(True)
+        self.slider.setValue(self.index)
+        self.slider.blockSignals(False)
+        self._render()
+
+    def _step(self, delta):
+        if self.source is None:
+            return
+        self._stop()
+        self.slider.setValue(
+            max(0, min(len(self.source) - 1, self.index + delta)))
+
+    def _slider_moved(self, value):
+        self.index = value
+        self._render()
+
+    # ---- drawing -----------------------------------------------------------
+    def _render(self):
+        if self.source is None:
+            return
+        try:
+            frame = self.source.frame(self.index)
+        except Exception as exc:
+            self.view.setText(f"Could not read frame {self.index}:\n{exc}")
+            return
+        if frame is None:
+            return
+        image = self._to_8bit(frame)
+        height, width = image.shape[:2]
+        qimg = QtGui.QImage(image.data, width, height, width,
+                            QtGui.QImage.Format_Grayscale8)
+        pix = QtGui.QPixmap.fromImage(qimg.copy())
+        self.view.setPixmap(pix.scaled(
+            self.view.size(), QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation))
+        self.counter.setText(f"{self.index + 1} / {len(self.source)}")
+        self._fill(self.frame_form, self.source.meta(self.index))
+
+    def _to_8bit(self, frame):
+        if frame.dtype != np.uint16:
+            return np.ascontiguousarray(frame)
+        if self.auto_contrast.isChecked():
+            lo, hi = int(frame.min()), int(frame.max())
+            scale = 255.0 / max(hi - lo, 1)
+            out = (frame.astype(np.float32) - lo) * scale
+            return np.ascontiguousarray(out.clip(0, 255).astype(np.uint8))
+        # TIFF bursts hold right-aligned sensor DN, so scale by the real
+        # bit depth rather than assuming the top 8 bits are the picture
+        shift = max(0, int(getattr(self.source, "bit_depth", 12)) - 8)
+        return np.ascontiguousarray((frame >> shift).astype(np.uint8))
+
+    @staticmethod
+    def _fill(form, pairs):
+        while form.rowCount():
+            form.removeRow(0)
+        for label, value in pairs:
+            widget = QtWidgets.QLabel(str(value))
+            widget.setStyleSheet("font-family: monospace;")
+            form.addRow(label, widget)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._render()
+
+
+# ----------------------------------------------------------------------------
 # GUI
 # ----------------------------------------------------------------------------
 
@@ -1658,8 +2128,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- UI construction ----------------------------------------------------
     def _build_ui(self):
+        self.tabs = QtWidgets.QTabWidget()
+        self.setCentralWidget(self.tabs)
         central = QtWidgets.QWidget()
-        self.setCentralWidget(central)
+        self.tabs.addTab(central, "Camera")
+        self.review = ReviewTab(self)
+        self.tabs.addTab(self.review, "Review")
         # keep group-box titles clear of their content with large fonts
         self.setStyleSheet(
             "QGroupBox { font-weight: bold; margin-top: 1.2em; }"
@@ -1827,6 +2301,38 @@ class MainWindow(QtWidgets.QMainWindow):
         roi_row.addWidget(roi_full)
         form.addRow("Resolution", roi_row)
         self._roi_buttons = (roi_apply, roi_full)
+
+        # Which rows: a short ROI only shows what you point it at, so the
+        # band has to be placeable, not just centred.
+        pos_row = QtWidgets.QHBoxLayout()
+        self.off_y = QtWidgets.QSpinBox()
+        self.off_y.setRange(0, 100000)
+        self.off_y.setSingleStep(2)
+        self.off_y.setKeyboardTracking(False)
+        self.off_y.setMaximumWidth(80)
+        self.off_y.setToolTip(
+            "First sensor row the ROI reads. Use it to place a short band "
+            "over the vessel you care about.")
+        self.off_y.valueChanged.connect(self._offset_changed)
+        centre_btn = QtWidgets.QPushButton("Centre")
+        centre_btn.clicked.connect(self._centre_roi)
+        pos_row.addWidget(QtWidgets.QLabel("row"))
+        pos_row.addWidget(self.off_y)
+        pos_row.addWidget(centre_btn)
+        pos_row.addStretch(1)
+        form.addRow("Top of ROI", pos_row)
+
+        self.speed_combo = QtWidgets.QComboBox()
+        self.speed_combo.addItem("Full height", 0.0)
+        for target in (40.0, 100.0, 200.0, 400.0):
+            self.speed_combo.addItem(f"~{target:.0f} fps", target)
+        self.speed_combo.setToolTip(
+            "Sets the ROI height for a target frame rate. Readout costs "
+            "~25 µs per row at 12-bit, so fewer rows is the only way to go "
+            "faster — you trade vertical field of view for speed, and the "
+            "exposure has to fit inside the frame period.")
+        self.speed_combo.activated.connect(self._speed_preset)
+        form.addRow("Speed preset", self.speed_combo)
 
         self.roi_hint = QtWidgets.QLabel("")
         self.roi_hint.setWordWrap(True)
@@ -2277,6 +2783,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.record_info.setText(
                     "Too short — no frames captured. Hold a little longer.")
                 return
+            self.review.refresh(select=writer.path)
             msg = f"Saved {name} ({writer.frames_written} frames)"
             if writer.frames_dropped:
                 total = writer.frames_written + writer.frames_dropped
@@ -2404,6 +2911,33 @@ class MainWindow(QtWidgets.QMainWindow):
         # moves with the row count, so re-read both rather than assuming
         QtCore.QTimer.singleShot(400, self._refresh_roi_from_camera)
 
+    def _offset_changed(self, value):
+        if self.cam_thread:
+            self._apply(roi_offset=(None, value))
+
+    def _centre_roi(self):
+        d = getattr(self, "_cam_info", None) or {}
+        full_h = d.get("height_max") or self.roi_h.value()
+        self.off_y.setValue(max(0, (int(full_h) - self.roi_h.value()) // 2))
+
+    def _speed_preset(self, index):
+        """Pick an ROI height for a target frame rate, then let the camera
+        tell us what that height really achieves."""
+        target = self.speed_combo.itemData(index) or 0.0
+        d = getattr(self, "_cam_info", None) or {}
+        if not target:
+            self._roi_full()
+            return
+        bits = pixel_format_bits(d.get("pixel_format", "Mono12"))
+        rows = min(rows_for_fps(target, bits),
+                   int(d.get("height_default") or d.get("height_max") or 1200))
+        self.roi_h.setValue(rows)
+        self._roi_apply()
+        # Ask for the rate as well as the rows: this caps how long
+        # auto-exposure may expose, which would otherwise hold the camera
+        # far below the rate the new ROI allows.
+        self.fps_spin.setValue(min(target, self.fps_spin.maximum()))
+
     def _roi_full(self):
         """Back to the sensor's specified imaging area — not Width.Max, which
         would pull in the border pixels outside the specified area."""
@@ -2427,6 +2961,15 @@ class MainWindow(QtWidgets.QMainWindow):
         d = getattr(self, "_cam_info", None)
         if d:
             d["width"], d["height"] = w, h
+        # the offset range depends on the ROI height, and the camera may have
+        # centred it for us — show where the band actually sits
+        status = (self.cam_thread.latest_status if self.cam_thread else {}) or {}
+        full_h = int((d or {}).get("height_max") or h)
+        self.off_y.blockSignals(True)
+        self.off_y.setMaximum(max(0, full_h - h))
+        if status.get("offset_y") is not None:
+            self.off_y.setValue(int(status["offset_y"]))
+        self.off_y.blockSignals(False)
         self._update_roi_hint()
         self._update_burst_hint()
         self._update_rate_warning()
@@ -2533,8 +3076,10 @@ class MainWindow(QtWidgets.QMainWindow):
         written = result.get("written", 0)
         dropped = result.get("dropped", 0)
         name = os.path.basename(result.get("directory", ""))
+        # have it ready to play before the message says it is saved
+        self.review.refresh(select=result.get("directory"))
         msg = (f"Saved {written} frames to {name} at "
-               f"{result.get('effective_fps', 0):.1f} fps")
+               f"{result.get('effective_fps', 0):.1f} fps — see the Review tab")
         if dropped:
             msg += f" — {dropped} dropped (disk too slow)"
             self.burst_info.setStyleSheet("color: #b35000; font-size: 11px;")
@@ -2567,8 +3112,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "bit_depth": pixel_format_bits(d.get("pixel_format", "")),
                 "width": w,
                 "height": h,
-                "offset_x": d.get("offset_x"),
-                "offset_y": d.get("offset_y"),
+                # live values: the ROI may have been moved since connecting
+                "offset_x": status.get("offset_x", d.get("offset_x")),
+                "offset_y": status.get("offset_y", d.get("offset_y")),
                 "sensor_width": d.get("width_max"),
                 "sensor_height": d.get("height_max"),
                 "full_frame_width": d.get("width_default"),
@@ -2686,6 +3232,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if d:
             self.output_dir = d
             self.out_edit.setText(d)
+            self.review.refresh()
 
     def _open_folder(self):
         if sys.platform == "win32":
