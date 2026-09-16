@@ -1913,7 +1913,9 @@ class MainWindow(QtWidgets.QMainWindow):
                            ("gain", "Gain"),
                            ("black_level", "Black level"),
                            ("measured_fps", "Measured"),
-                           ("resulting_fps", "Camera max"),
+                           # the measured ceiling, not ResultingFrameRate,
+                           # which is capped by the rate currently requested
+                           ("max_fps", "Camera max"),
                            ("sensor_readout_us", "Readout"),
                            ("temperature_c", "Sensor temp"),
                            ("frames_incomplete", "Incomplete")):
@@ -2628,8 +2630,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "black_level": (f"{status['black_level']:.1f}"
                             if status.get("black_level") is not None else None),
             "measured_fps": f"{status.get('measured_fps', 0):.1f} fps",
-            "resulting_fps": (f"{status['resulting_fps']:.1f} fps"
-                              if status.get("resulting_fps") else None),
+            "max_fps": (f"{status['max_fps']:.1f} fps"
+                        if status.get("max_fps") else None),
             "sensor_readout_us": (f"{status['sensor_readout_us']:.0f} µs"
                                   if status.get("sensor_readout_us") else None),
             "temperature_c": (f"{status['temperature_c']:.1f} °C"
