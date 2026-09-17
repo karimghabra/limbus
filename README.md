@@ -123,6 +123,61 @@ too; 12-bit HEVC may not, since it depends on the codecs OpenCV was built
 with — those files open in VLC or ImageJ, and the tab says so rather than
 failing silently.
 
+## Analysis on another computer
+
+Stabilization needs no camera, driver or GUI — only Python 3.10+ and three
+packages:
+
+```bash
+git clone https://github.com/karimghabra/limbus.git
+cd limbus
+python -m venv venv
+venv/Scripts/pip install -r requirements-analysis.txt      # Windows
+# ./venv/bin/pip install -r requirements-analysis.txt     # macOS / Linux
+```
+
+**Reference bursts.** Five raw bursts (1.2 GB download, 1.7 GB extracted)
+are published as assets of the GitHub release `reference-data-v1`, so
+algorithms can be compared on identical input. Fetch and verify them
+(SHA-256 of every file) with:
+
+```bash
+python tools/fetch_reference_data.py
+```
+
+They land in `reference_data/`; [`reference_data/README.md`](reference_data/README.md)
+describes what each burst exercises.
+
+**Command line.** From the `analysis` folder:
+
+```bash
+cd analysis
+python -m stabilize ../reference_data                                   # every burst, translation
+python -m stabilize ../reference_data/burst_2026-09-16_15-50-52 --method nonrigid
+```
+
+Results go to `stabilization/<method>/<burst>/` beside the input folder
+(or `--out DIR`), with `summary.html` ranking every burst. Re-running skips
+results that are already current — same code version and parameters.
+
+**Tests.** From the repository root:
+
+```bash
+python analysis/tests/test_synthetic.py       # translation vs known motion
+python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks
+```
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `camera_recorder.py`, `run.bat`, `run.sh` | the recorder app and its launchers |
+| `analysis/stabilize/` | offline stabilization package, with `METHODS.md` |
+| `analysis/tests/` | synthetic ground-truth and smoke tests |
+| `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |
+| `tools/` | building and fetching the reference-data release |
+| `reference_data/` | manifest and description of the reference bursts (data fetched, not committed) |
+
 ## Troubleshooting
 
 - **"No camera found"** — check the USB cable and close any other camera
@@ -189,8 +244,12 @@ overstate every one of them.
 - The virtual environment lives in `venv/`. To recreate it:
 
 ```bash
-python3 -m venv --system-site-packages venv && ./venv/bin/pip install pypylon
+python3 -m venv --system-site-packages venv && ./venv/bin/pip install -r requirements.txt
 ```
+
+  On Windows: `python -m venv venv` then
+  `venv\Scripts\pip install -r requirements.txt`, and install the Basler
+  pylon runtime for the camera's USB driver.
 
 - On startup the app resets the camera to factory defaults, then applies
   full resolution, 8-bit pixel format, 10 ms exposure, 30 fps.

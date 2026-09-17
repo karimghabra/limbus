@@ -1,0 +1,3847 @@
+{
+  "release_tag": "reference-data-v1",
+  "base_url": "https://github.com/karimghabra/limbus/releases/download/reference-data-v1",
+  "created_utc": "2026-09-17T06:26:22+00:00",
+  "bursts": [
+    {
+      "name": "burst_2026-09-16_15-50-52",
+      "description": "Clean fixation with one saccade at ~3.9 s; two distinct eye poses (reference case for single-mode / non-rigid stabilization).",
+      "zip": "burst_2026-09-16_15-50-52.zip",
+      "zip_bytes": 476431491,
+      "zip_sha256": "b328e67d2ca5f993af717656df1c8a12fcf3a53899027407a831da5bbf4b8022",
+      "raw_bytes": 645201527,
+      "frames": 140,
+      "width": 1920,
+      "height": 1200,
+      "pixel_format": "Mono12",
+      "fps": 32.236,
+      "files": [
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000000.tif",
+          "bytes": 4608464,
+          "sha256": "f35b251c00fae58eb03b569cf4ebc71f044b4bf8cc7e5f4b64c069c2f35af007"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000001.tif",
+          "bytes": 4608464,
+          "sha256": "9c807729f730e8909c5eeb9012ff1bf097ab9b1f7b938d8572cac69892301ec6"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000002.tif",
+          "bytes": 4608464,
+          "sha256": "da88ccba58ecee3ecde6bbbb445ed7ca5cf4c33f8f820e622cae7741879b5794"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000003.tif",
+          "bytes": 4608464,
+          "sha256": "0082f82807abfb94cffeaedcc2b756012d06c6d355f6d264055c2d463c6c2c59"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000004.tif",
+          "bytes": 4608464,
+          "sha256": "4f620ab60c8e2cd22aca9a5adccc0ca5e03c7128d9930bfd280414a3f516f46b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000005.tif",
+          "bytes": 4608464,
+          "sha256": "920c90fa1a1cb7c448e78ac20382295e1363fff592ac80755bfd8075fd94c9a6"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000006.tif",
+          "bytes": 4608464,
+          "sha256": "1af31fbaa7696d6dee5cc1c787f86ed9d85065a7e25f71c8419b272628bc2853"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000007.tif",
+          "bytes": 4608464,
+          "sha256": "bb72473e5ffead75c5bbe41485b6809d62cbd546d1feafce5e7d30b057b77406"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000008.tif",
+          "bytes": 4608464,
+          "sha256": "502c7d3a8491a8a6d0f78dc136292892c1020a42eecf1d0165c66a4bb822b05f"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000009.tif",
+          "bytes": 4608464,
+          "sha256": "ad6e5a3b4cbb0b1e912f7ddceccaf3692dc88faa1b50d74a0ed5807b9cdffa45"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000010.tif",
+          "bytes": 4608464,
+          "sha256": "a90888c5940ad02ceb62b7634450d65efb686ea2ff8cfee4bba75646164dee29"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000011.tif",
+          "bytes": 4608464,
+          "sha256": "c6442dbe9781d7c010b69e8c487b24f53d08f76178746468e3d7b0593f422ddf"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000012.tif",
+          "bytes": 4608464,
+          "sha256": "0c8c2636fec4d0c8a7900c385d2faddc66067d276f8fe523a1720d452c35c952"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000013.tif",
+          "bytes": 4608464,
+          "sha256": "961a5057a13725cee6a3eee17a6860777356e8effd8424a3ee6fd560281cb2e9"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000014.tif",
+          "bytes": 4608464,
+          "sha256": "3d8b07da47574749c07a01c7e741ca3866523957dc85ca7f1deb4a54a43f58a4"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000015.tif",
+          "bytes": 4608464,
+          "sha256": "fe25c725c5ff0090b9ba61eb6520984b8f363e5ffe00d3a8bb74ee00526ad017"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000016.tif",
+          "bytes": 4608464,
+          "sha256": "073259fd7f7a44fa27774be7433cb31b7b91923413a51f4d3db95ad033ff5278"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000017.tif",
+          "bytes": 4608464,
+          "sha256": "0ad3419d5cd2b633336832631cc356671f9bfe91c361ca3dd80e5b85da799145"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000018.tif",
+          "bytes": 4608464,
+          "sha256": "ad669ce89a1f107646c19dfc0b8c0cfdbcc49e96c5f98430ff5c5858496904e5"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000019.tif",
+          "bytes": 4608464,
+          "sha256": "1945bea16b39ec988ade8b61761e77a444ade71169b2b3770b538b3586a4c559"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000020.tif",
+          "bytes": 4608464,
+          "sha256": "18e9d8d7ca03ace1283435fe3e7855883b96194d6ba9e345b4d1fd6ac10cc607"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000021.tif",
+          "bytes": 4608464,
+          "sha256": "ddd53b216dcec4a7948b1447332214fb4692fc7ac2df7fe55795d22f77a22197"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000022.tif",
+          "bytes": 4608464,
+          "sha256": "a94fd83f448d70ed876af8f7890ba7556730c0d5b3f6801dbbfcab519537a027"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000023.tif",
+          "bytes": 4608464,
+          "sha256": "a7a69cbfab26b4143310aaf27eaf35b415fdc21f20a7c86e50f0b69613308825"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000024.tif",
+          "bytes": 4608464,
+          "sha256": "cfe7ed3ab8a85724a1109c2757d7bc38b489dc583eecdd098aed4a357c207f88"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000025.tif",
+          "bytes": 4608464,
+          "sha256": "f116deefd086f091eb61b29d45b2b0a1f13ba7964b838dbc1a49a7fd61748841"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000026.tif",
+          "bytes": 4608464,
+          "sha256": "62eed140155684ad79957b49be4eb6ec6b3d46e7f7eaacc0db6438d384e4dbc0"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000027.tif",
+          "bytes": 4608464,
+          "sha256": "01b6b28a508ddfb20f26752cbd04a55c2e349b6546e084c0e3ca6f13ef2ebc4d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000028.tif",
+          "bytes": 4608464,
+          "sha256": "f6ba7de14011fb3271af6838598393364d0c5600c32235fbc52b966af13871b0"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000029.tif",
+          "bytes": 4608464,
+          "sha256": "f760feef70c16c843f1f6e45ec44d18be0cf9caf5219343e1700c425451f4ca8"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000030.tif",
+          "bytes": 4608464,
+          "sha256": "684533a362ba65ac97d09be1db07743e0592f4fb26f2a12dd2cd688b6ed7083f"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000031.tif",
+          "bytes": 4608464,
+          "sha256": "eaace7fd4dfdc8c16c4f69651fde233410b8ea587ba2c62828f97582c9db3f71"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000032.tif",
+          "bytes": 4608464,
+          "sha256": "73c3c19cf894b19f16e6dc1cddaa555266abcaed1584519d9fc7cfd0d29b06a6"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000033.tif",
+          "bytes": 4608464,
+          "sha256": "455f9f5dcbd8ab41e42647e56b7568a291e0bae59b9fc50ed26611a70e93528a"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000034.tif",
+          "bytes": 4608464,
+          "sha256": "73116b13226c63a6372a0a76d54fd953f7f2342dbb6b318bfbd8dc7839c7b6b2"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000035.tif",
+          "bytes": 4608464,
+          "sha256": "919cfcd4e3c1f3c2d9be31cd89615a4ddc9a04eaff49bec20aa243c60da0c754"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000036.tif",
+          "bytes": 4608464,
+          "sha256": "fc8e399de651f19108185bc44f4104308f900bf0dd80cbc1558b21c1fd03973e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000037.tif",
+          "bytes": 4608464,
+          "sha256": "2f4a3f288376cd423e0c55013379527893dd9f1d2ce157ec7ef2cc70919a8967"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000038.tif",
+          "bytes": 4608464,
+          "sha256": "dcc8ef0aa34587e33de8b6f36fe3d456d30de6c33a6b57983325a187915854a8"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000039.tif",
+          "bytes": 4608464,
+          "sha256": "e1655938d55fca16aa11861327ecf5ad5a5e835d5cd02387aad60e372ec1a163"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000040.tif",
+          "bytes": 4608464,
+          "sha256": "0bb762ea89277c7270ab78b0eb6375080abfddc0df71421b74726938d011695e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000041.tif",
+          "bytes": 4608464,
+          "sha256": "a2bb015324f69aa709891f59f7c8eec9c371015762855cec21f15ca4a5336ad6"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000042.tif",
+          "bytes": 4608464,
+          "sha256": "f57994cf45ef0702d4e2e4a0c7c2a2e473de2d97ee02dd7fe568f558ea81f201"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000043.tif",
+          "bytes": 4608464,
+          "sha256": "8afd47e7102a431603464f544157cce7e1685121b933ea9c855c6df6be01dc4d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000044.tif",
+          "bytes": 4608464,
+          "sha256": "25e61ad355cf1e21cfb08067587a6ffaf775010b8dacd1f634f750971867173f"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000045.tif",
+          "bytes": 4608464,
+          "sha256": "34d738b6a9d54a25ac3d4bc8f1e2c8049c65a67d7d7b4d153407e7f8478ac879"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000046.tif",
+          "bytes": 4608464,
+          "sha256": "97e22fd51f3cc3837fc7d42db75b80fbf07a338c23d5454e4667101441dc041d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000047.tif",
+          "bytes": 4608464,
+          "sha256": "21662e671d2d5bc329075cbd1d14d550d5c5db775034df8c63b08e07733d424f"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000048.tif",
+          "bytes": 4608464,
+          "sha256": "7e6e143612f6052b3c5e83cefeab55c386555957144824540e11469407138740"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000049.tif",
+          "bytes": 4608464,
+          "sha256": "fe5ae7ac2a6739eb98b46963a8fb9777abd59fcf5d961c6a8138a1624311eac4"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000050.tif",
+          "bytes": 4608464,
+          "sha256": "504b2a1df42aee5d81fa320d213a4baa0560108ef2d129c9427fc6d48b2c1813"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000051.tif",
+          "bytes": 4608464,
+          "sha256": "186ce2a08a413526e9cb7b91375dd728a1cec32bfff1340ffec8a14b008767e5"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000052.tif",
+          "bytes": 4608464,
+          "sha256": "90ae6f7b931af611bc6fc9447c3fcfae918e63f25e9495790890df084a28e16f"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000053.tif",
+          "bytes": 4608464,
+          "sha256": "0b1caeedde5c0824ee16854975ebb06b933cf53150c0749f0740b7032bff4c82"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000054.tif",
+          "bytes": 4608464,
+          "sha256": "90f10859d20be7a50ba7d95bf743f6665d98437411d2786d0ae0a40a9a132af2"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000055.tif",
+          "bytes": 4608464,
+          "sha256": "78b29aed2d3b6eddc7d1e07773c04a45ed0ad59d44cee4c194da03359ab33d08"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000056.tif",
+          "bytes": 4608464,
+          "sha256": "f4160c9d87bac6a9a00e87f9469aaee63fe86f3416d118259fc6d08720ca4a19"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000057.tif",
+          "bytes": 4608464,
+          "sha256": "e36ae3c1de8a18050503b733adf2df5d70bc80e95d224321f392b8b7c7353cf3"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000058.tif",
+          "bytes": 4608464,
+          "sha256": "fc8b88f84d6da607e648a74693bfe04a2a7d0b8a8e5d4ba13f144753613ea906"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000059.tif",
+          "bytes": 4608464,
+          "sha256": "73ff29ab15246303417e34645d17f80e76240b9349b5104aac9ab5008966d4b6"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000060.tif",
+          "bytes": 4608464,
+          "sha256": "d772cde3d5cbcf1efb39ed8c3ffe971b40de6293a0c5a65db97043f4eb756e07"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000061.tif",
+          "bytes": 4608464,
+          "sha256": "a7076040cea8889e52d69c6c1c7d809bed0a59c8ffc08a43b4a4d8ca15de7bcc"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000062.tif",
+          "bytes": 4608464,
+          "sha256": "04c562afc8a1a363c248aaa09a0a64332a7d2368c0e1e4aaa388e4e9e8ee6f57"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000063.tif",
+          "bytes": 4608464,
+          "sha256": "cc557163c5641f65f48d9cfecf11dae1339398bc5c9ce7b64dd892edda5e8e80"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000064.tif",
+          "bytes": 4608464,
+          "sha256": "bcf93f7575dc55fbaeaa33f2433e7b01f0a3261a9819650a8b20f11e6202a7fd"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000065.tif",
+          "bytes": 4608464,
+          "sha256": "51e4987440ca4631a5c3aa87b4cf2a70610bd53b2a94df82901bd7dada68b130"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000066.tif",
+          "bytes": 4608464,
+          "sha256": "06505a10d670585c55b1d68785652ebc76526df4e22e10f75e706dc35454d781"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000067.tif",
+          "bytes": 4608464,
+          "sha256": "47a6058a422b545bde54672a654de24c4a4f99d7c4a0ed188ca9c683f3c51200"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000068.tif",
+          "bytes": 4608464,
+          "sha256": "86b7b1d34b74cad38928323ec6a52dd5a48d611cb1948e767cd2a3211cb61d37"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000069.tif",
+          "bytes": 4608464,
+          "sha256": "87dfb1c74f0f2aa1304a86bee22f97859b05f1a1ede174bf43de24cce412c3e5"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000070.tif",
+          "bytes": 4608464,
+          "sha256": "47f63fc918208443323b7bccb820b8017d07fa360ed67ba2736c56c27cf2f7cc"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000071.tif",
+          "bytes": 4608464,
+          "sha256": "0127f1bfd67cbbafb6b87f733c215a9dfdd90e7cf85cbb8ecadd62a73a42371b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000072.tif",
+          "bytes": 4608464,
+          "sha256": "6c478ad08de3a60aa1a08956874ad9a1d8581daf3efdf4b48260bc508285eade"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000073.tif",
+          "bytes": 4608464,
+          "sha256": "1f4d7a659741da51683511c1f2b71a093243cb8d7807f530c2c77c08684b47f7"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000074.tif",
+          "bytes": 4608464,
+          "sha256": "befeb9905bd338ce56371ab7b9052801a19032aadde528a87a68f05b38f75f6b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000075.tif",
+          "bytes": 4608464,
+          "sha256": "b61c31962f0f5fca3a09a65c7a297dcabcbc353eb655b5d764baae83f61655f5"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000076.tif",
+          "bytes": 4608464,
+          "sha256": "9e8bd27f1fb1b390cc8e1d0e33fa0524112cd98fb71f8f0cfb92a3fd74ec4cfd"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000077.tif",
+          "bytes": 4608464,
+          "sha256": "b3bab1676a156502d5a645a6f9323ba27195ba28963590a8be2345c37d211837"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000078.tif",
+          "bytes": 4608464,
+          "sha256": "cf283e6271a5f49e4a0ba1cf526c7557e48888e9fbdd5392eb38b7b85788f715"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000079.tif",
+          "bytes": 4608464,
+          "sha256": "f14f6e382c210505910381f96fee59352083623450a91345d7694effe47fb50b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000080.tif",
+          "bytes": 4608464,
+          "sha256": "3f33a58273d3fd94bcc50e69c8cdfe3c61c59de0b5defca0b9eeaf6cdd0931c1"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000081.tif",
+          "bytes": 4608464,
+          "sha256": "1158b475866386dc7859ad9007dc2fdcd12c1f3cd658bbc8311c0797dccf35b3"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000082.tif",
+          "bytes": 4608464,
+          "sha256": "6748406d26f26f17f3b9d88b13fa86b5763b017571294f271c8c95a813bb72be"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000083.tif",
+          "bytes": 4608464,
+          "sha256": "1d549862b5052be3645152936ef90f6bc85ec3116dad78af81d2956bb4e6e9e3"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000084.tif",
+          "bytes": 4608464,
+          "sha256": "fbb379476d160fb2558e4d4da7cd7ec29b9e866981e7d0f87b25128bd311a737"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000085.tif",
+          "bytes": 4608464,
+          "sha256": "39dfa8d67494779b878bd7ee61d4c98f2ba05db48b42f6fe5fa96a333e8fa859"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000086.tif",
+          "bytes": 4608464,
+          "sha256": "a87e6c39a0cfa28e7943de78257c373eab038e626f7c09d5d5ee620968a6670d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000087.tif",
+          "bytes": 4608464,
+          "sha256": "7be54e7662f96f9d5575b8f0cce683883dd6efb8a697a8f44c9a870ea9b842b2"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000088.tif",
+          "bytes": 4608464,
+          "sha256": "5650353b33bba3da898a2850ba550b70785619afeb577801eef26594f1b82388"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000089.tif",
+          "bytes": 4608464,
+          "sha256": "80d8bdca7f491e58e742095991a828eafda68416205009fe89683ead2546f95c"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000090.tif",
+          "bytes": 4608464,
+          "sha256": "816bca7dd3611a2d5ab724a8c89322ef8cb0a6e7b1471bbca56a5d8a0dbfae59"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000091.tif",
+          "bytes": 4608464,
+          "sha256": "a4726c31a5141b65cf847cbf7f04558277349dba6e64ca527610499f50b8d16c"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000092.tif",
+          "bytes": 4608464,
+          "sha256": "b0e4997ef6403dc54f73b348cdb2db47b75a88b6df2a2bdf34e7fea8b330761d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000093.tif",
+          "bytes": 4608464,
+          "sha256": "ffaa85c6dd5427fa956cbcfb9ed692273795d3a25260437417691cdd0dde0e20"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000094.tif",
+          "bytes": 4608464,
+          "sha256": "e7869b64de4cb6240a16b88eb2bd47dcdccf1d8dafbf2bb099040f540783e786"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000095.tif",
+          "bytes": 4608464,
+          "sha256": "87b11d235576183fbac6d3fd327d09665c8629457abee835be49923d98cde81e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000096.tif",
+          "bytes": 4608464,
+          "sha256": "bd3dd060b10682b169d5469ce1f71f9c712d2a184d103d88a5f46deb7a660111"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000097.tif",
+          "bytes": 4608464,
+          "sha256": "651ebed046c415b4d9bdc9a2d0a97b6f53ebb84e4e322c1b0e645df21f1970c7"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000098.tif",
+          "bytes": 4608464,
+          "sha256": "252295f34f6e2e8994d2560fd5ebeab6ccb04abc99165339a72bf033523d10fb"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000099.tif",
+          "bytes": 4608464,
+          "sha256": "e93f72d5239b1184c12be50c80062ac71b8b4faabe79e69d40dc56938fa64257"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000100.tif",
+          "bytes": 4608464,
+          "sha256": "0e9c07b801933e004071a03615076c97468e49a82a0316d79f817c9a9518be86"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000101.tif",
+          "bytes": 4608464,
+          "sha256": "2b6f15087a9f0e6d056055f7cfdfb24802c5a6576101cdf555efd683bcd30913"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000102.tif",
+          "bytes": 4608464,
+          "sha256": "5ef30928f37428f3a021094d35ac41cec7a96151c9c21ab1bae4e2fa7e1bcfef"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000103.tif",
+          "bytes": 4608464,
+          "sha256": "75c634e67c6648acb5ad0917717265b9cec90e5494975aba8a9f7c05351174ce"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000104.tif",
+          "bytes": 4608464,
+          "sha256": "749f20507b3c0637152e862ac437a5ec90373ce1c42c4ed9d8e2ca30e59b648e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000105.tif",
+          "bytes": 4608464,
+          "sha256": "495cab783c1a936d9b31aa8bf0766b09a75884ff3d6ae2379f3fae46fa2aa015"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000106.tif",
+          "bytes": 4608464,
+          "sha256": "f735385031272a5c5b9cfbff35f56db4b33fd96c757abd63e3c185bb6d7f746e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000107.tif",
+          "bytes": 4608464,
+          "sha256": "3009548eb10e2d1b372605ae46b2b7168769f55b88373dd343d4cff9562747c9"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000108.tif",
+          "bytes": 4608464,
+          "sha256": "40dbb4863ce2ee1c06c668ee3a93211b05ae88ad32ee6f7b647802b37e1ed48c"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000109.tif",
+          "bytes": 4608464,
+          "sha256": "504ac877bf2018b862ca5bfa97bdcd368258c3eb0ed0e1ca063c6d9228cfab2c"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000110.tif",
+          "bytes": 4608464,
+          "sha256": "341fabdb2367095707b5bea2766de25d88b3ec55c63d3241b69c6fd7a2aeaf17"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000111.tif",
+          "bytes": 4608464,
+          "sha256": "87ce506ac8c53325e45da9df7db41a3cd5f26ffe8468eddc144fceeb3bb945f4"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000112.tif",
+          "bytes": 4608464,
+          "sha256": "6dad8937f1a8d81d8b39c55e9f0a8e14c82e2371f6d3373f307b452a455f86bf"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000113.tif",
+          "bytes": 4608464,
+          "sha256": "cc13223751f3d2c48a58054bea88c941438ba05153faa71aec4b6a220525ee60"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000114.tif",
+          "bytes": 4608464,
+          "sha256": "f93b38b456bdcd7600a3a57173e9e14575eafbf05d8573581165033db41aedbb"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000115.tif",
+          "bytes": 4608464,
+          "sha256": "e9f5a59c3d4805ed43411b4e78353145b092bec3f7494873dc12333fdd741b22"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000116.tif",
+          "bytes": 4608464,
+          "sha256": "dfe969a5a4e15d4e224503adacfaae31bc6376c4cd3c7d28f91d607c6b49b36e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000117.tif",
+          "bytes": 4608464,
+          "sha256": "815056f6e51c709f0aa1dcfa1fa7efb7ac6919f6fe58b3e84309f668f47480be"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000118.tif",
+          "bytes": 4608464,
+          "sha256": "2d64998e2baf2ce4c1f81a56f8c0a761af01a7866890404f7b2ceeb583c986e0"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000119.tif",
+          "bytes": 4608464,
+          "sha256": "0d089d693409c11d54d8ae8968b5c4cb66cecffd08098793b9c5d039fc724673"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000120.tif",
+          "bytes": 4608464,
+          "sha256": "f9e61c8898d895fef3d642c695e783afe6e05318429d1756767e7c0b059f5537"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000121.tif",
+          "bytes": 4608464,
+          "sha256": "1f33570ad4d5b69b10ce6649357d1c25dde51b1c3542590ef7b567ce4fb4e628"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000122.tif",
+          "bytes": 4608464,
+          "sha256": "2517f419920b061d7ed527d1ee249963cfed59adeac81c35ad12714a613c0994"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000123.tif",
+          "bytes": 4608464,
+          "sha256": "94cd18d11d920a37e9f23a4b9f929cb52c7cfce0d97a7e60348b4fd29fe24c77"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000124.tif",
+          "bytes": 4608464,
+          "sha256": "bdb1a8fc3d93cee570001331ebcf9ee61fa52cd383461662d9273d10522b925e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000125.tif",
+          "bytes": 4608464,
+          "sha256": "f1fadce22cfe2d84970dacd9a86adc6572995f7f488b0e33b4c98cab028463fe"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000126.tif",
+          "bytes": 4608464,
+          "sha256": "27dce05f7f50fb2e6f45c0fcbf3260e60b60822150df340d25c2a91eb7101af8"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000127.tif",
+          "bytes": 4608464,
+          "sha256": "5c07c1489e1bc84fab784773716caaa21f7c87cce249eec05d4188032745bf4d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000128.tif",
+          "bytes": 4608464,
+          "sha256": "ec96bb256c80d6528c39bcb36549ed96833f5a491e7fc0d86fa818a0bd77c084"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000129.tif",
+          "bytes": 4608464,
+          "sha256": "f2d968a0f1610e818c6ec82355b10f6eb5cb5023f35746e31f7e35af5b303815"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000130.tif",
+          "bytes": 4608464,
+          "sha256": "df893271f1dc8e5a2b6c595a76e17525c568ec6552d26e2169f3684b8385ee64"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000131.tif",
+          "bytes": 4608464,
+          "sha256": "924bbc4b550340b99e22a014af5c42148f4f9fe7571361d35a31927bcc729aff"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000132.tif",
+          "bytes": 4608464,
+          "sha256": "681e5746f30fd0fba661f7df6004b7d535f6549a18ab81a6af257282fdf5298b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000133.tif",
+          "bytes": 4608464,
+          "sha256": "73778a00a94ea9687510c59ce37c482c3eea763ceddf98b08b5ad1ddef3dff9b"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000134.tif",
+          "bytes": 4608464,
+          "sha256": "d2c00220dca4f581f55e7971c04ca7c372d9c5ff4f4eba62b64a6492ec16cc8a"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000135.tif",
+          "bytes": 4608464,
+          "sha256": "4ac3ebd0dec9eeb267d7e986aa875a5f73ff5930e9e759b839d87239fffc6f2e"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000136.tif",
+          "bytes": 4608464,
+          "sha256": "fac25e2d99eb792c5830a384b4c94d429558256024816d041d6570afb3e23b2d"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000137.tif",
+          "bytes": 4608464,
+          "sha256": "89190cf7545abf3916e60d0f2bcf34c304f1453898969d4cb1e28fe54106a6f4"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000138.tif",
+          "bytes": 4608464,
+          "sha256": "e0d2923374b4e8b8cdfa6b2c4fea32efd8925fcc84ec16e295af4daa8c6c6703"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frame_000139.tif",
+          "bytes": 4608464,
+          "sha256": "62de0c00edff67ca378fd4cf7ef3a86d3e00f49b62cfc06597bed47f54398355"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/frames.csv",
+          "bytes": 13684,
+          "sha256": "7b407ec8ebfde3238d1e102612654e620fd711a19ffe94aeae8cae9f03352b02"
+        },
+        {
+          "path": "burst_2026-09-16_15-50-52/manifest.json",
+          "bytes": 2883,
+          "sha256": "07bad9676a11d3b654a28a9405df849d22f1be4b0cd31258d5bc29bc60a1e5cb"
+        }
+      ]
+    },
+    {
+      "name": "burst_2026-09-16_15-45-12",
+      "description": "Pronounced peripheral misalignment (rotation/magnification jitter); the 'doubling' test case.",
+      "zip": "burst_2026-09-16_15-45-12.zip",
+      "zip_bytes": 264550966,
+      "zip_sha256": "3f283a442fa9026b2ef68209d504ec69847cda74b1ad01f5cd186ec146fb75be",
+      "raw_bytes": 387122217,
+      "frames": 84,
+      "width": 1920,
+      "height": 1200,
+      "pixel_format": "Mono12",
+      "fps": 32.196,
+      "files": [
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000000.tif",
+          "bytes": 4608464,
+          "sha256": "4c43d5267160c102e99bcab53d103f37ff829cc0e037af35f14c24f3c252a3aa"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000001.tif",
+          "bytes": 4608464,
+          "sha256": "5e9004de904231ff823b81eacf3ed926f9d8779cd91ae1b41debb0a5f3415a72"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000002.tif",
+          "bytes": 4608464,
+          "sha256": "91d411f1f895ed81fad9bc96ed37a9772b8b9ab960509477e249ad4aea6b9102"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000003.tif",
+          "bytes": 4608464,
+          "sha256": "1dc2340868711427120dc437cfaacc331f7a4f79a72c22ec3627b0ce705ba762"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000004.tif",
+          "bytes": 4608464,
+          "sha256": "ac5da23380a0f5bf27c4d370369b87e016ce28475711fbdf898eaa426b38e37b"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000005.tif",
+          "bytes": 4608464,
+          "sha256": "28ee858e98dab1adfcef454ab399b119aa6846d8cb7fc07364e75281d7677fc4"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000006.tif",
+          "bytes": 4608464,
+          "sha256": "313892670106ec4079f066101482dfc8aa62d6e3b2ec4d2f55a6b5363e4798bb"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000007.tif",
+          "bytes": 4608464,
+          "sha256": "fd42cdd450fcca97e1d46be9f3783d52e3500689a7ae7dc95b376c8f49c061e5"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000008.tif",
+          "bytes": 4608464,
+          "sha256": "e1a2ec66468a86db7ee74aa29831bbd7498e6c3f66afa5558485efdbac261dfb"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000009.tif",
+          "bytes": 4608464,
+          "sha256": "9d1dd0fcac20f4646b7c9100fc69194c929021b9e38ea286be7c5e82917875a2"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000010.tif",
+          "bytes": 4608464,
+          "sha256": "09eddf5d9e3559010c9b27a8a99cad9b9dd1e3a7966d9d9456c89bd28473e364"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000011.tif",
+          "bytes": 4608464,
+          "sha256": "63020fe375bcee6a26c5723361fdd944ea379bde580d2c60cb327b3a28659652"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000012.tif",
+          "bytes": 4608464,
+          "sha256": "93629d7b59ddd918a9447b77bd79d6c834b3c186c8210e03f4c7d3c36dac1789"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000013.tif",
+          "bytes": 4608464,
+          "sha256": "2c48d9c4f48adacd12bcf0e461d6ec464cd9866bad479995c5e51884bc672f69"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000014.tif",
+          "bytes": 4608464,
+          "sha256": "d1e8e912f4c8a3ee0ef2ce56a8d981328df83ea75a24e690af9285bd8b08ba72"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000015.tif",
+          "bytes": 4608464,
+          "sha256": "2712ff6965f06694f4fe07774745af8880f251cac205cd31067a2facb1bbb356"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000016.tif",
+          "bytes": 4608464,
+          "sha256": "e33f8fcddae14bd49864c9d2a82a5efd5a73213ba863cc0ef9d0b42372dd8e17"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000017.tif",
+          "bytes": 4608464,
+          "sha256": "46e1ed0f2a245f6035de5843321b6812b6018588c0d0e2e45b9690c61bd078e6"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000018.tif",
+          "bytes": 4608464,
+          "sha256": "a0d548aebb134b291085f9b6177e29e2772abb9cbaa8ff929442fdd2f61e9b6b"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000019.tif",
+          "bytes": 4608464,
+          "sha256": "bffdce6cf52c114a95feb5ca324fcd0c240fcd5b66b4d4bd788f30ba5139a417"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000020.tif",
+          "bytes": 4608464,
+          "sha256": "6bbc847fb27aae3474adb4a58b0f2e28a81e5ccae57750972051a2718d61c2ca"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000021.tif",
+          "bytes": 4608464,
+          "sha256": "73b2c2c4e822e7538e07c2db5a29dd1df2e289cf3304bf67dbaa7001a88f7328"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000022.tif",
+          "bytes": 4608464,
+          "sha256": "06c6b3b3406eefdac40c910ca12da862aaa322e4f103be32ca3bb909eb0066bd"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000023.tif",
+          "bytes": 4608464,
+          "sha256": "f14ba059476a0c6db581b178f50a672c80af6bc5c6ce7d3fd73bd86ae89d807b"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000024.tif",
+          "bytes": 4608464,
+          "sha256": "fe4727788c9e760d98bc551f98a282046ac6d403a13606185f12f1c6a102e2da"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000025.tif",
+          "bytes": 4608464,
+          "sha256": "905339f2ce9b232dbaf28c3799a226ff6b35428178d4b4a796815036e9faa4ab"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000026.tif",
+          "bytes": 4608464,
+          "sha256": "2aacb68cbf49632b3fa5e4afd476b486fa65166c40a68d40b8842b16d31993a1"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000027.tif",
+          "bytes": 4608464,
+          "sha256": "e1d00b9e9af7671a3a657300c5662d7c5cbe8b3bfd5fe9524eb0dda9eb1c00de"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000028.tif",
+          "bytes": 4608464,
+          "sha256": "6df418af2db125d5cf45e1168615660992088add1a1a15ed100b67f7b95cf397"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000029.tif",
+          "bytes": 4608464,
+          "sha256": "15b3303e17850302b8ac8944422dca47816d5cb9b87106815eae10029edec6da"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000030.tif",
+          "bytes": 4608464,
+          "sha256": "8c63c67d07a2e4aeef601693f996486829970df15d857f042c598dedf3927d38"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000031.tif",
+          "bytes": 4608464,
+          "sha256": "c663b10b314a9c6077b68836977685c9d30c63a1227f6a42c408ed79ad100588"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000032.tif",
+          "bytes": 4608464,
+          "sha256": "19c9403913bfceffe661ed14d0126a522d7c495cf3492888e82798fa92365c45"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000033.tif",
+          "bytes": 4608464,
+          "sha256": "02604688b941909867512f7f14eaa95d3ef81b79680231cc3d60ef09c2e17324"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000034.tif",
+          "bytes": 4608464,
+          "sha256": "3b02b2bc3d8dcbcdd360d764bbd5b3737044cc31c2841ef45900574b53860960"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000035.tif",
+          "bytes": 4608464,
+          "sha256": "a41655ac193c5dba261005467932efc911d7fcfb829ab40b0fd1b7140179665d"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000036.tif",
+          "bytes": 4608464,
+          "sha256": "c441d42e666ee21bad435a065fda8263aef74ba52e79de5d57c3a4f4b1bc2b4a"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000037.tif",
+          "bytes": 4608464,
+          "sha256": "ab69536cbb84fe21ee7e5c8984dd342867e97dd11279b0de358e18cfd7200aa7"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000038.tif",
+          "bytes": 4608464,
+          "sha256": "2aad331d1cdfb1d37ab385f03a8205c2fabe64a01c1885b7d2076571158fb979"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000039.tif",
+          "bytes": 4608464,
+          "sha256": "cc277d09b05805000f84fbec8782b95d3ba213fbe2d7c5062755bf9a121816ad"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000040.tif",
+          "bytes": 4608464,
+          "sha256": "58d6f0e285c123f5a508f3136ebbe1654ada9b8efabbac1a58d16405820ce36e"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000041.tif",
+          "bytes": 4608464,
+          "sha256": "595f8b34ad32c402f33b727d44c46f4b6230d97424cf624717897a76460d5d5c"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000042.tif",
+          "bytes": 4608464,
+          "sha256": "c71271f6be39d02646f94d30f777765e1c61fba86b0e066757345cde5a436c99"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000043.tif",
+          "bytes": 4608464,
+          "sha256": "6b08459692a3ad99d5d18c3557a23c0e46e5ac95ceb4b0b27c3547c89ee44084"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000044.tif",
+          "bytes": 4608464,
+          "sha256": "dcf82416e1b5c993b9e06fcf09d788f15e77652c55dff5824b9f73293242398a"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000045.tif",
+          "bytes": 4608464,
+          "sha256": "dfe693051bcb66607e9447f6660d48e6a8cd7bb6f4147a49297e090e9c093c73"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000046.tif",
+          "bytes": 4608464,
+          "sha256": "efac5c1a1c3fcefb3ba8f75a071b5eb4f2b8c00974115be8c14e426c14e1fe33"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000047.tif",
+          "bytes": 4608464,
+          "sha256": "3419c73ed07d27e8825c38919c38630c0d318f134da75339150c04e7046bd8c2"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000048.tif",
+          "bytes": 4608464,
+          "sha256": "e3b872c3bc85f08bd5e27cdf2c57cd5411dd798c3ba23ed22cd54e5181c24152"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000049.tif",
+          "bytes": 4608464,
+          "sha256": "0d5db051dc9e7c5fd4168d37f7c61bc4320b63e00bcfd475c4a78b4d9caebdaa"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000050.tif",
+          "bytes": 4608464,
+          "sha256": "44ea01a46b1646030742e779fc64bcbc316e2ab4e0238d4ffcd3b33d9cb95adb"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000051.tif",
+          "bytes": 4608464,
+          "sha256": "19ea338fc53ef12fc52160ea15b63eb8321466fffd1b7ee37b97e37cc0101ef3"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000052.tif",
+          "bytes": 4608464,
+          "sha256": "be5ef176ef94230c01c57c7a8d18521ca04c657a66b3deab55c5482ef22f66b1"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000053.tif",
+          "bytes": 4608464,
+          "sha256": "f7b3472b6f1cfe9968ca5cac2e870020ae94d7cefa79dcb864c919ffcfaa6be6"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000054.tif",
+          "bytes": 4608464,
+          "sha256": "384afe7d3ce121bc110f67fddf23c8ba44e922c6beed7ac1e70165385a666891"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000055.tif",
+          "bytes": 4608464,
+          "sha256": "33dd93ff0a8ff524355ae5edd4b2392b6896e4c2035eae2e97a016fc6b51e617"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000056.tif",
+          "bytes": 4608464,
+          "sha256": "0d1e5de5b6e8b315cbaaa5a3aed2bf46b4cd627237c2bc2ac3e0f0cbb10885c4"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000057.tif",
+          "bytes": 4608464,
+          "sha256": "7f66b6c5497a1a1149bdf461b303b49b8e53448ac1afecfd0b2cdf0c629f164e"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000058.tif",
+          "bytes": 4608464,
+          "sha256": "9b0396f3d8a36fd86d37f81b1991bc11d2cd32eb11ccc62c2938b187798af6a3"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000059.tif",
+          "bytes": 4608464,
+          "sha256": "eaa428a83a64bd4cbdbcaf6ee4e05b454543b7d9d9435e19fdbfac5b3ebf7c48"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000060.tif",
+          "bytes": 4608464,
+          "sha256": "6d1cff6f24af5debc2bbbca9e68a2b39cdbbd669c3312c04f5377afa35c6fedc"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000061.tif",
+          "bytes": 4608464,
+          "sha256": "b23c505c99849dde7cd41a6ee24cba88f6f9c2f43860e9179627f9040617bb55"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000062.tif",
+          "bytes": 4608464,
+          "sha256": "6d72d5001f6d307ad6f92e2bb1cee92c420557f514c2e333cc319aa553a76ba4"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000063.tif",
+          "bytes": 4608464,
+          "sha256": "18db211f17e7ee2297f7fc0822e0ef94274ae3ac254ec6dd1f3d956aa77e8055"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000064.tif",
+          "bytes": 4608464,
+          "sha256": "0f85a5c2b445bbfb2aa5907567146916f96338643e419d265cfacdb9b7b4ce75"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000065.tif",
+          "bytes": 4608464,
+          "sha256": "9ca62df421903f0361d9442efff2318501e2f865cde135354910a2372eb70205"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000066.tif",
+          "bytes": 4608464,
+          "sha256": "96b6a02821ff2266e144d2e24f92131124dbc88381deb5318addc3d569d431e7"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000067.tif",
+          "bytes": 4608464,
+          "sha256": "5e4b4bfc6c585f0c157d3001a697113bb53ea4762fe38c2e4fad106e0783146b"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000068.tif",
+          "bytes": 4608464,
+          "sha256": "25a4208ae78cceb2f106984815805c6ebfa5dc29614771e608508956eebbf21a"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000069.tif",
+          "bytes": 4608464,
+          "sha256": "b9118f0cb1b9d7dfc44b816bf5c6edda9264d8cb9777b3925969568489e4b13c"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000070.tif",
+          "bytes": 4608464,
+          "sha256": "48c354e79df71a75353adb48c7237f9cca58f8bc4ee7fe5b598623b494e85364"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000071.tif",
+          "bytes": 4608464,
+          "sha256": "b4625b10b08039a40702e1a8906fef2642cc39bf0eabe93ee6d0674e4f0239a4"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000072.tif",
+          "bytes": 4608464,
+          "sha256": "89a2715d1b4d28690ed48c6f035f452fe9b5b91e83d70fc6c8ce5d2190c5ba93"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000073.tif",
+          "bytes": 4608464,
+          "sha256": "ffae07649fd12b75c141acd5a0d0cf68f701c2fc12a62f10222ac4ca7e44b55d"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000074.tif",
+          "bytes": 4608464,
+          "sha256": "7ae9748dcc6150358b028fdf2388b675306cff99961736a270665cf0c84d4679"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000075.tif",
+          "bytes": 4608464,
+          "sha256": "338accdeee991e5c7ddcf10e4eeaa2f27a9b18f62ab94e3b82fea2b32566228d"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000076.tif",
+          "bytes": 4608464,
+          "sha256": "4800c384c1bdd142978353ff96c755400b490c7f19220de056e09effc78cf437"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000077.tif",
+          "bytes": 4608464,
+          "sha256": "2ea3fce95a6d996c8406d506316b5a54799acaf5f6ec495a4e49e168a5c4e8db"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000078.tif",
+          "bytes": 4608464,
+          "sha256": "43665cabdb7aef4798abc257840fdfa327876e985a6034918531a063333935b8"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000079.tif",
+          "bytes": 4608464,
+          "sha256": "8dbf971e28edf495bfd22b9fe1df7151c7a8018f8f4e522fd24654d802406f34"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000080.tif",
+          "bytes": 4608464,
+          "sha256": "e7aa835233640602f3d7090693b2f5d571c217a276961f0f546611f777c10637"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000081.tif",
+          "bytes": 4608464,
+          "sha256": "fed091f1baff20de4d6e78ad60d4f555adefde239720f82f18eae90a4cc6d057"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000082.tif",
+          "bytes": 4608464,
+          "sha256": "ad51724daa80f44041b3844a33728783cafa66a83fdfed7700d25e793ab3a410"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frame_000083.tif",
+          "bytes": 4608464,
+          "sha256": "4cbe0d59247f51e55bfa0c8803ae4b58cb45afdf0ade0c481650ee5bb7b8eb87"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/frames.csv",
+          "bytes": 8392,
+          "sha256": "a3fa2d740c863ad03773f8fa688f8438ac99348e47532e91c6e063ca3be2610e"
+        },
+        {
+          "path": "burst_2026-09-16_15-45-12/manifest.json",
+          "bytes": 2849,
+          "sha256": "34a4b4bbce0ec94fff36835bb8ace63457df1df4a571d20432024e248fea8844"
+        }
+      ]
+    },
+    {
+      "name": "burst_2026-09-16_15-40-55",
+      "description": "Hard case: low usable fraction (~37%) and non-converging translation registration.",
+      "zip": "burst_2026-09-16_15-40-55.zip",
+      "zip_bytes": 187299044,
+      "zip_sha256": "29d7e1b381293c688b5d39aa62e1bae620c720793dec5407592957b7640f1d9d",
+      "raw_bytes": 290342395,
+      "frames": 63,
+      "width": 1920,
+      "height": 1200,
+      "pixel_format": "Mono12",
+      "fps": 32.258,
+      "files": [
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000000.tif",
+          "bytes": 4608464,
+          "sha256": "a334f60ee77febe25c348e3c9d34db722cfa70c51ccfc57d4b723809e950fd6e"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000001.tif",
+          "bytes": 4608464,
+          "sha256": "48b249f77887d942e3b4a44fcd5e863cc98683cc26f6cd803e5f3566f54d3e51"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000002.tif",
+          "bytes": 4608464,
+          "sha256": "3ab40afbd378da6dd3ac85dc4f3ae56f79e5dfe0555c50a2877b5a1840cb532e"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000003.tif",
+          "bytes": 4608464,
+          "sha256": "09f702f541dcadfb66fd523f01dc2b6ba1d2ca272acd48f2cd7beb584ecc1d98"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000004.tif",
+          "bytes": 4608464,
+          "sha256": "9f1cbb2e218f5ceab9404746f3628fa53e035820a670dc8530673b1c1c5aeb8b"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000005.tif",
+          "bytes": 4608464,
+          "sha256": "027b801ffc71dc79691b49850765b91b08eaa2b41f967d4ab69ec8617974d503"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000006.tif",
+          "bytes": 4608464,
+          "sha256": "4668860d47279611859ee4f0f8c6b9313fe675d33debdefae6dbf82d1113a300"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000007.tif",
+          "bytes": 4608464,
+          "sha256": "e986074efbae02500cb3898c8e5d41d7293bc6c47f15f0dbd14ab11ae9b8bf3f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000008.tif",
+          "bytes": 4608464,
+          "sha256": "ba59c618ad12935fb0ef918a586726a75c42afffd452358cd46713129c528991"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000009.tif",
+          "bytes": 4608464,
+          "sha256": "eeea5c63848a54d738efbdb7371d741bc4d414add731dee8119217a4b92660c8"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000010.tif",
+          "bytes": 4608464,
+          "sha256": "8fc36c51b696538eaa037845c619b5f9a662fd5e0c5a469781d98a5deebacd19"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000011.tif",
+          "bytes": 4608464,
+          "sha256": "47f8337af2f7be2886712b514eb6e14b335d21afb8726bdd476c1688f82a480a"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000012.tif",
+          "bytes": 4608464,
+          "sha256": "0ba9757c6102ab21fdf36969aa8cd7b2e0615f551754499895a564bbbe7a3831"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000013.tif",
+          "bytes": 4608464,
+          "sha256": "96b05736454a268eac8b753afae9a84047db8eb4471ca73626d0c45a3942d3cd"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000014.tif",
+          "bytes": 4608464,
+          "sha256": "0354d501c684f8b870f76e5db93f1f67fa989ebfc2621ed90680ae0aeb689c8f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000015.tif",
+          "bytes": 4608464,
+          "sha256": "41222710ef2c1fd2920f29a912ff766d10334a5fc90678dd1305fceff44a75fe"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000016.tif",
+          "bytes": 4608464,
+          "sha256": "c615b16d291ad12dbfa5be7eb4964b65069ac54869e2a75de30f4314371fdf7b"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000017.tif",
+          "bytes": 4608464,
+          "sha256": "24a3214a3de58e8229fd6bfc4a6f8996b0559285ee87695b7efa31338b3125ca"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000018.tif",
+          "bytes": 4608464,
+          "sha256": "81b3f0ce1b535c31ee9dd4378cf3f4300a900dc72e07107f9f3b25289fd9ac24"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000019.tif",
+          "bytes": 4608464,
+          "sha256": "cc496bf47abf96551f918200ee5e30253334c1a965731da4a96204f4cb11d747"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000020.tif",
+          "bytes": 4608464,
+          "sha256": "ff247b86eb3b4f896097b4b60a21c3844d67c92a306d6212a295989bb3bfb56a"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000021.tif",
+          "bytes": 4608464,
+          "sha256": "e6a7a22dbbf35a07613c5a648f663142c82dd5357be45cdb20ef836d9ff15cbb"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000022.tif",
+          "bytes": 4608464,
+          "sha256": "c56807a5fe586835b67c3077bb69dee200f2a47f4793d9df6126a8a525ff5b6a"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000023.tif",
+          "bytes": 4608464,
+          "sha256": "370be40469fee6911c31f6ed41b724cf9f54c2a86c2e49d5fa88aed8d0c4feab"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000024.tif",
+          "bytes": 4608464,
+          "sha256": "d302ce90b22b224c1174a90b6db6dfdd76c55fd61d3cb1bd1d1bf189299c2701"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000025.tif",
+          "bytes": 4608464,
+          "sha256": "28d06645f5f008d5b94f651f62044942d770b8213345d80398f650ec95eec07f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000026.tif",
+          "bytes": 4608464,
+          "sha256": "3418c58b6493761d8187056b9cae6c8d7c24065e12e32cf33df9f62b75027f7e"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000027.tif",
+          "bytes": 4608464,
+          "sha256": "c0ac2f05922137cdf24f2ec862532b57313cc4a30eaea6a4da467744dd55d7e1"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000028.tif",
+          "bytes": 4608464,
+          "sha256": "4e739963e47e8309c789aa325cd8b6cc57bed1c2e4aee89f88e4e9a3fc097228"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000029.tif",
+          "bytes": 4608464,
+          "sha256": "4882df736c6f95d8193c7f9cd0491fdc7b132247155cf697a53e0804fcbdc4ec"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000030.tif",
+          "bytes": 4608464,
+          "sha256": "43fa63dcd4e8822f2cf0484c77b41ab956af74a7993acadbb9c3e6641000e557"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000031.tif",
+          "bytes": 4608464,
+          "sha256": "3b401f6e6eef5c5c55b0bdc60c64af88843ff5140a570dc44719eb1b018f48c6"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000032.tif",
+          "bytes": 4608464,
+          "sha256": "5538bd726ca54693e202b5ab27acc8f5996d6807cc18446490cab8b3cdc978dd"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000033.tif",
+          "bytes": 4608464,
+          "sha256": "9247128686f79c3bb1499c865322e546eecf11c33c7c94be6c4ff2153fa7d970"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000034.tif",
+          "bytes": 4608464,
+          "sha256": "4c74bf798757159d24380a39f883a24ff769bc21c7598c5454a4cc5b3adf6c55"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000035.tif",
+          "bytes": 4608464,
+          "sha256": "bd27cd1fcec3c74b7f802a6ea69a6f4f1dbea0cecf0721fb30b1d3050aad4b53"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000036.tif",
+          "bytes": 4608464,
+          "sha256": "d4569b4d3fecaba5daa2a76bc43e2fe20f44b4505552c3081a3573ef45afb13f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000037.tif",
+          "bytes": 4608464,
+          "sha256": "a189ff1c24d2e9a62b8261abaa01c84b3d65e32851439aa31f8077e4ba2ce5a5"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000038.tif",
+          "bytes": 4608464,
+          "sha256": "1b9804bfa7f7374a36b61c85dca15982cce950f5054533d23373468fcd45c6c4"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000039.tif",
+          "bytes": 4608464,
+          "sha256": "4490bce4f9f82a27403909a746003fb6bc7edce8ae90f3479b218eff4c663711"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000040.tif",
+          "bytes": 4608464,
+          "sha256": "af3168575fa655204824b341ec31070fa5d3fc86876ad68d10ec1580f3e3e7b9"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000041.tif",
+          "bytes": 4608464,
+          "sha256": "bd5f9a3247b506c127c0373c2cc36aff7a5a4aa573ce140e45a679e7e6226803"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000042.tif",
+          "bytes": 4608464,
+          "sha256": "eca75d5e1ddbbca4ac5cdf63b0b4e6e9d47aaa6e35bc8a720537233e5dcd5cb9"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000043.tif",
+          "bytes": 4608464,
+          "sha256": "a2f197f2e368324177719dfe906811aa42a304492abb94455fa79ca8d15a2e11"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000044.tif",
+          "bytes": 4608464,
+          "sha256": "82c0586e77030fe3d5974ee7de06b96e9774459b19b57f34022845f6a70e91ad"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000045.tif",
+          "bytes": 4608464,
+          "sha256": "f5aefe8ca4b8f34ced9f6880d938633efe4d506850d51ea9ef12b0a9ff3de47e"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000046.tif",
+          "bytes": 4608464,
+          "sha256": "0f39aaa8066fa860a9edc1b21850b08db329d16e2911e32cbdaec5664faecf3d"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000047.tif",
+          "bytes": 4608464,
+          "sha256": "d4527fadcc39df6aee7954dde5863903ac7e71a8f7d88c21fdbd6e0f0f6243e2"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000048.tif",
+          "bytes": 4608464,
+          "sha256": "b058c423bdc09d7356e5c2805eba7bf8f84dcc6678a1f785f4807938a64cc5b8"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000049.tif",
+          "bytes": 4608464,
+          "sha256": "0a3a76e023b941cd9cde84527ef7ec1aff473a63bca18ab3290bf3eac56b9f63"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000050.tif",
+          "bytes": 4608464,
+          "sha256": "3af746e3bcb7cedd33eca5f089f7e1e215645775b6847e2593ddbd4d78167e9f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000051.tif",
+          "bytes": 4608464,
+          "sha256": "04c6ea67bbb1e7e3b01b7a2f28b8d6384bda8b36761ed47f9e7085230ba42e6f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000052.tif",
+          "bytes": 4608464,
+          "sha256": "39f8e08a2b71c90a60647e1aecadffd76a28f820c8d9b977995d538cd7e2ee90"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000053.tif",
+          "bytes": 4608464,
+          "sha256": "947729f6b3efba3888f811998ce92bf4ff0a688f371aa21dc528394e0149ea9b"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000054.tif",
+          "bytes": 4608464,
+          "sha256": "dfaf0f5c2febe285265ddb9923b65fc971c98fa8d25498e002e1eb914b30b383"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000055.tif",
+          "bytes": 4608464,
+          "sha256": "81528a01eb9eefe8bf91b7e08df1f6720118244057471e81bc9374c1d13c2526"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000056.tif",
+          "bytes": 4608464,
+          "sha256": "0bf96dac3633bafd1dfeae5a779dfd144a5ce9229bf27f3466ef1bea519e97db"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000057.tif",
+          "bytes": 4608464,
+          "sha256": "36d1d179abb77628d6ade96d61b1e1ea2bc3111c7ff5f05f8c5289ad0930ff9f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000058.tif",
+          "bytes": 4608464,
+          "sha256": "c7ae535dafc7864f514a540279c040fe8eb2c1d24ac24a9bebcaf1cd0d030a8f"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000059.tif",
+          "bytes": 4608464,
+          "sha256": "b38286700b9dfe043e3563347d8d6b798a9263227227d62c8dcfb7dc7d794b6c"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000060.tif",
+          "bytes": 4608464,
+          "sha256": "e18672888035ac54975ada751a8f6f97c61c834df94ab666f026d5f94576fc6b"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000061.tif",
+          "bytes": 4608464,
+          "sha256": "f305e45bafdf21f7f38dd8ab14b52d51fc374bf59cafde879dbbecfb00d1730d"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frame_000062.tif",
+          "bytes": 4608464,
+          "sha256": "26ba3e66343af0b094f5c567cff4ba839f95422347f1e8451f6ae5c7882733b0"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/frames.csv",
+          "bytes": 6314,
+          "sha256": "862fea0e3242d280bacf1005ef07159a0d8c7bd55c369f8ff5b5ded7e4fbcdc7"
+        },
+        {
+          "path": "burst_2026-09-16_15-40-55/manifest.json",
+          "bytes": 2849,
+          "sha256": "b2f1d38d15cecb4e4c0a9527a833b8ab2d7f70a89792d654c88abdb4e088ded3"
+        }
+      ]
+    },
+    {
+      "name": "burst_2026-09-16_15-31-37",
+      "description": "Short-ROI geometry, clean.",
+      "zip": "burst_2026-09-16_15-31-37.zip",
+      "zip_bytes": 208520137,
+      "zip_sha256": "b85f40661a92213322e6db28c9d55df2603a17861db3cdd940b9c05aff8bb4d2",
+      "raw_bytes": 307292902,
+      "frames": 160,
+      "width": 1920,
+      "height": 500,
+      "pixel_format": "Mono12",
+      "fps": 73.713,
+      "files": [
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000000.tif",
+          "bytes": 1920464,
+          "sha256": "c24980fbee10daba0ca73500f8b552828c82df9ae4291380433b4100504a6e61"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000001.tif",
+          "bytes": 1920464,
+          "sha256": "e2ff764965c2fc5b67810727d9e000f8e7b0a7f31e563c3300fdf3c81ce83e27"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000002.tif",
+          "bytes": 1920464,
+          "sha256": "48c8d425e7d661987108137c1bd30bed4dcd8c0e968ecf015c8dced1b9b78bd8"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000003.tif",
+          "bytes": 1920464,
+          "sha256": "2fed5cd705dc52829c5153708d2e613e0edb9aecaf1e3a407f366067e6bcf859"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000004.tif",
+          "bytes": 1920464,
+          "sha256": "1594ead0e6eb78b5afc20bafae1fffcfbd08f506083d2c8303d39bd05752db79"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000005.tif",
+          "bytes": 1920464,
+          "sha256": "50b0a9dfdc89d94ffdcc462d9239d3506beb0377ee6c826f2b0609d911e0156f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000006.tif",
+          "bytes": 1920464,
+          "sha256": "57518646645453c998b68e027949635a38286335103cde907e27312f5a593240"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000007.tif",
+          "bytes": 1920464,
+          "sha256": "9cb3e0d3bbb70edd123b1b97bc12b8d53ec322dbc80f41dac936ed20199ee7a7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000008.tif",
+          "bytes": 1920464,
+          "sha256": "26c38a32daef5f850400309a9c4d87086059841cb341753e6d7464ee7202cb10"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000009.tif",
+          "bytes": 1920464,
+          "sha256": "cfb85b3f056ddb8c791711ef052bcb0831862cee84d9957cba1545df03846167"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000010.tif",
+          "bytes": 1920464,
+          "sha256": "a482e8f7769073872dc15cbce56d0d8e0ffafe04a290aaf74541d6a899ce21a9"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000011.tif",
+          "bytes": 1920464,
+          "sha256": "fffa3e0018e4d8273ea969f513ca6d39383761be9b6500122be7e7d6428fdf73"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000012.tif",
+          "bytes": 1920464,
+          "sha256": "8e40dd02c46e6a150200061ab71f1d885d4e1f88babdb10b889069f47d7d5853"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000013.tif",
+          "bytes": 1920464,
+          "sha256": "43d25ca5de5f0f369bf04a74233e13278eac37521bc2a3025dcab60bb65cd277"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000014.tif",
+          "bytes": 1920464,
+          "sha256": "af555a4c171d2021b81d4dbabbb5d783ab2cc77e3f94f41b75d4304e6253370f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000015.tif",
+          "bytes": 1920464,
+          "sha256": "662d61cca838f464f4524d088da8dcd12563f1af3ca6e54e33f4feaedc927dea"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000016.tif",
+          "bytes": 1920464,
+          "sha256": "a97c313863f54fb6e3a9274a7593768dca41e206500c3ede0ea81973e61786e7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000017.tif",
+          "bytes": 1920464,
+          "sha256": "e8ecf984e371b881a7e7d9be3522ee369ab4d2c803d7623cc6dd4c2ea2191a72"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000018.tif",
+          "bytes": 1920464,
+          "sha256": "105464dc90bfded56d5a127d242ad700ed5f97e1a25d034b1d7e8c4ffda00747"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000019.tif",
+          "bytes": 1920464,
+          "sha256": "8d3c27526e62d33973ac3bedf519564ba9c655df4c04ba9b4fdc50544c7507ea"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000020.tif",
+          "bytes": 1920464,
+          "sha256": "9a4983ed5d440789467c837f9a23718e9a4bfc68705711b11a4480f8a3d911fa"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000021.tif",
+          "bytes": 1920464,
+          "sha256": "072cfdc7beaed46a0af92bc14749ff6d767f7c2ffbda2c6e07edee3899d3ab36"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000022.tif",
+          "bytes": 1920464,
+          "sha256": "5c77fc40ecab3e58b3edc0443b5428f5cc919370c405033a58f7cc992faeca07"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000023.tif",
+          "bytes": 1920464,
+          "sha256": "c1d1193d43f42f04c80af8cd19ced7470edd7b838b410a7951ea364e6433c14c"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000024.tif",
+          "bytes": 1920464,
+          "sha256": "5d3117631f5df1e65ba58357636979eb2bdf36453f92a26cc0611db67b23d6e2"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000025.tif",
+          "bytes": 1920464,
+          "sha256": "33aac84916cafa65bb1fc76a6f7f9a1d9671342dda2c876050b96bfdf37c5c59"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000026.tif",
+          "bytes": 1920464,
+          "sha256": "879cd18777034350e03d6a1aa4bc1105e23392a3f0216077cf181f06a3a9b39f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000027.tif",
+          "bytes": 1920464,
+          "sha256": "ae2f8afd4b70a1b08ece8b0637e643c871f4a290a4f0af3a27d980a4af29e5d7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000028.tif",
+          "bytes": 1920464,
+          "sha256": "37031afbd2c928023a204423fb1655f3ceff1e3583b2643a0763d8f9bffc1e0a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000029.tif",
+          "bytes": 1920464,
+          "sha256": "9030ded53f9cf56a752bd4d4c645e1f59be78134b2ae64dbdb3e346965e2517d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000030.tif",
+          "bytes": 1920464,
+          "sha256": "69dc74011adef7715a36b4761b6dd69afa06ef9dcf926e46e44074dc8a0688a9"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000031.tif",
+          "bytes": 1920464,
+          "sha256": "8a262b0aa638d049cd7941038ba55eb75bf6ae8bdd1e91cd7a34729daaa86a10"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000032.tif",
+          "bytes": 1920464,
+          "sha256": "577537deec0bcbd78b6af467d15b93110909f16724e585f556a5c076ed703575"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000033.tif",
+          "bytes": 1920464,
+          "sha256": "d9fd8b4ab51eb4f9dd9102a540a4bdb0ca6ed93a6febd46f25656a2cd9196e3b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000034.tif",
+          "bytes": 1920464,
+          "sha256": "333429c98fc0817de6a5672c980d7940a938a2a8ed049602ca0a6e48584952d3"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000035.tif",
+          "bytes": 1920464,
+          "sha256": "742ad7058719e85452ccd26228a10ab320456d4411ec21f061db400dba8d0a2b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000036.tif",
+          "bytes": 1920464,
+          "sha256": "ec723049717442d9f5168b164f5ee331640d9db202e371fd452e03f41f9c5722"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000037.tif",
+          "bytes": 1920464,
+          "sha256": "c4ddeaf746a2b6e53a2e9085db95e5686d22c6f4749fe169cc671f608c7ea7eb"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000038.tif",
+          "bytes": 1920464,
+          "sha256": "877abd1bb3f105244674b48ecdd7c3380a304c54793eb7e0fb8b1a23de347718"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000039.tif",
+          "bytes": 1920464,
+          "sha256": "0f4318a3406c41c39a98394cd226dcfadd53af8bd2fa5ce705ad4cec22c1d313"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000040.tif",
+          "bytes": 1920464,
+          "sha256": "bf49dac9132bceec0b071c4f66e03a07ed7f41e3a9897193117810a2001442f9"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000041.tif",
+          "bytes": 1920464,
+          "sha256": "0bcea5a84002817a7fdeef268aa99ca9a8bba1cac26836fda9daabc085ba9b5f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000042.tif",
+          "bytes": 1920464,
+          "sha256": "a3bcf7fc0b756a11019bd938474cd1a5c18d8555ef024c55f2bdf69ceecf9f1f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000043.tif",
+          "bytes": 1920464,
+          "sha256": "8d01407ca03f43dd5c96e5ef5e0802a26440cc42f9ea82f6e294379dfcee024d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000044.tif",
+          "bytes": 1920464,
+          "sha256": "41e4faa30e8c4aab962d1e0a2e63589784e7062e5b323362efeb70dfadfd463f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000045.tif",
+          "bytes": 1920464,
+          "sha256": "325cdfd1728365a77360709fa197bb93ad3b6aa275a0d02e4cc2370fd3470470"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000046.tif",
+          "bytes": 1920464,
+          "sha256": "bf1bd8129eb7852225fe6cd5cad2b29ac290c7e7e19af962c0818a989d3a0738"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000047.tif",
+          "bytes": 1920464,
+          "sha256": "c10b4538bf5d75762350bcaac607d3005c9594b4d167bb63fd0184d2965242ff"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000048.tif",
+          "bytes": 1920464,
+          "sha256": "139f910f46affcaada9459cbb3d1d0c07f359ce882eff1bc3f8dc0d1feaac639"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000049.tif",
+          "bytes": 1920464,
+          "sha256": "1246b0c82db78b5648accc11417e54b70c48a77f8af14ed43c326eb5fca88425"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000050.tif",
+          "bytes": 1920464,
+          "sha256": "71791ccf67f5e67759da3473ebd32cb59e2fda6a13f52472a70c0d8c81623f59"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000051.tif",
+          "bytes": 1920464,
+          "sha256": "eaab6cd184514a6203389b3e3c1b5d786a0505542054b4318d98d81cddc472b3"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000052.tif",
+          "bytes": 1920464,
+          "sha256": "d51632f77383eee17e9108463217219cef63ea6d65fb6ecc2124428501e54f3c"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000053.tif",
+          "bytes": 1920464,
+          "sha256": "d3295d64a7a53e7b64fbd719d7d4af920f04f6641f6b10c739f9b053a0a40228"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000054.tif",
+          "bytes": 1920464,
+          "sha256": "f0feffafd7f0069bde2d77078d54c30730bcc583489e956cd93360401361321e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000055.tif",
+          "bytes": 1920464,
+          "sha256": "2d87dc190c0ac12184cdbec5e51c4a758063d64f7aca3762ec8573298f9057db"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000056.tif",
+          "bytes": 1920464,
+          "sha256": "e8fc6359b7e2c056d411227bf4d9ca01bf1be0c306cddd84d221e212cdcb206f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000057.tif",
+          "bytes": 1920464,
+          "sha256": "63e7aab41674265ef1f84d71e3d49aa6bef3fd3e3f0216029982914537edf52b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000058.tif",
+          "bytes": 1920464,
+          "sha256": "09e24c6a77417867fa479348c6f080915ed0a5a2b5d418116f8ad1f70e61d292"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000059.tif",
+          "bytes": 1920464,
+          "sha256": "38fbc27d115ce2eb7a3f2b03b6b3083b0284c2e40e2f6a2acf34c0fb35a002bc"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000060.tif",
+          "bytes": 1920464,
+          "sha256": "f57693f9d4797d9bd1d85982124ab98ac87284395d17f174a74daad564c48f1a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000061.tif",
+          "bytes": 1920464,
+          "sha256": "90c666f38dc29416f29274954a42369a864d8c4cfbd8eca962700980bdbd915c"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000062.tif",
+          "bytes": 1920464,
+          "sha256": "6d033c317d3680acb62ad7ee824dfb11220d957d4ffbf8a627bb4287883d2141"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000063.tif",
+          "bytes": 1920464,
+          "sha256": "e7538bfb37c6968399d651edcdce93925077f7f8068baae3e1f57822f34803e3"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000064.tif",
+          "bytes": 1920464,
+          "sha256": "f26bac3c9b01dfc34cad086c5356cd925e233bd817d5dc6dc693aeefb14aed3f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000065.tif",
+          "bytes": 1920464,
+          "sha256": "c0311ea6d54c966648082688636bde75c403b67a6055172d6b70e3d73644ba2b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000066.tif",
+          "bytes": 1920464,
+          "sha256": "827822cff9d5424c052433422a5a0028d61939660c72ed782fbfd5f2f33cdd80"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000067.tif",
+          "bytes": 1920464,
+          "sha256": "8e089c84fe80d2f61c32dff8d170aba48412590d38df5d34771d863f272bd367"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000068.tif",
+          "bytes": 1920464,
+          "sha256": "7b5774542fc88292a5311c2265abc906931f36948a463fbbf250c9ea0ac4250e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000069.tif",
+          "bytes": 1920464,
+          "sha256": "721e0b377b1957f8523b01a34987a550d435bc05fe04933519a8ba8f2182b085"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000070.tif",
+          "bytes": 1920464,
+          "sha256": "d065a56207d316852730b3eed3551c8fa1385ae25623f2c579dbcc61c559c605"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000071.tif",
+          "bytes": 1920464,
+          "sha256": "716a7da21d7a6c0e7c87114a9e6bf11cb03e324717287670fd75e91f5835f10a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000072.tif",
+          "bytes": 1920464,
+          "sha256": "020364e19d1dff8a0dd38f8e8975a0ea177390dd3a25d6c880ece71c24351339"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000073.tif",
+          "bytes": 1920464,
+          "sha256": "0d0e043c611ef56d513168a3c2e8e4a27e079671d97d3d2b74b6fe93dca877a3"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000074.tif",
+          "bytes": 1920464,
+          "sha256": "470da0ae8c03fd1939d6a213d2f16ad2eafa35a3fce1140b15657c2496173375"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000075.tif",
+          "bytes": 1920464,
+          "sha256": "e9cd8d6535e9528647dc4916e2d6a291b2ef40378ce1846425ee151cec87cd46"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000076.tif",
+          "bytes": 1920464,
+          "sha256": "2775ed0c913469f06ec83a35f8347f4cdeaafa0b0586f354433053c1c171f7f4"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000077.tif",
+          "bytes": 1920464,
+          "sha256": "2d864bfafe83704fb753cdbedd0a3bf4a1af06ebebf48a2cb29bc3e35f57234e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000078.tif",
+          "bytes": 1920464,
+          "sha256": "67b2dfaa55edfd279e00af0ef25fbb8c57940e6c609c9e279c578cdd75bb893c"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000079.tif",
+          "bytes": 1920464,
+          "sha256": "2fca148ed6831a4dac7a0083580cea9013f911b56e1ae9d59dc8f7e3166e3f5b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000080.tif",
+          "bytes": 1920464,
+          "sha256": "f8a16ea37b8e660f8ce494d4ab75e8c8de69d1b954bd05bbb06c423936d6bfad"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000081.tif",
+          "bytes": 1920464,
+          "sha256": "8222dae2f121f0862286d3321db26a126c1d7913b312c137a08c7861fdec735b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000082.tif",
+          "bytes": 1920464,
+          "sha256": "2dc0b7c5ac69190b8a2271c226482c84b7c70bd46dfcae8887e04e8440e4ed41"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000083.tif",
+          "bytes": 1920464,
+          "sha256": "39fe060c555179bdf637bcb2e949b7262210e5ca142a3a2013fb2ee4b2d5fd90"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000084.tif",
+          "bytes": 1920464,
+          "sha256": "e85fca205280e178083caa70d75d97d2463cf24ef607b5113f9d7ca078982de2"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000085.tif",
+          "bytes": 1920464,
+          "sha256": "8ad0e2fc459f40d2446494c044c24625da2eb55177a41321c582b12e4045b7d6"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000086.tif",
+          "bytes": 1920464,
+          "sha256": "3bdf6974f8196dfa4acc41c27cbba192a07a32355b191a771323c6516f3e865e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000087.tif",
+          "bytes": 1920464,
+          "sha256": "d6c13ed45716313e1a337b5c5b658d5f19be64bd757b6240cabaeadbb6c3eaba"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000088.tif",
+          "bytes": 1920464,
+          "sha256": "9b2565f314eb927d9d141c02d150ce4cfcb61b37fecb836810dd15344a9413f7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000089.tif",
+          "bytes": 1920464,
+          "sha256": "061106bb9780362235dd03fff77217947c39b3aaa3294c3225298c2699743a96"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000090.tif",
+          "bytes": 1920464,
+          "sha256": "5cf031405f32a73905342d020bd6fc7f6bee68f884a42d3b5fcce1a517172e0e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000091.tif",
+          "bytes": 1920464,
+          "sha256": "2efabdff38556eccb9cbcd2d934e77bae657fdb23edb7a943926d3398381df32"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000092.tif",
+          "bytes": 1920464,
+          "sha256": "3749ea327dcc46d2d045df442206e887757edbc0a12a71fb4510758d12a1d968"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000093.tif",
+          "bytes": 1920464,
+          "sha256": "7eb9c9b41a819e3723ee00d9b139fb50a5a292547cd9c6d43ab89b4bafc86364"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000094.tif",
+          "bytes": 1920464,
+          "sha256": "f5f770e20118ac62b6f0a50ba34226d0dfc04b4691c67499aa5d99ae1346864c"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000095.tif",
+          "bytes": 1920464,
+          "sha256": "9950fba94b90cea6cce9ecf36ede22640a23a5f067276d29aa85d38994738d8d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000096.tif",
+          "bytes": 1920464,
+          "sha256": "00553196a9a26a033f992619fbc3435359358185159aa188f9d691eb8e77d770"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000097.tif",
+          "bytes": 1920464,
+          "sha256": "549cf69cee5163ddf07e0a9fc013e7625a38b011eeb9276acde5230260912c1f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000098.tif",
+          "bytes": 1920464,
+          "sha256": "a830c394a9e96834218453551eed6097f0b9e3703ca2c0b158285d41277760b2"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000099.tif",
+          "bytes": 1920464,
+          "sha256": "4965a93c9f7436d46725d9c8afecf1fd8903687fca1a9991f675c7003282a36a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000100.tif",
+          "bytes": 1920464,
+          "sha256": "1c456da7ddd0b806fd139e72250b1ae6fbd58503d97936a3c43eb54db7666e60"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000101.tif",
+          "bytes": 1920464,
+          "sha256": "7bf0dc95f1dd81787d48a36fdbae7580a3748fca38d2f3eb41537abcef84a54d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000102.tif",
+          "bytes": 1920464,
+          "sha256": "91e29e31fee302aa922d3fe87a8a266d7a9b1f838afb18aa46103fb014d3e85e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000103.tif",
+          "bytes": 1920464,
+          "sha256": "7016bca889c3fdd7748df665fc91d531f3580c0d4a34f1dd314422e39e34236e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000104.tif",
+          "bytes": 1920464,
+          "sha256": "06fd843d76d5a4c8a26e4d6db73342b34012e55e8fcb5690e065cbe89c712a32"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000105.tif",
+          "bytes": 1920464,
+          "sha256": "1205e548a4c15f437dfb7690f27c271cf3862a34bb173b2e1b5e942301ba8983"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000106.tif",
+          "bytes": 1920464,
+          "sha256": "9f7a9bcd90d1c61cdcc102d8f5c385ee88d730d6ab79f0eb6b31f1d9bf942502"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000107.tif",
+          "bytes": 1920464,
+          "sha256": "3a897711d427a0947b7cc04c5e7c63ca6baad1d7d353720f2864d8098bf4e4be"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000108.tif",
+          "bytes": 1920464,
+          "sha256": "2a8acd45259509ca6209eb30f45a1d338794607a6fe52281bd3114f1376c265a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000109.tif",
+          "bytes": 1920464,
+          "sha256": "bcfc4c74b78c992cbc95aa985c987073e68da214a2bee00a912cf9120f305923"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000110.tif",
+          "bytes": 1920464,
+          "sha256": "0a026c23b4abdbc580d6be22adfc18376f8c6d0df1a21413178a3e6b50a887c1"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000111.tif",
+          "bytes": 1920464,
+          "sha256": "5a89bd8789081cf7bcb69e3208bec8aba5baa50cc3fb658f6b7eb1cf6f44f0be"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000112.tif",
+          "bytes": 1920464,
+          "sha256": "ff3cd2704049efb734a5dee078a018f1bcfd4848a17c6b877580b335919b5a39"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000113.tif",
+          "bytes": 1920464,
+          "sha256": "5f1f1a956dce27a3725d3cb8ca1dbda9d7e74e664dc5017f2ce4cc827afe2e0e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000114.tif",
+          "bytes": 1920464,
+          "sha256": "474493ff944ca905bd31e27821b36cbe913c317195d92fb7158d5ffa646599d2"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000115.tif",
+          "bytes": 1920464,
+          "sha256": "77e6d8d40e53074bad68f0dfa9d8895a192f361bf5ad7fbd8a2a071303fd6235"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000116.tif",
+          "bytes": 1920464,
+          "sha256": "3c6794dcb0ba693e63db5d0c7c3af090786546c0751e698fb0dbf7ff512c6f08"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000117.tif",
+          "bytes": 1920464,
+          "sha256": "32ba80e22b8c6f2fecb16ab426bf6f8eddde8dbc81c92defcb86bacc1cc4ff63"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000118.tif",
+          "bytes": 1920464,
+          "sha256": "e54eac74b58c30480d32f7abd9cae7d35270511e299cdec793ef3da95ce2ca2e"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000119.tif",
+          "bytes": 1920464,
+          "sha256": "d47305e1fef8c230302e7d5af8f101cf3bc7972607712284124fa3cff849a863"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000120.tif",
+          "bytes": 1920464,
+          "sha256": "6cc4b4f359b4043d0e6ec919975021f3a64ff9674446b82314c9d093ea410391"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000121.tif",
+          "bytes": 1920464,
+          "sha256": "d96d103c87c729eeddc6cf8bd40ab7d4d22f7b8521ad112b3a6905866ec9b466"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000122.tif",
+          "bytes": 1920464,
+          "sha256": "52ee8f5736349ddc31a92c3e61aa7f1c580a854348c0d35ac3488146d1b96251"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000123.tif",
+          "bytes": 1920464,
+          "sha256": "1b5f0e151b39c9c24d981427e1f81c4cd237c9da4331f30f7c3a09471e0e7289"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000124.tif",
+          "bytes": 1920464,
+          "sha256": "e140db7f9499a4581c9bba8580efd063825a536a8bb43cc6d5576b47a0b8af17"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000125.tif",
+          "bytes": 1920464,
+          "sha256": "53852fb9f25508f56d69e67796ffb601cdd4e8f7721d85a0b4dc9ca88359c380"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000126.tif",
+          "bytes": 1920464,
+          "sha256": "e8d8615353e08bfb7e4da55eb9b14299eef15d6afb645ab596cce1d1c06ace74"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000127.tif",
+          "bytes": 1920464,
+          "sha256": "b4f0b1b93eab5fe04f5443025be02a1e4798faccc8f9392e82c0401b247f9f5f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000128.tif",
+          "bytes": 1920464,
+          "sha256": "f243e477613f31a274ee6ddb4c6b77efcc6c9317cd8b08aeb59da5bbb9e77dda"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000129.tif",
+          "bytes": 1920464,
+          "sha256": "6f1bb75f78022db7b49f40ff5a0ebfdc9b8df3a614f7fb9cd3e5129e12d6235a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000130.tif",
+          "bytes": 1920464,
+          "sha256": "90735cbcd2d19bb57434b98c85728a032c449024c1b4383983e546ca1b1a4bb6"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000131.tif",
+          "bytes": 1920464,
+          "sha256": "c696be964514ef22324e21ad7d2b47154bd2c267c2fa12a0ad70c84720ccf622"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000132.tif",
+          "bytes": 1920464,
+          "sha256": "6d7139bf33bf5de30b57683a524b2c4daa42e61e815fb59530c934f8a8d4f006"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000133.tif",
+          "bytes": 1920464,
+          "sha256": "b30113154dee4102ef2d3dc989519a7e22b4d456d67a8c1af2bfbc6959375c9b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000134.tif",
+          "bytes": 1920464,
+          "sha256": "315483da9ffd2d134fff9900ed9358e48b64fc5f20baf90f430e7cf9dd333f4a"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000135.tif",
+          "bytes": 1920464,
+          "sha256": "208ddec5bb4f3fe6fd3c41154e4e6d45cb32a99bc448d0487fee92f4be58a268"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000136.tif",
+          "bytes": 1920464,
+          "sha256": "381dd906b9242e2242a10f03702f6b6038a37be54aa0108d64e4c7f3a5bdc6eb"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000137.tif",
+          "bytes": 1920464,
+          "sha256": "79b0cff8b57a3ac0b5a4ac3515167ce066a7a7273df1bdec0fae1e1a31fd9432"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000138.tif",
+          "bytes": 1920464,
+          "sha256": "7964e50488fc6642f47881f30e74f6de3af5ffee51414760b04c735720bfb415"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000139.tif",
+          "bytes": 1920464,
+          "sha256": "d9239216e413466ad4943de03a79ec45f17f83597c26b2ecaf0e04d6a6c59a9d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000140.tif",
+          "bytes": 1920464,
+          "sha256": "7594cbb63860c1bc095702981003ee41e752d24f8e562e2c11885614620cdef8"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000141.tif",
+          "bytes": 1920464,
+          "sha256": "dece9ce7568f5db0e417ecd110e204c26aeae1b58191484c335409af4cf9f932"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000142.tif",
+          "bytes": 1920464,
+          "sha256": "da2596c4d989060e3c34d0391a9461d9a78d13ee49174ca57ba5293ed180c691"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000143.tif",
+          "bytes": 1920464,
+          "sha256": "6162f3ed35f2fc55797468f3e6982a67ebb18ec51cc41bf0538dd2d8fbda7e50"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000144.tif",
+          "bytes": 1920464,
+          "sha256": "6a076902d210c5fa822e8c859bb8ef8e49221a511a7b2cc71a7043f7adf4d4d7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000145.tif",
+          "bytes": 1920464,
+          "sha256": "ffb5764825da8c3a8a21d83c414714145bc004357e9aebb01a3f4c5fd1c1c656"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000146.tif",
+          "bytes": 1920464,
+          "sha256": "102e5cd300cd11484ddfad8af64a1cbc39cbd00e19423d8c8ca179417b5d9937"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000147.tif",
+          "bytes": 1920464,
+          "sha256": "7f629bd5ba892a34e44f0248eb1669858f63b7c8edf31eb17582a52bd62ec8b0"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000148.tif",
+          "bytes": 1920464,
+          "sha256": "52345f950441f1520b799f47b050033ddaa99cd76e0bef23060a978aba041d9b"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000149.tif",
+          "bytes": 1920464,
+          "sha256": "9aa45ee177434077fa7ada927ddac99c8ef8cc5fb6ebd7ed5fd6a59fe21bd033"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000150.tif",
+          "bytes": 1920464,
+          "sha256": "38ad9966781efed1e29f4bf5a7cef28ddc415bbb2bca795cf2fd15e30e935da7"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000151.tif",
+          "bytes": 1920464,
+          "sha256": "d6a93be7417146598a9c6f226d9debf8700094913e8a68f261aaace478057639"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000152.tif",
+          "bytes": 1920464,
+          "sha256": "a3dedc2ae6cbcfbbdce092ac2277ed96903dab6ba08b202d593362e753054f92"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000153.tif",
+          "bytes": 1920464,
+          "sha256": "16b0b706b640961902189ac3bdd4e2679fe6842e585a4280579a0de208483ba9"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000154.tif",
+          "bytes": 1920464,
+          "sha256": "da741709604e86f34ed40f555ac68db708d9edb1327908a97d30e1a0175523cf"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000155.tif",
+          "bytes": 1920464,
+          "sha256": "7fff0ce9a86dea5a059ab3f53ee754e7b06b98877628f2911d09f52d9e50e755"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000156.tif",
+          "bytes": 1920464,
+          "sha256": "846306f530dbd5bab0f51bc0e4a695651452464b86c07b95f6d3d42cfa6e1956"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000157.tif",
+          "bytes": 1920464,
+          "sha256": "73713348735d73dda25a481cb21c8ea55673c1440b66fc03f25877bac495731f"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000158.tif",
+          "bytes": 1920464,
+          "sha256": "3638841026df1797053008a6075329455ae8ae06f56a2b40c78442971e5a6ab2"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frame_000159.tif",
+          "bytes": 1920464,
+          "sha256": "89876b99d8c360a67356d0c6bd281a24d74222baf62756197fb625ac5b5e765d"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/frames.csv",
+          "bytes": 15806,
+          "sha256": "b07cf8035dee647daf04af30b26e29c6f1aa6246afd542209774f6051f528916"
+        },
+        {
+          "path": "burst_2026-09-16_15-31-37/manifest.json",
+          "bytes": 2856,
+          "sha256": "3579507befd8daf149f04a84bb5e65ea1cd8fc772b726f669408b25191b14af2"
+        }
+      ]
+    },
+    {
+      "name": "burst_2026-09-16_12-57-20",
+      "description": "Thin strip geometry (little vertical capture range).",
+      "zip": "burst_2026-09-16_12-57-20.zip",
+      "zip_bytes": 78831116,
+      "zip_sha256": "b3f9ed309b87677b87a57ff2710c1d2208e64fe0c1be2c91833b441d9f892db6",
+      "raw_bytes": 113833161,
+      "frames": 296,
+      "width": 1920,
+      "height": 100,
+      "pixel_format": "Mono12p",
+      "fps": 148.69,
+      "files": [
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000000.tif",
+          "bytes": 384464,
+          "sha256": "d68d8dbbe924faf935c79fd96efaa9844e273592dc792dd6d25ddca387c3c5de"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000001.tif",
+          "bytes": 384464,
+          "sha256": "a6bf700b2d8159d7f87dd9f57f6475dba11a22608eb6d44be4714c671d15328e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000002.tif",
+          "bytes": 384464,
+          "sha256": "c6f29cc1d67659e3f5ecbec6766d46445f550c844c6640b466c644203f1979b4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000003.tif",
+          "bytes": 384464,
+          "sha256": "d1608903523124123a6b61b12d0c1b21ba628a613e3d86f57445884e1e52844d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000004.tif",
+          "bytes": 384464,
+          "sha256": "25bd928fca7956b27c1c86cef604272b0e33ac6286506969cf5a8811ca9de970"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000005.tif",
+          "bytes": 384464,
+          "sha256": "cb5746efa0631ade9cc32899fd8dcf6a79b626bbcab52a78c0d1fcb6b41e14b0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000006.tif",
+          "bytes": 384464,
+          "sha256": "6540795e860857cd15fb8a39196085958383ab078fcce3c9326827593525aca0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000007.tif",
+          "bytes": 384464,
+          "sha256": "fcd182087f991a46cef04275957517b8fe1340869286d59c25ad47be0fb74edb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000008.tif",
+          "bytes": 384464,
+          "sha256": "f4dae4b299a8cda7601f7ab07250ef992153812200ecf7bd42bcd77bec472eaa"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000009.tif",
+          "bytes": 384464,
+          "sha256": "97d6937289b749390ef238c44e0ab679d67c82f85aa3537e29ae96821f0dacc6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000010.tif",
+          "bytes": 384464,
+          "sha256": "9197361105b5598ba2aed41b61c83b08c114aa1c5da69abad3d1ac459c345ad4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000011.tif",
+          "bytes": 384464,
+          "sha256": "9c7911263198dff150ed6abc7416041b34eaf9cdac29a87ccc12be74703ad1fa"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000012.tif",
+          "bytes": 384464,
+          "sha256": "8b9e3e0a2da0fcb2956fa6c51fd9b96cc8a9aeb0600211a86df36b963cf1f0d0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000013.tif",
+          "bytes": 384464,
+          "sha256": "08bc69fa206775f42a4ec22963f7625c5514ad8af7fcc55591676545c2a387ae"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000014.tif",
+          "bytes": 384464,
+          "sha256": "a685799e991e41bfd3b084b4086843de7f4c9569071109386eb593550aaea29f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000015.tif",
+          "bytes": 384464,
+          "sha256": "123d4c3caa4af7482ccaec25bd19d93190c8a64e201744670514e08599aca428"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000016.tif",
+          "bytes": 384464,
+          "sha256": "7ade8156074a980594d1b4b08f274b0a7d1294b5427b750b4da465b0b404f8b3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000017.tif",
+          "bytes": 384464,
+          "sha256": "bc6b2c6717077877e77365eef7ca46c4ae8f4313911adf9efd38f88fca25466d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000018.tif",
+          "bytes": 384464,
+          "sha256": "15e61446203c3e9b1ba2771cbdf89dcb5ff0c69910628acd235e64168362e472"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000019.tif",
+          "bytes": 384464,
+          "sha256": "e491baf378b9643dd12aaf7f4d2887fee54eff89d2117f326a8d6fc522adf0f0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000020.tif",
+          "bytes": 384464,
+          "sha256": "9cfc151809d22953c0b0757ac3afed19f262ae90b6e6f42dc9219f9bc3efe164"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000021.tif",
+          "bytes": 384464,
+          "sha256": "52835d35516a9aacc349a30c94dabfee1ec7d4ec792aa68e953135fb2e463991"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000022.tif",
+          "bytes": 384464,
+          "sha256": "7b8dec0d500a1123c000d0466faaa783067d34a86cd330a6a9cf135746037bb0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000023.tif",
+          "bytes": 384464,
+          "sha256": "160a3c090f01cf6248b2d0b82f5ea0202831972bd1cc5cfa9066e48a34ad966e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000024.tif",
+          "bytes": 384464,
+          "sha256": "35e3c9b9a750e4e4cf9b8e33bb73b48e1f005a9f53634cc9b0420fe698d881d1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000025.tif",
+          "bytes": 384464,
+          "sha256": "05dfc2a0482dff5045ac14bd7b1687753bc714d242d390eb0c96371d8f37e668"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000026.tif",
+          "bytes": 384464,
+          "sha256": "55f4bdb25c6198a3f859ad1ffc7adea5f8039c4826677d0f6250958f996d509b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000027.tif",
+          "bytes": 384464,
+          "sha256": "9ca408683f06fabc8fe7caad10f2a6fd2cda3cf32857b885ab1fcfcf3619d40e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000028.tif",
+          "bytes": 384464,
+          "sha256": "6c567953cf4c1bee1d5bc860981ee1cfb65ea6b2a8a4022cb88f863cb3fe00aa"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000029.tif",
+          "bytes": 384464,
+          "sha256": "0dc6436b70f1d7e84b47e4e6186c2d963d9e008da18448242fe7f72e52071051"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000030.tif",
+          "bytes": 384464,
+          "sha256": "8ad1ea6d7abdcebd77edf68cce4b69cf8600aa97c97035c2187da27205e28cfa"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000031.tif",
+          "bytes": 384464,
+          "sha256": "ae92fb734952989520bc63d0670acb340eacebf69e1f4df5246b7b48e4974d0c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000032.tif",
+          "bytes": 384464,
+          "sha256": "c07f7c774fd801e465e0a9aa330d60fb176caccf96077d43182f2f94036d8a64"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000033.tif",
+          "bytes": 384464,
+          "sha256": "fb0a7457ae19aa35af1b169308838fef93ca667af8c447b5cc97fd591d88421f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000034.tif",
+          "bytes": 384464,
+          "sha256": "049bf52a1e2b1a246f6c59c7868cecf6bf74aa5cb44d5e245b20465a8c21c586"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000035.tif",
+          "bytes": 384464,
+          "sha256": "a669f21569242685d1ced724480298529493790676ccafd9462fbdc413824895"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000036.tif",
+          "bytes": 384464,
+          "sha256": "283f1e144717104945ad69f81d5bbb5f4763c7d6fa2f283941c51d66cb6cdcf4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000037.tif",
+          "bytes": 384464,
+          "sha256": "bd88ecdaf82e89f1a16485033808ad1b3d749b8ac3b0c4bf11ccd1f0261ba3c8"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000038.tif",
+          "bytes": 384464,
+          "sha256": "8d370b2570ab2987a5126b133c023d436d456c893523dcc027450aeae8d18a35"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000039.tif",
+          "bytes": 384464,
+          "sha256": "4a9f0b91a5b37acced5efd705eaf3a4cd8485f5aee7b51f0e3f23406fe63d4ae"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000040.tif",
+          "bytes": 384464,
+          "sha256": "2bb771b839a7a05eb0e500c82a0569665897ba69ee67ff1cc53b5e7538f021bb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000041.tif",
+          "bytes": 384464,
+          "sha256": "1e540f132b70eb6770d007c46899c8574f4b3e8ddca8444ea34579fda8e47311"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000042.tif",
+          "bytes": 384464,
+          "sha256": "04484a2b14285a9b92925e6712ef28d6387d11c3682f446f29012f61309b4530"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000043.tif",
+          "bytes": 384464,
+          "sha256": "139bf28fb8f764c7cc4b3b1f5d9b412bcf7eb17a3a97668fd9d0ba5ab45f6ec4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000044.tif",
+          "bytes": 384464,
+          "sha256": "515f08c64c1da62c93c49c9850fa0745d078a31cb8017aa8800bb08459bd349f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000045.tif",
+          "bytes": 384464,
+          "sha256": "a46bc69b5e7d5cab49e26d8ca359f5d5bd0756d740fc6d83f77ffdf4a5b5050d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000046.tif",
+          "bytes": 384464,
+          "sha256": "9d7845714c9b2c174d5ed623e7350912386b70cae6dc5a5574840a690a125968"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000047.tif",
+          "bytes": 384464,
+          "sha256": "7138b85d421815cb63d2b06494b3baaf739555458b4fd2089f1a9e2cfb16ba94"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000048.tif",
+          "bytes": 384464,
+          "sha256": "7cf8aef8a2ff0e32215379ec467dcd4ca9d1542e9742a755c03585ef6d65994b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000049.tif",
+          "bytes": 384464,
+          "sha256": "3599e5f23760e6a210c54e57646bd9e27b79554347ae3b9200069fcf749bee55"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000050.tif",
+          "bytes": 384464,
+          "sha256": "69d9a7e4f71f779524705688b0f35d7dc0db449fb5b02f208d22f9d453cd565d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000051.tif",
+          "bytes": 384464,
+          "sha256": "5b635e8c641665658ff76e7afc1b09dce58f048e8ecf3d13bcb29b6631e577b5"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000052.tif",
+          "bytes": 384464,
+          "sha256": "8b1208f8a1391aa2e84e4b185b1d507830c1688f5c9edaeedb9998497e007bd4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000053.tif",
+          "bytes": 384464,
+          "sha256": "ae107cd2a51bee6aa1d2e0d5dcf2229f7a1630b47a823ff8e3f5600803fb7918"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000054.tif",
+          "bytes": 384464,
+          "sha256": "7abe20fba38bf23501241095c855a5905f93340b5a5a62d71bb0474436eb8038"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000055.tif",
+          "bytes": 384464,
+          "sha256": "611bf613da77f3072ab04f87ffe95a04332a1b365f41de85c2fcfa7856734c5a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000056.tif",
+          "bytes": 384464,
+          "sha256": "e8f25c3b34be59f8f144df2c94738afacb4cf9e3366ae0138bb37eb1fbf34b0e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000057.tif",
+          "bytes": 384464,
+          "sha256": "b542b11166919b522b31af7d7287d58209a4d922989079d38de3a59e7f6ca7dd"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000058.tif",
+          "bytes": 384464,
+          "sha256": "17598903fbfe4ae32a4d2e6a24467baff8ace30d9778549ed83c9e912b3a4e75"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000059.tif",
+          "bytes": 384464,
+          "sha256": "b0d472bb98ab30b1a4ef46dd2d9a362f53d0cba63eda01022fa7b997cf127432"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000060.tif",
+          "bytes": 384464,
+          "sha256": "ac45c4808e11cd50c18fb209691ae733e3969987f7b93b952b99fefcf108001f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000061.tif",
+          "bytes": 384464,
+          "sha256": "c70f0dd4b7c66b1ff2286e43a02a92b67f007fadda4aa932a06e9307679336de"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000062.tif",
+          "bytes": 384464,
+          "sha256": "981e16970f28d32cb83494a0ce336419afc67734d1d4cd5e0f9f3ba5f6444e83"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000063.tif",
+          "bytes": 384464,
+          "sha256": "cfef26721427cee33e4bb891db03dba9594fb8b4919d51bbcf5c5642f00e01b4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000064.tif",
+          "bytes": 384464,
+          "sha256": "175b4eff2095cf03b7d01dd99a05d2e7b7e9c938a305d511c16ade743d65789c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000065.tif",
+          "bytes": 384464,
+          "sha256": "99b1420b5bf5caafd8fce8384019d78276e501eaddf35909eec33f5aaeedf384"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000066.tif",
+          "bytes": 384464,
+          "sha256": "50d23c59732d4286cd1437c0675bc67f095c24bbd75e7ba6e668c979dfadaec8"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000067.tif",
+          "bytes": 384464,
+          "sha256": "5034484ce74fc09446a042e3428a2992dc91fd9c68f35981f21a0dacef0a1604"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000068.tif",
+          "bytes": 384464,
+          "sha256": "a7dd6ed515e8e56a5216f1842dee3cf7d6d3368b07180874520fced361fbbcd0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000069.tif",
+          "bytes": 384464,
+          "sha256": "8348273ae9e3fb5c5cee86af68e91d461a368e7b429ab587f3f4a9add89dba9e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000070.tif",
+          "bytes": 384464,
+          "sha256": "d3b279e7f5344ca4c311d29e95dbc6920e75169b84c5ef3fd7667d209365c5f7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000071.tif",
+          "bytes": 384464,
+          "sha256": "5b039b234ccb5424dc1d304638a4d97d7e4228cf74ae89c471edcc045669d8b5"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000072.tif",
+          "bytes": 384464,
+          "sha256": "157a034a4a0943577c670dbb53f4dd61e1db9e540f778e39956abcccbdf71acd"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000073.tif",
+          "bytes": 384464,
+          "sha256": "5ea8fe4ee4afe1448f206b09d9b954e9f987822320754897c306fef06b7f7ff3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000074.tif",
+          "bytes": 384464,
+          "sha256": "3b7a16e6cef787adb3ef1fbdc38defe4c6f7192043390f2428da8984469846db"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000075.tif",
+          "bytes": 384464,
+          "sha256": "dbcd5e708a887d4c0b21b1e774f2284be77dc97a9d5964caa1460323a98b2a82"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000076.tif",
+          "bytes": 384464,
+          "sha256": "09c2129672761954df373cbf39019bb0888fcbf55b2ebb274076b48765c9fc17"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000077.tif",
+          "bytes": 384464,
+          "sha256": "c29b7610096d4ead4a3f7d0c2c2ac31653b9a5e63f2f41b9170de14df15ce7da"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000078.tif",
+          "bytes": 384464,
+          "sha256": "f42b38fe85289a7074a1336f0ab6554796e185b658c28efbade615d54683b58b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000079.tif",
+          "bytes": 384464,
+          "sha256": "65824c6dacc551e38b95854cfc829f7a329d43e694bda28d1d89d369bd5d77ab"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000080.tif",
+          "bytes": 384464,
+          "sha256": "b30bdebe55cd3708f31cda501e103817fc2ec08e0f31340f80523ca94617c280"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000081.tif",
+          "bytes": 384464,
+          "sha256": "03e59841dd5531912b0e9b1be90a51ba41dd25d4510fd4c2790a3909e08a9b4f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000082.tif",
+          "bytes": 384464,
+          "sha256": "6212368b999c2f3ab817f33e77b2798c388ced4a53b8e907746a43fb652a7e31"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000083.tif",
+          "bytes": 384464,
+          "sha256": "f77aa43a3b1642498641af61256816043614abc701db97b746fc2c352fa9df83"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000084.tif",
+          "bytes": 384464,
+          "sha256": "0a52058f8daf43d9a523b956659e28c6337c5288d29511771f1e0d2a576ecb20"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000085.tif",
+          "bytes": 384464,
+          "sha256": "2318ecee7257a9c86b6c3291b43ea6a7b064aebc2fa6c3736280c42b492b4df3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000086.tif",
+          "bytes": 384464,
+          "sha256": "15c815f44c441716ba79ffc7296b3fda2cff5a25b1073f679962027d8165890e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000087.tif",
+          "bytes": 384464,
+          "sha256": "ec9fb6ca220f20d97b83e10b5bc378f03266ffa53345c9c267cbaf43ca62c311"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000088.tif",
+          "bytes": 384464,
+          "sha256": "9a119e1352ad9dff66728662a2eb7a26fc1a67e7bbe7db30b67cf3814dc0e68f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000089.tif",
+          "bytes": 384464,
+          "sha256": "38e004ac8c3a8985b189f249acaf153bc1034923693d7484179b3f1405e95d55"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000090.tif",
+          "bytes": 384464,
+          "sha256": "33dd99ec51b29bec479cb3dad25c56999b6e064be1a6e3154693031078496686"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000091.tif",
+          "bytes": 384464,
+          "sha256": "f35c74767dc3ee2331e9340de77048488923da61f4bca34b063e069c3b0d7d11"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000092.tif",
+          "bytes": 384464,
+          "sha256": "cd4866f037119586b1da1f1b7ad433b845547cffaa8910892464614148cd59f4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000093.tif",
+          "bytes": 384464,
+          "sha256": "5da590e4dda4de3ca697ccaec09018254659965b48c62c4327deddc2ae75c357"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000094.tif",
+          "bytes": 384464,
+          "sha256": "2f0e5f994a70a6de8d495a1e795c95560659485aa25716bf99bd115d364fcb49"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000095.tif",
+          "bytes": 384464,
+          "sha256": "fd57dd60ea029c5614d725c6a671dbc703b7e405885c74c36b801cdc27998f3f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000096.tif",
+          "bytes": 384464,
+          "sha256": "9870f7a4b9cd7f21f1558493c5e7c7212bc2e9323c126b5eb1d854d829774276"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000097.tif",
+          "bytes": 384464,
+          "sha256": "24a17fb398f4d1a9908487135ee32848e8aecfef4cdfef53e67a54130c25f6b4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000098.tif",
+          "bytes": 384464,
+          "sha256": "ceae9e32cb3288df0054255f43a9eb8cf62dbd377eb6b6df465a88b213457775"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000099.tif",
+          "bytes": 384464,
+          "sha256": "83b23fdd8775d3b9c0a27ea35257e084b68dd4d32a3ae8a0a2b89eecf26d9207"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000100.tif",
+          "bytes": 384464,
+          "sha256": "b53a97fb01e07f18e63fbf18af13acc645d030f69f254c820d6dc6674056e939"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000101.tif",
+          "bytes": 384464,
+          "sha256": "23647b60630815c6aa0c39233fd179889911df76d6d6c281010858c37cb6a492"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000102.tif",
+          "bytes": 384464,
+          "sha256": "a1b22d8e1b0242f72555ed6a49d70d1584ef4cb43f69db2866eef8d6663598c6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000103.tif",
+          "bytes": 384464,
+          "sha256": "707ef60be882ede61b5d225627fd2fcef65856aa84e033ab431ed368b40d488b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000104.tif",
+          "bytes": 384464,
+          "sha256": "0983cd0cc170a7af02bf411f875cdbaa11034702988b098b06c4721a914154dd"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000105.tif",
+          "bytes": 384464,
+          "sha256": "07f64bb39bdf77b5cb456286169050b429e3baffd696fb1f8c43e4fa388a8f13"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000106.tif",
+          "bytes": 384464,
+          "sha256": "e7a2a26c75bae05ff70739e9f619297c086c4a2e7bde4b5284186ecfd31a74a7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000107.tif",
+          "bytes": 384464,
+          "sha256": "bfee95b2bea03c28bc73f0a42824d6db5f6c7ee58744df4572108bc44d921d52"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000108.tif",
+          "bytes": 384464,
+          "sha256": "f792092954b6f97223d0b6f4620aaf3ce35e067cb8e7f99754dfcaa6c40ce2f4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000109.tif",
+          "bytes": 384464,
+          "sha256": "b56ec4e0b781654581018259684cc3c0605e2af8f89cc20a8dd81908b326502a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000110.tif",
+          "bytes": 384464,
+          "sha256": "b6b9aa88accf21ace8ef8c25c80c4f9609897c73c5cd2387512b720f56f34be0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000111.tif",
+          "bytes": 384464,
+          "sha256": "b991e29f060b4c91a96ec7bbbcb2d50b9f5261276cb1e50f3b90cabca7d8629e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000112.tif",
+          "bytes": 384464,
+          "sha256": "733aff1b05dd6aa2b296d5ba99dab5b703ee2d5c1b8a79c10c23572fd807f0dd"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000113.tif",
+          "bytes": 384464,
+          "sha256": "e30dd4c0e53b564f497ef5b70ca981da1687c52023a6219de7e497f21b1f1c49"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000114.tif",
+          "bytes": 384464,
+          "sha256": "2b68dfb068b54d5ecfccaa79475c25fceed1335850c478d5f70c6fb79004fa6f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000115.tif",
+          "bytes": 384464,
+          "sha256": "dd554338de65437105fb7b3e2efa0feb51328826c9246a1998f4601e77d398cc"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000116.tif",
+          "bytes": 384464,
+          "sha256": "eee03bdd331575982a9c0af76fd1c2d2e6d157233ddff0d5a09f1e930e55eaab"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000117.tif",
+          "bytes": 384464,
+          "sha256": "04672836ea8242db86b88b0416a6c47381cb6e9fd2033f1d72e11f074c743a3b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000118.tif",
+          "bytes": 384464,
+          "sha256": "dce9c404231be5710244f818a415639f8b301e7362ec319b3a0a37531e8f7751"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000119.tif",
+          "bytes": 384464,
+          "sha256": "1c07538a5fd303a6d1d138a4e3aa76c2965e0f88cbd40234c8d9d19a3be7f052"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000120.tif",
+          "bytes": 384464,
+          "sha256": "04f00728068960cfdb07fb5f83088a70a2351187f923c22a958c4974e4f2b0ce"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000121.tif",
+          "bytes": 384464,
+          "sha256": "05c945d21ac7f4658324966a767c3293092002ff9531a290a88d257e24a458a7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000122.tif",
+          "bytes": 384464,
+          "sha256": "08c681f20fd7d8e54d0ebaa299c28d5ceeb699cd2f0b3d5b4121087a377466a6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000123.tif",
+          "bytes": 384464,
+          "sha256": "eef6824cd64d9b7d87922f1c3cf0c23cb8dc4bf61abf8e44ea1316e381407a50"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000124.tif",
+          "bytes": 384464,
+          "sha256": "3dcbe69aceede14dbda5e6912e6bdabdcfbf26be9618e6b9977e4ca66763a46a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000125.tif",
+          "bytes": 384464,
+          "sha256": "2328bce3324e2a676af5a0e12f1f1a79af278bf7263ad2477f97f068b60c8276"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000126.tif",
+          "bytes": 384464,
+          "sha256": "35eca9b3b70cf498000252fb8ec2c76b25cedfacf10bbbd6749457554ca75dba"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000127.tif",
+          "bytes": 384464,
+          "sha256": "36b38a5f1bb5a62feacdf8150acfa06b7b50e362b6027316c7b3413d8a141be5"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000128.tif",
+          "bytes": 384464,
+          "sha256": "498173e4428a124f10482f34ad4e17d6152055be1334475e429f6d7a8f92b290"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000129.tif",
+          "bytes": 384464,
+          "sha256": "b93ee55681f6bfc34ad8f44e3bf97a76c030a35fcb98fb63d9f183a93927cfbb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000130.tif",
+          "bytes": 384464,
+          "sha256": "b61cd3b25561aa6f54234a776a269c8aa96cb5d717a5c78c7101408012499376"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000131.tif",
+          "bytes": 384464,
+          "sha256": "b14adb835a5919a996f4d2613cea7e063cabd16a184fc540fe0ce58d4059f7ea"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000132.tif",
+          "bytes": 384464,
+          "sha256": "9940fd8df130f5607af4323bb6461064f0ab096a5d22c308e2f227b1b1ef33ce"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000133.tif",
+          "bytes": 384464,
+          "sha256": "464db31c04795b63f6a9a349910c1c6b218a504c48dd1ffb8c5dc62cf7a05a0e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000134.tif",
+          "bytes": 384464,
+          "sha256": "4c6cab95367277fda1a4c28da70b831d509eba45973036f9986c2345d0fa01ef"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000135.tif",
+          "bytes": 384464,
+          "sha256": "7046245ff1cb55280815b26ae6429a9711d649012396fe25d08f029baf8fa8f8"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000136.tif",
+          "bytes": 384464,
+          "sha256": "49e69cca44edb1e5aa19500ddbd24c2164306a1d980c2c248154634caf14541d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000137.tif",
+          "bytes": 384464,
+          "sha256": "b81e530133e9eb4ca10a0a59f657a236d4e1c22b95435e958d8b5767aadb2f7b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000138.tif",
+          "bytes": 384464,
+          "sha256": "54648036db7e6f7ba793dd8f2f20c990bd79fcf01c0356d7064eb9321b6b1779"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000139.tif",
+          "bytes": 384464,
+          "sha256": "76b329b7d6e2d441769e41fd504ac960fef28b205a6347645f43c728c44fb10a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000140.tif",
+          "bytes": 384464,
+          "sha256": "9b2f89b48c59014052fca77a1e68716abf27881f4d9a784bef402f260d4ac2a0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000141.tif",
+          "bytes": 384464,
+          "sha256": "51f21290e7f157969399c30dad68adeaa7e1176072082962b38cfe6fe4f75f67"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000142.tif",
+          "bytes": 384464,
+          "sha256": "582f0f2a071482f00c31b3a06a5e9d89762d9f97f2f10d52c8b796e7d99b0733"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000143.tif",
+          "bytes": 384464,
+          "sha256": "efedd9b34c0e5a57b8b3d99359cbbfb8434a2d06071f9836b46e21e2a16e1b88"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000144.tif",
+          "bytes": 384464,
+          "sha256": "8a0a1a0ce7097514858f50fe0f6630c761eac41712ac30911523a67af963103e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000145.tif",
+          "bytes": 384464,
+          "sha256": "80c630ba348d230fcb531e5a57b9686048ca9a1b855b4f328f2a1680cadf1b06"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000146.tif",
+          "bytes": 384464,
+          "sha256": "5eeb99922296b4db6ec5b6027d03bded96eff251a43cf5651f3c7f9ef4616425"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000147.tif",
+          "bytes": 384464,
+          "sha256": "2de0e5eb607dcfe8757f56277da77cccf080bd13e1f852ed555d31cfa8263d95"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000148.tif",
+          "bytes": 384464,
+          "sha256": "37989aa10c5fd8b4994a25567663cbf221603cd98cd83391cf0ae52ca320ffca"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000149.tif",
+          "bytes": 384464,
+          "sha256": "fb7aa6b4276b707d94b853729cca3f40781393c276485a7a7135be658bce8deb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000150.tif",
+          "bytes": 384464,
+          "sha256": "aa42648bc2cd5beb9f1a7093617af2513dfeb63ea1e3eb3a46ff46d863265766"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000151.tif",
+          "bytes": 384464,
+          "sha256": "dd670756b12aa6b12719c6e5efc95854a42abc0697bba4cdcb6946ff13834902"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000152.tif",
+          "bytes": 384464,
+          "sha256": "e7e7a8ffe90777f3afbd4e28df8136bd349fb1f7e736b404406c73477d2396b1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000153.tif",
+          "bytes": 384464,
+          "sha256": "a5caedd8dc81ce5cec6bfede8f8d0d28c8a52999030cd8fd2f425f20279ada83"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000154.tif",
+          "bytes": 384464,
+          "sha256": "dce8b82962019889c61f0c293723b8f86b6dcc8c1910562de3334c39c9860ac1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000155.tif",
+          "bytes": 384464,
+          "sha256": "dea5ba76806d24d1d9551cb274878c6add7ea4cf6a17243e7b49fe0a8e4c84b5"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000156.tif",
+          "bytes": 384464,
+          "sha256": "d512851b2ca14c53d4335e80b66de5e9c5cc906807371ca802ee70c0d6848589"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000157.tif",
+          "bytes": 384464,
+          "sha256": "0680d3c72ed8593c0f3a29733218eb0ac6259b50c55a2a6bc48b0a4d4650374a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000158.tif",
+          "bytes": 384464,
+          "sha256": "1edcfe6561c9673f30ddc8fb70319648ccedf46a4a18450c0e9294c055772727"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000159.tif",
+          "bytes": 384464,
+          "sha256": "1c181b88b6603bcba2a559a479be22db8cc3c9c7152580e2a451a6e8a845bc93"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000160.tif",
+          "bytes": 384464,
+          "sha256": "d9cd25ae77c7c6f8a9aa2fb7af87a253b353376ec4605b45882e24b4f1ad522f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000161.tif",
+          "bytes": 384464,
+          "sha256": "b0ff7f5cc6c0d964c701f60d0614e8c0d8d0509dea465dd5e82804f5c1a565c1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000162.tif",
+          "bytes": 384464,
+          "sha256": "6137b763b0214c0db2b652b3c59923c1217e7a9d08a8a546ee78a82e704f4ce0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000163.tif",
+          "bytes": 384464,
+          "sha256": "7cc42b92a29d7727e71da0df5cdd19adc63c29c7cd9bbffdd680984cab5179eb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000164.tif",
+          "bytes": 384464,
+          "sha256": "be3f3d370464bc7ff9157c7f2636da74bcd6b7293d3f23cf7feb8090624dac9d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000165.tif",
+          "bytes": 384464,
+          "sha256": "ec62ac4187e1ebcf3759f0310fff7dfe1b1114ad4966b5b367b6954faf799e5a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000166.tif",
+          "bytes": 384464,
+          "sha256": "271fca5db5b8534d7a63cc3f998d34e572a07328e9e7aaf72acf6f049ee3928a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000167.tif",
+          "bytes": 384464,
+          "sha256": "ddbb204eb27b1cbd2ee1ce568587c8c8236de1f3474e1f63faad938a4c4a4efc"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000168.tif",
+          "bytes": 384464,
+          "sha256": "bdeb862a937c59e76f5cd1681caed25b123f9587f8b5ad5df5bb0b4702d69ed3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000169.tif",
+          "bytes": 384464,
+          "sha256": "44be830358a2b2bead2c66e75ddbf3c10af583c92aed226ee72904102b04662d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000170.tif",
+          "bytes": 384464,
+          "sha256": "48eaaae5014e803932b5c241b11dca3d5648709841549ede543dad682455d3a2"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000171.tif",
+          "bytes": 384464,
+          "sha256": "fd28e7a27e458054f94cec189fc602e2d5b71ab402beb3e8290edad0fc4e04a1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000172.tif",
+          "bytes": 384464,
+          "sha256": "89f9984fff06178da4b791a61837fcbb5499334b516479182577a8e0d44b5091"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000173.tif",
+          "bytes": 384464,
+          "sha256": "98070ac5bef871259c8ac23d926c09be03413c2f315ac4eaf3fcd9a2159c342d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000174.tif",
+          "bytes": 384464,
+          "sha256": "2182b375157c6d7af231e5665ad08733e6d1771526064de8de51ca41ec7d0a33"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000175.tif",
+          "bytes": 384464,
+          "sha256": "11d4bb9bf169998cda2405fc9ece07d78035a32f40af13bf8cf637893e2a29cc"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000176.tif",
+          "bytes": 384464,
+          "sha256": "dcfac67c73c33fee2731ced9c06e99a0a3d53f83c54d53f557086a74713e77f4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000177.tif",
+          "bytes": 384464,
+          "sha256": "d49ad5c40aa9c108b4b1d1a6d7ec58aa282132bb59a93b451e6754aed5b41f69"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000178.tif",
+          "bytes": 384464,
+          "sha256": "d0ac4ed5bbfa3ccdedc1c2f451538a669268a8a8b5b9bffe55b56fc83f3d0c68"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000179.tif",
+          "bytes": 384464,
+          "sha256": "eb1199a3f17c6da9f9f4a609d963deedd8bc91472d24a9c67a1aa6fa8a9322f7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000180.tif",
+          "bytes": 384464,
+          "sha256": "0afd3e725abb29ba3ae6dedc6dff4359706e5f80412c2f134e29475b0f4ed541"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000181.tif",
+          "bytes": 384464,
+          "sha256": "afc9ed1f1c480eaa92e16eae5c200219ad5c1b227810d7f46cae89abfc820c66"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000182.tif",
+          "bytes": 384464,
+          "sha256": "b317eebc050b7335e324c22f1d14158e2c31c6c94b9b0d6bd859aa9f1e79d998"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000183.tif",
+          "bytes": 384464,
+          "sha256": "6bde3954a2f5ee07ed7b829aa03e0a69d3a86bd0f32fcabb262ff64e914bb3ef"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000184.tif",
+          "bytes": 384464,
+          "sha256": "3377fff4bcf34e8738ccd3073cc155e4265bcd34ab6ec4ed456c12197544c112"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000185.tif",
+          "bytes": 384464,
+          "sha256": "45b546de13905bd4ad4776bbc4fe9df78a8796db446797ef7b546abd79d6b919"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000186.tif",
+          "bytes": 384464,
+          "sha256": "45b972c9f3b95455cc4d9c62eba5de32caadf3a88deccfbf46bc3abc4d0bff6c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000187.tif",
+          "bytes": 384464,
+          "sha256": "17ebf7c4263b70f55db4b5015d0e6d04d5803efd27532985db1c84d7aafb066a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000188.tif",
+          "bytes": 384464,
+          "sha256": "a3714f8606cd597258c8521c88fdeb21a093c95b571eabb62f5ada717013299a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000189.tif",
+          "bytes": 384464,
+          "sha256": "4e7940b5a0eebcaec3a4bcc69418aa4d753dae3af95d5deb58afdbb4efa4f3d9"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000190.tif",
+          "bytes": 384464,
+          "sha256": "2f160e54d1fc250e20fe49cd5044641ca567cb6cb2406803ca71b6079ba7c25e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000191.tif",
+          "bytes": 384464,
+          "sha256": "1c2a20356ecb95a79e9d4aada01cc08f010d173be0477bfc96a5b8b20bf447d2"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000192.tif",
+          "bytes": 384464,
+          "sha256": "562c141eb839328755e46c76a0b9cbc82726941a7552b553aa51aa860b6ce551"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000193.tif",
+          "bytes": 384464,
+          "sha256": "e1d9335f64591165d572efae7b970e9d8b409e84691660907a2883d9797f069b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000194.tif",
+          "bytes": 384464,
+          "sha256": "3a50349996aeef7130d15ee244308b1b4850bd3a2943e71b80ab033e50d44d06"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000195.tif",
+          "bytes": 384464,
+          "sha256": "82b61c6635ba2c0ed674671696063e8ba98e8d0138154c8582d3e28d22f7ce60"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000196.tif",
+          "bytes": 384464,
+          "sha256": "3dbe900fc2a85f83a2acbeea0110d73b481cca6602b03477ea640e789f21adaf"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000197.tif",
+          "bytes": 384464,
+          "sha256": "80f61309af0cdde8d1b8a2ca710c3990413a49970ce0c14e59fa72a7ca3fe441"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000198.tif",
+          "bytes": 384464,
+          "sha256": "86351425d30783a01f8d7d134b7c372bfada1af3e66508998df1bddcc97b7d28"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000199.tif",
+          "bytes": 384464,
+          "sha256": "d49874007cee005c7f50898c671f5ec866bde7b6481ae476f21f5ab8d66c351e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000200.tif",
+          "bytes": 384464,
+          "sha256": "968fe6087de18cba8c4a148201cdd2ab5e44882af83d0bc52386f0bcecb9cb3e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000201.tif",
+          "bytes": 384464,
+          "sha256": "fa343c7a42528983a8f564453613b66d39c34c618e2e7b424ada1ca194dd50be"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000202.tif",
+          "bytes": 384464,
+          "sha256": "579203f881722ddfa81f78d172332bf322276086e01571ac39d35e82a6df0e54"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000203.tif",
+          "bytes": 384464,
+          "sha256": "aac9f95368e4709d652ec0e6a0d5bf0479f627a0af97f9a998f4d8ecbac03006"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000204.tif",
+          "bytes": 384464,
+          "sha256": "1bf15be4eee81cdac1db61a1234e28b3df50387ce0e2d373efaf0eac0f3b1c77"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000205.tif",
+          "bytes": 384464,
+          "sha256": "59dcf2dfe22ccd0f097ef022c0ac4cecf449b93f62dc7e95f4075015dd6aa159"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000206.tif",
+          "bytes": 384464,
+          "sha256": "ac179e067021596382c1a565e30f7632f1c7add102097408eace6ed899698f99"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000207.tif",
+          "bytes": 384464,
+          "sha256": "67c51d457af306ce060b7d123a27f7deccb3cabe9a030599a6653a7bb73cac92"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000208.tif",
+          "bytes": 384464,
+          "sha256": "3e5b2818ada780aa81de364593d4c4d0765bd878ffc23ff006de81d69fc4d58d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000209.tif",
+          "bytes": 384464,
+          "sha256": "dcf9ab81f2648b6d9619fdf77886feaf45b3a8d77c0266cebca853fa0b7f8f25"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000210.tif",
+          "bytes": 384464,
+          "sha256": "978ff0ffb1b58d38ecc36564976d887dc9f75114b357c33ef94aabbae479587e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000211.tif",
+          "bytes": 384464,
+          "sha256": "348ed85c8829d6814ee9840d2c801af46037dfd0e6f16bd0159e15afa891bf54"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000212.tif",
+          "bytes": 384464,
+          "sha256": "cb433c580aee3e3e5c05ec56b2a460ba3862fa95fa55948eefdfb043096a8500"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000213.tif",
+          "bytes": 384464,
+          "sha256": "a03ff0fad90850aa974e33b1e7b2fafeabe70c54a3bc43413c27f050126fcdea"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000214.tif",
+          "bytes": 384464,
+          "sha256": "64740e1c2013a23a42064a866d43324d74236e851dbefc1016850e4a0f7e399a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000215.tif",
+          "bytes": 384464,
+          "sha256": "aa7a450f682ad6ee807fc2c6d0574e1160edf3df9c3ec9173c67ad373160ec1f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000216.tif",
+          "bytes": 384464,
+          "sha256": "bad37419ff36cb06bddec6d35a32c8f3cadb48fccd819be40b534680a8d7cbc7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000217.tif",
+          "bytes": 384464,
+          "sha256": "99d45ee388f90bea2fbcb82227c7f426c6f2cb89f50442d44d1740a56081fcfe"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000218.tif",
+          "bytes": 384464,
+          "sha256": "878a9915efe8b481f404f67f759e974a73457a1b77e17ac474bdb8c52ff3b3a9"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000219.tif",
+          "bytes": 384464,
+          "sha256": "e7d18a41e9ec0ecbb631a88cb45c577315fece005bb8b2a9ab3db1cbba030865"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000220.tif",
+          "bytes": 384464,
+          "sha256": "3b11e637b04fa48f4430eae20c343ca9fefb76caf93972526e39b2bec717b03c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000221.tif",
+          "bytes": 384464,
+          "sha256": "830b035069d351b1e586f895daffb416c6ebbd38747b273b963a9634aa89e36f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000222.tif",
+          "bytes": 384464,
+          "sha256": "71b7bdbd0b284a57c3ff78ab20430cbc2fe126d7bd6464ce2d403c3b7bb0e31f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000223.tif",
+          "bytes": 384464,
+          "sha256": "6c922844f2f129e84d247fa86cf31e365c356f1c780dcbb3bfe30d9be1a678e2"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000224.tif",
+          "bytes": 384464,
+          "sha256": "d1afb26cc08d6d5bc6e2076c9f5b385d24d44e35e7b84fe6d108f7f19790b89d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000225.tif",
+          "bytes": 384464,
+          "sha256": "ee9454c6fc327ed3486280b28852d5ed9239c4ccda13bddd8e4847668c94df93"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000226.tif",
+          "bytes": 384464,
+          "sha256": "824faa7db88352f9e06f25e78155575c66e4556fe3db7c4d1ffa3285b8445c7d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000227.tif",
+          "bytes": 384464,
+          "sha256": "7d246539bcfe8ab3fea13b18d1af0412552d1d2fb7f46af81eb614ac74bc0d99"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000228.tif",
+          "bytes": 384464,
+          "sha256": "13eb64671f71c6387655c1a936f1edf806bc3b2a50952fc7eff4c2253a3d0a15"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000229.tif",
+          "bytes": 384464,
+          "sha256": "9e7a9086b35a0dd0d48e3999d79d8c5d238bab6190a67e8a96dcf34898d5e344"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000230.tif",
+          "bytes": 384464,
+          "sha256": "fb5f0615216b4a56a126c2f1005ebb4d475be47a80ea7544add08bc9dae8034d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000231.tif",
+          "bytes": 384464,
+          "sha256": "2673fd4bf34a08b72f3a15ef124dee622ee70c8ac5fd4497655218df22235dc3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000232.tif",
+          "bytes": 384464,
+          "sha256": "afc33477964190dbc6312939995a2645741d36a69d44209d7f3baefe62321a55"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000233.tif",
+          "bytes": 384464,
+          "sha256": "97e01337861aea02d120cf375089e93a1aa3568c5fd4f95ba09b669228e9acb0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000234.tif",
+          "bytes": 384464,
+          "sha256": "316a6700512f98366a12381aa7c3317715a84832335c2ba71e079c551140b2bb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000235.tif",
+          "bytes": 384464,
+          "sha256": "7832d046218cdd9b761b7a2a927143139985dd09bf780d859eff17ce1e96e8da"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000236.tif",
+          "bytes": 384464,
+          "sha256": "f5dd25382e47788e5947d29677355f93bf033359a035c11d691c9f734e02b843"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000237.tif",
+          "bytes": 384464,
+          "sha256": "481b9f7d5ca72a9b6a2904cd3f59850960390173537098ddc0561ef2c6b6b089"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000238.tif",
+          "bytes": 384464,
+          "sha256": "1c0925598237306e17c35552c961559956a8aeb8ac4ebabb45baf7e1f60cf449"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000239.tif",
+          "bytes": 384464,
+          "sha256": "572e2f9909238c87ecc698ede66547f99e9a5b1c6e6a193d5ba49e9f58096da1"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000240.tif",
+          "bytes": 384464,
+          "sha256": "6efbf044be3f93feb4209440d7134e4e22f349b5bb5487a0fe0dfc62c34569d0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000241.tif",
+          "bytes": 384464,
+          "sha256": "c3aa27e350f8a6ae8e075d0d0efe623455fe8935ad3b2b6dc548697ffb1bc61f"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000242.tif",
+          "bytes": 384464,
+          "sha256": "60daee98ae51b5c4df4525ce826ebe231a764e43827f12a66e6662df35a234fb"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000243.tif",
+          "bytes": 384464,
+          "sha256": "f9df1c00ee6327da0e671675eb3852699f339d1bb654bd452598ca2ca5fb88a8"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000244.tif",
+          "bytes": 384464,
+          "sha256": "5e9086861c1c601a01fcc3ac44c1cb6d313d470b3587e1dd5f759dd35424e8a6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000245.tif",
+          "bytes": 384464,
+          "sha256": "92a58859b7ac4b7d8e19b70edd9a64e3a282525345acec9255974c33d6f8ddd8"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000246.tif",
+          "bytes": 384464,
+          "sha256": "207990d8b65c722c95775bf5ca37d1e3a0bb5504d03f35983cade8f50d883bef"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000247.tif",
+          "bytes": 384464,
+          "sha256": "aead57788ff2e35552d0af04535d631134af478b7517a792ff646d790c43ca7b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000248.tif",
+          "bytes": 384464,
+          "sha256": "73f6af8b560fe454d9b6be538a0750f625d8afb84a2482a34eb03711fa49970e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000249.tif",
+          "bytes": 384464,
+          "sha256": "3fd6609966d9f4532290c1fba3679e8d8a3f5b698ec33cf9cdf8d21df0a6580e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000250.tif",
+          "bytes": 384464,
+          "sha256": "a52cc4fbadda8e84676d1892d92ba3ecc07dfec13fc68cd9792cdea67cc937e6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000251.tif",
+          "bytes": 384464,
+          "sha256": "cecba87fe5336e6ffb1235c477bac0403d0792245a9b4bfea311fcbd3dc65765"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000252.tif",
+          "bytes": 384464,
+          "sha256": "ea5cd59eb2725af625f919e176133e4a60dd79e975c48c829ac2448ec965d064"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000253.tif",
+          "bytes": 384464,
+          "sha256": "cc69579ec51b9279e97bc62fc4343c3bea74f15d2d8265313b3c5d2eeac1de9d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000254.tif",
+          "bytes": 384464,
+          "sha256": "d663f4348f73d0fec2e157827ef0ff4daeef3a0e630c78d53d7e5dbca315279c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000255.tif",
+          "bytes": 384464,
+          "sha256": "c7c7921829e7d1b5ce6a684cbcece5806ca30ea4f7c77bb631c54896fb8a25cf"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000256.tif",
+          "bytes": 384464,
+          "sha256": "f67affec96ad1e3773765caceba1d12b75703412973da8f49cf4cf7921921309"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000257.tif",
+          "bytes": 384464,
+          "sha256": "8ae64f65688544b3be43d6bc7a08d50c10dac2ca9a13ca7f10198026d6b994bf"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000258.tif",
+          "bytes": 384464,
+          "sha256": "01d548272ea76fb307daefae5f4c2567ffc2102ee8fa892610f55c247a1f5aab"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000259.tif",
+          "bytes": 384464,
+          "sha256": "17b21881a046cf5ff2d341f0aefdceca304f784637dc0545eb73c1564a6c8d21"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000260.tif",
+          "bytes": 384464,
+          "sha256": "96d1b48bbee00ed9001d15bdc43fca7082dfb7bfb5c23d340267f051bdc21208"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000261.tif",
+          "bytes": 384464,
+          "sha256": "933d05bc66166f9478e1ca7df4b9021b1fac95a7c56d2599e0d26948a0629b89"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000262.tif",
+          "bytes": 384464,
+          "sha256": "747bdb50ce20efb244597985f8e2a7b421623b7bc1b50dd85bb109dfe8043043"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000263.tif",
+          "bytes": 384464,
+          "sha256": "1da03f1801d5f717e962a0321a2f76e051fa71036b62fa17433e12233559f57c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000264.tif",
+          "bytes": 384464,
+          "sha256": "dbbb9aa7aa148bf9c24e7b73bcb63e79e8c91e5e2184de645cf18d0639af537a"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000265.tif",
+          "bytes": 384464,
+          "sha256": "93efc1ee40ca6e07b0cf09a9ed32c9b59368963d8f3d3ef0fefc1f7d72d818ca"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000266.tif",
+          "bytes": 384464,
+          "sha256": "fe0b228be714d593f77aa38ad5f256e83a5096564bfb0e1afed0eb20e2fabd2b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000267.tif",
+          "bytes": 384464,
+          "sha256": "60ccce56e940cbdaf627ea40861d4f39583dfd863a83e6477ea45f73e32333c4"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000268.tif",
+          "bytes": 384464,
+          "sha256": "efd06da8786c39ac8a031609e2d891ea96508f7714e86fe8dd185af0b03f2e9b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000269.tif",
+          "bytes": 384464,
+          "sha256": "f2f940fbb1bbdcb1d6b6591f292f433b7ca1e1b4a88acb8bfa7eb9d0f48e52f6"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000270.tif",
+          "bytes": 384464,
+          "sha256": "7c17f70edfaf40e2c339d035b10d3d138df358e645960e8f5fdac2827549b8b9"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000271.tif",
+          "bytes": 384464,
+          "sha256": "91397c4f33115ea18499716f1a880633418790cf2ad82b8fd78a75d690be7a17"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000272.tif",
+          "bytes": 384464,
+          "sha256": "2b67c802ace080eef9375597e0183fa7b7abfbb4bdbbfd8c6450d730b7005a39"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000273.tif",
+          "bytes": 384464,
+          "sha256": "91327b2cfe8bf22db9f1275a6435108dc363280c3e31b321a0fae49fc42c50bc"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000274.tif",
+          "bytes": 384464,
+          "sha256": "b747b5b39eab01666d63024f7544e6c026f274b378d4169174768d530777943e"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000275.tif",
+          "bytes": 384464,
+          "sha256": "fdff48048ef3221bacaaf54ac5409dd763a4946693f6f4a0d7f30a19fb58c378"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000276.tif",
+          "bytes": 384464,
+          "sha256": "4bad826e60e7de54cc0c781430b8b1959367e8798a1cd9f536563d46109472ef"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000277.tif",
+          "bytes": 384464,
+          "sha256": "ea346e543b4da7ecde650467a28277e219d77cb492b1cfdd1429d9e2cfbc5adf"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000278.tif",
+          "bytes": 384464,
+          "sha256": "708b068bf563bdc1125abe1affb7b782aa968714c87d8512243f99d605c1920c"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000279.tif",
+          "bytes": 384464,
+          "sha256": "06d67b445d7839f261ead807c4b0e3c5101e80851c1a1e1366bcdd6f8045fed7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000280.tif",
+          "bytes": 384464,
+          "sha256": "3175b9bab4a4c21b03b3b7ed8a7aed4346b96f32eae0baf2248d11556a8cb140"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000281.tif",
+          "bytes": 384464,
+          "sha256": "03283f135973784b53fce5ecf76725b59637837448ac3adafc8e041f7a3f9b81"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000282.tif",
+          "bytes": 384464,
+          "sha256": "5cb04945ff8622ffe90b06c0d71f623f7373689bcd2a1fa2450163002774b27b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000283.tif",
+          "bytes": 384464,
+          "sha256": "29e23f8a11cceee6b17161bebb2bf79d081c45369f8754ce871eb354676dbe0b"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000284.tif",
+          "bytes": 384464,
+          "sha256": "fa2c26084a8ae3a9ed420ae2959e6aa30763e81ed80b4e3d90556ba7da7d84cd"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000285.tif",
+          "bytes": 384464,
+          "sha256": "9e7287bd90b947c3c49e8a8c7fa25319aff4c149e55d4f46f8b97df38bebeb78"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000286.tif",
+          "bytes": 384464,
+          "sha256": "6b2e6c162a64f63581dc2e8c0472a8883b11f88df5a47e63e3ee39bb7009b19d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000287.tif",
+          "bytes": 384464,
+          "sha256": "4d8fcd5b21a369c621d0185800b61034befa3ef43e28af0a726d0705509224b7"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000288.tif",
+          "bytes": 384464,
+          "sha256": "c5aee9a8c95f5755bc1e8501be2e750f24b18d39ddc1d1f86f72f0498e706241"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000289.tif",
+          "bytes": 384464,
+          "sha256": "c31226c1667534c62198935ff6c8f8ffc0414a5b9bb9d37fb926e52323a43ce3"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000290.tif",
+          "bytes": 384464,
+          "sha256": "ccb4bead70740ca335bbc0838e22e1c9209d3547a0ef3a2eddfba652b50d3a46"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000291.tif",
+          "bytes": 384464,
+          "sha256": "5ef5368f981f0055e8d4d80815f78e99a59af2b2af049249f8db82ce1582d48d"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000292.tif",
+          "bytes": 384464,
+          "sha256": "1ea52f01be70289cf47f2f90f66eb6e6ece251595db3bdf33427ee31d4fda0ba"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000293.tif",
+          "bytes": 384464,
+          "sha256": "c8f26150b2e50d01e2957c59ab4a4784dab2f5087776ac30e032926a967d81a5"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000294.tif",
+          "bytes": 384464,
+          "sha256": "1cf2d4a15a679aa01e6bdf2b8919cf3dd8f8204dd35e2afa3011e6a794e796ad"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frame_000295.tif",
+          "bytes": 384464,
+          "sha256": "9c41e2f42daedc2a3738575fea79bd9db770e10c21521bbda73598b5c71cf359"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/frames.csv",
+          "bytes": 28952,
+          "sha256": "4105505a7fce4c902c46a472a0bec04926c3ffe1ca862a0b63d91903bfea5fc0"
+        },
+        {
+          "path": "burst_2026-09-16_12-57-20/manifest.json",
+          "bytes": 2865,
+          "sha256": "89bd0f123afbc339cb0237237f2804ef9d8e3cb5e16581d2eac5dd93366e0d7e"
+        }
+      ]
+    }
+  ]
+}
