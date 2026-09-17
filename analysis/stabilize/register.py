@@ -10,6 +10,20 @@ import cv2
 import numpy as np
 
 
+def phase_correlate(reference, moved, window):
+    """cv2.phaseCorrelate on private copies of both images.
+
+    OpenCV 5.0 applies the window to its INPUT arrays in place. Passing an
+    array that is used again — a template reused for every frame, or a row
+    of the on-disk vesselness maps — silently multiplies it by the window on
+    every call, until only the centre of the image is left. Copies are also
+    C-contiguous: OpenCV misreads the memory layout of a numpy slice.
+    """
+    return cv2.phaseCorrelate(np.array(reference, dtype=np.float32, order="C", copy=True),
+                              np.array(moved, dtype=np.float32, order="C", copy=True),
+                              window)
+
+
 class PhaseCorrelator:
     """Phase correlation with a cached Hanning window (§7).
 
@@ -23,10 +37,7 @@ class PhaseCorrelator:
         self.window = cv2.createHanningWindow((w, h), cv2.CV_32F)
 
     def __call__(self, reference, moved):
-        (dx, dy), response = cv2.phaseCorrelate(
-            np.ascontiguousarray(reference, dtype=np.float32),
-            np.ascontiguousarray(moved, dtype=np.float32),
-            self.window)
+        (dx, dy), response = phase_correlate(reference, moved, self.window)
         return np.array([dx, dy], dtype=np.float64), float(response)
 
 
