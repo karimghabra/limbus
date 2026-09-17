@@ -14,7 +14,6 @@ import time
 
 import cv2
 import numpy as np
-import psutil
 
 W, H = 1928, 1208
 FRAME_MB = W * H * 2 / 1e6
@@ -105,6 +104,10 @@ class CpuSampler:
     """Samples total CPU %, busiest-core %, and cores used by a process."""
 
     def __init__(self, pid=None):
+        # imported here, not at the top: the analysis tests use this module's
+        # vessel generator and shouldn't need psutil installed
+        global psutil
+        import psutil
         self.pid = pid
         self.samples = []
         self._stop = threading.Event()
