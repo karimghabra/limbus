@@ -28,15 +28,17 @@ def _working_scale(burst, params):
     return params.working_scale if burst.height >= params.min_height_to_downscale else 1.0
 
 
-def _skip(out_dir, burst, reason, started):
+def _skip(out_dir, burst, reason, started, params, method="translation"):
     record = {
         "status": "skipped",
         "skip_reason": reason,
+        "method": method,
         "burst": {"name": burst.name, "path": burst.path, "frames": len(burst),
                   "pixel_format": burst.pixel_format},
         "processing": {"finished_utc": datetime.now(timezone.utc).isoformat(),
                        "seconds": round(time.time() - started, 2),
-                       "stabilize_version": __version__},
+                       "stabilize_version": __version__,
+                       "params_hash": params.params_hash()},
     }
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
@@ -44,7 +46,15 @@ def _skip(out_dir, burst, reason, started):
     return record
 
 
-def process_burst(path, out_root, params, log=print):
+def process_burst(path, out_root, params, log=print, keep_work=False,
+                  method="translation"):
+    """Translation stabilization of one burst into <out_root>/<burst>.
+
+    keep_work leaves the working vessel maps (V, M, O memmaps) on disk and
+    returns their folder as record['_work_dir'], so a later stage — the
+    non-rigid refinement — can build on them without recomputing vesselness.
+    The caller then owns deleting them.
+    """
     started = time.time()
     burst = load_burst(path)
     out_dir = os.path.join(out_root, burst.name)
@@ -53,20 +63,28 @@ def process_burst(path, out_root, params, log=print):
         f"{burst.pixel_format or '?'} @ {burst.fps:.1f} fps")
 
     if n < params.min_frames:
-        return _skip(out_dir, burst, f"only {n} frames (< {params.min_frames})", started)
+        return _skip(out_dir, burst, f"only {n} frames (< {params.min_frames})",
+                     started, params, method)
     if not has_image_data(burst):
-        return _skip(out_dir, burst, "all pixel values are zero (no image data)", started)
+        return _skip(out_dir, burst, "all pixel values are zero (no image data)",
+                     started, params, method)
 
     scale = _working_scale(burst, params)
     work_dir = os.path.join(out_dir, "_work")
     os.makedirs(work_dir, exist_ok=True)
+    record = None
     try:
-        return _process(burst, out_dir, work_dir, scale, params, log, started)
+        record = _process(burst, out_dir, work_dir, scale, params, log, started, method)
+        if keep_work and record.get("status") == "ok":
+            record["_work_dir"] = work_dir
+        return record
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        # removed unless handed on: after a crash, a skip, or when not asked for
+        if not (record and "_work_dir" in record):
+            shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _process(burst, out_dir, work_dir, scale, params, log, started):
+def _process(burst, out_dir, work_dir, scale, params, log, started, method="translation"):
     n = len(burst)
     fs = burst.full_scale
 
@@ -83,7 +101,8 @@ def _process(burst, out_dir, work_dir, scale, params, log, started):
     log(f"  gate: kept {frames.size}/{n} frames ({time.time() - t0:.0f}s)")
     if frames.size < params.min_frames:
         return _skip(out_dir, burst,
-                     f"only {frames.size} frames passed the quality gate", started)
+                     f"only {frames.size} frames passed the quality gate", started,
+                     params, method)
 
     # ---- burst-wide vesselness constants (§5, §6) ---------------------------
     ref_img = to_working(read_frame(burst.files[frames[frames.size // 2]]), scale)
@@ -206,6 +225,8 @@ def _process(burst, out_dir, work_dir, scale, params, log, started):
             rejected[r] = rejected.get(r, 0) + 1
     record = {
         "status": "ok",
+        "method": method,
+        "experimental": False,
         "stability_index": after["overlap"],
         "usable_fraction": float(used.size / n),
         "burst": {
@@ -230,6 +251,7 @@ def _process(burst, out_dir, work_dir, scale, params, log, started):
             "seconds": round(time.time() - started, 1),
             "finished_utc": datetime.now(timezone.utc).isoformat(),
             "stabilize_version": __version__,
+            "params_hash": params.params_hash(),
             "python": platform.python_version(),
             "numpy": np.__version__,
             "opencv": cv2.__version__,

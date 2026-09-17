@@ -349,7 +349,10 @@ beside the usable-frame fraction.
 
 ## §11 Outputs and reproducibility
 
-Per burst, in `<out>/<burst>/` — raw bursts are never written to:
+Per burst and method, in `<out>/<method>/<burst>/` — raw bursts are never
+written to. `<out>` defaults to a `stabilization` folder beside the recordings
+folder, which is also where the camera app's Review tab looks. Every method
+writes the same files, so anything that reads one reads the other:
 
 | File | Contents |
 |---|---|
@@ -359,6 +362,15 @@ Per burst, in `<out>/<burst>/` — raw bursts are never written to:
 | `mean_stabilized.tif`, `std_stabilized.tif` | mean and temporal SD after stabilization, glare excluded (float32; NaN where coverage < 50%) |
 | `consensus_mask.tif` | vessel envelope consensus at full resolution (0/255) |
 | `qc.png` | raw vs stabilized mean on a shared contrast scale, trajectory, headline metrics |
+| `fields.npz` | non-rigid only: each frame's displacement field in compact form (§13) |
+
+`metrics.json` names the `method`, whether it is `experimental`, the
+`stabilize_version` and a `params_hash` — a fingerprint of every parameter.
+A result counts as current, and is skipped on re-runs, only when both match
+the code being run: a changed setting must invalidate old results, which file
+times alone can't detect. For the non-rigid method, `registered` in
+`transforms.csv` means *used by the non-rigid result*; the translation stage's
+flag is kept as `translation_registered`.
 
 In `qc.png`, **magenta marks regions with no valid data** — never black, which
 would be indistinguishable from a vessel — and trajectory lines **break** where
@@ -366,21 +378,23 @@ frames were not used, rather than drawing motion that was never measured.
 
 Stabilized projections use a **single resampling pass** from each original
 frame; warping repeatedly would blur fine detail. Stabilized frame stacks are
-not written — they can be regenerated at any time from `transforms.csv`.
-Across bursts, `summary.csv` and `summary.html` rank bursts by stability index.
+not written — they can be regenerated at any time from `transforms.csv` or
+`fields.npz` (the Review tab does exactly that for playback).
+Per method, `summary.csv` and `summary.html` rank every burst with a result
+on disk by stability index.
 
 ## §12 Validation
 
 **Synthetic ground truth** (`tests/test_synthetic.py`). Vessel scenes with known
 sub-pixel motion, red-cell flicker, shot noise, blinks and camera-fixed glare.
-Passing criteria and results:
+Passing criteria and results (stabilize 0.2.0):
 
 | Case | Motion | RMS error (< 0.2 px) | Overlap after | Perfect-registration ceiling |
 |---|---|---|---|---|
 | still | 0 px | 0.000 | 0.792 | 0.792 |
-| gentle | 8 × 7 px | 0.065 | 0.767 | 0.768 |
-| rough | 35 × 45 px + saccade | 0.072 | 0.738 | 0.739 |
-| rough + blinks + glare | same | 0.076 | 0.753 | 0.752 |
+| gentle | 8 × 7 px | 0.071 | 0.767 | 0.768 |
+| rough | 35 × 45 px + saccade | 0.064 | 0.738 | 0.739 |
+| rough + blinks + glare | same | 0.116 | 0.755 | 0.756 |
 
 The **ceiling** is the overlap of the same masks aligned with the *true*
 motion. It is the right yardstick; a motionless burst's score is not, because
@@ -396,8 +410,106 @@ blurrier than still ones — no registration could reach the still burst's score
 5. the gate rejected good frames in steady bursts → physical floors (§3);
 6. on **real** data, the template loop diverged (RMS change 21 → 86 px per
    iteration; Dice *fell*) because a few coarse outliers corrupted the template —
-   invisible in synthetic data → candidate selection by fine confidence (§8).
+   invisible in synthetic data → candidate selection by fine confidence (§8);
+7. OpenCV 5.0's `phaseCorrelate` multiplies its **input arrays** by the window,
+   in place. Arrays passed more than once were eroded toward their centre:
+   the coarse template once per frame of every iteration, and the on-disk
+   vesselness maps during chaining and the closure check. Caught when the
+   non-rigid smoke test invented 218 px of deformation on a *still* burst, as
+   each shared template patch was re-windowed for every frame → every call
+   now correlates private copies (`register.phase_correlate`). Translation
+   results before stabilize 0.2.0 were affected; the synthetic test passed
+   both before and after (the fine stage has its own Fourier transform), so
+   real bursts should be re-run. It may also explain the coarse outliers of
+   item 6, which appeared on a template eroded to its centre.
 
-**Real-data acceptance.** `15-50-52` (clean): converges 0.92 → 0.07 px; overlap
-0.497 → 0.905, Dice 0.587 → 0.933, 99% of frames usable. `15-22-26` (blinks,
-25% lighting swings): overlap 0.221 → 0.621, Dice 0.024 → 0.695, 59% usable.
+**Real-data acceptance.** `15-50-52` (clean): converges 0.82 → 0.07 px; overlap
+0.497 → 0.905, Dice 0.587 → 0.933, 99% of frames usable (0.2.0; identical
+headline metrics under 0.1.0). `15-22-26` (blinks, 25% lighting swings), under
+0.1.0: overlap 0.221 → 0.621, Dice 0.024 → 0.695, 59% usable.
+
+## §13 Non-rigid refinement (experimental)
+
+**Why.** On wide-field bursts, translation left the stabilized mean *doubled*
+toward the corners while the centre was sharp. Registering each tile of each
+frame separately showed why: after translation, residual tile shifts were
+~0.3 px at the centre but up to 3 px at the corners, with opposite corners
+moving in opposite directions — rotation and magnification between fixations,
+which one shift per frame cannot remove (§10). Clustering the frames by these
+residuals found two distinct poses.
+
+**Model.** Each frame's correction is a displacement field (`fields.py`):
+
+    output(x) = frame(x + d(x)),   d(x) = A·[x, y, 1] + L(x)
+
+- **A**, a 2×3 affine per frame: translation, rotation, magnification, shear.
+  It is evaluated *exactly* at every pixel. (The prototype interpolated it
+  from the patch centres and held it constant beyond the outermost ones,
+  which under-corrected the corners — where rotation displaces most.)
+- **L**, a local residual known at the patch centres and interpolated
+  bicubically: whatever the affine can't describe, bounded to ±8 px so a bad
+  patch match can't tear the image, and 3×3-median smoothed.
+
+When the patch grid has only two rows (e.g. 1920×500), vertical gradients are
+barely constrained, so the per-frame model is a **similarity** (rotation and
+uniform magnification only). Frames too short for a 2×2 grid (strips) **fall
+back to translation**, stored in the same layout.
+
+**Measurement.** 320 px patches at 160 px stride (at working scale), each
+phase-correlated (§7) against the same patch of a template. A patch counts if
+its response ≥ 0.05 and its shift < a quarter patch; a frame needs ≥ 6 such
+patches or its field is left unchanged. The affine is fitted to the patch
+shifts by **iteratively reweighted least squares with Huber weights**:
+ordinary least squares would let one wrong patch — a glare edge, a vessel
+that changed — tilt the whole frame, whereas Huber weights shrink the
+influence of residuals beyond 1.5× their median.
+
+**Composition.** Each iteration measures a correction *u* on the frame as
+currently aligned by *f*. The new field is exactly `g(x) = u(x) + f(x + u(x))`:
+for the affines, `M = M_u + M_f + M_f·M_u` and `b = b_u + b_f + M_f·b_u`; the
+local residual is resampled at the moved grid nodes. Each original frame is
+therefore resampled **once**, with its final field, never warp upon warp.
+
+**Single-pose reference.** A template averaged over two poses is itself
+doubled, and matching against it is ambiguous — either copy fits, pulling
+frames toward the *average* pose instead of one pose. So the first two
+iterations build the template only from the most self-consistent run of 25
+consecutive frames (highest mean correlation with their own mean): one
+fixation, one pose. Later iterations use every frame.
+
+**Convergence** is tested on the **90th percentile** of per-frame updates
+(< 0.25 px), not the median: the frames that cause doubling are the minority
+still moving, and a median test stopped after one round while they still
+needed 5 px more. At most 6 iterations.
+
+**Rejection.** Frames whose aligned vesselness still correlates poorly with
+the final template — robust z < −3.5 *and* more than 0.05 below the median
+correlation — are left out of the result, and counted in `metrics.json`.
+
+**Scoring** uses exactly the metrics of translation (§9), on the same frames,
+with the non-rigid warp: vessel overlap and Dice before, after translation,
+and after non-rigid; residual step; quadrant disagreement; and the per-tile
+residual spread that exposed the doubling, for both methods.
+
+**Status: experimental.** Results so far:
+
+- `15-50-52` (full frame, one saccade): 6×11 patch grid, affine, converged in
+  3 iterations, no frames rejected. Vessel overlap 0.905 (translation) →
+  0.917 on the same 138 frames. Maximum per-tile residual spread 3.16 → 0.34
+  px by the pipeline's measure. An independent check — warping the raw frames
+  with `fields.npz`, recomputing vesselness, re-registering 3×4 tiles — gives
+  4.22 → 0.45 px (0.45 in one tile, ≤ 0.34 elsewhere), and the best k-means
+  silhouette of per-frame tile residuals falls from 0.835 (two clear poses,
+  18 and 120 frames) to 0.380: the second pose is largely, not entirely,
+  removed.
+- Synthetic smoke test: a 0.6° pose change is recovered as 0.598°, tile
+  spread 2.91 → 0.22 px; a still burst gains median 0.08 px (max 0.15 px) of
+  non-translational field — the patch-shift noise floor, no larger than
+  translation's own error — with no loss of tile alignment.
+
+The smoke test
+(`tests/test_nonrigid_smoke.py`) checks that a still burst gains no
+deformation, that a 0.6° pose change is recovered and removes the doubling,
+and that strips fall back. What is *not* yet done is the ground-truth
+validation translation has (§12): known, spatially varying deformations with
+flicker, noise, blinks and glare, and the accuracy of the recovered fields.

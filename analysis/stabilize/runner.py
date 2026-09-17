@@ -8,21 +8,24 @@ function by module path, and a function defined in the __main__ of a
 import os
 import traceback
 
-from .config import Params
+
+def run_one(burst_path, out_base, method, log):
+    from .methods import run
+    try:
+        return run(method, burst_path, out_base, log=log)
+    except Exception as exc:                     # keep the rest of the run going
+        log(traceback.format_exc())
+        return {"status": "error", "method": method,
+                "skip_reason": f"{type(exc).__name__}: {exc}",
+                "burst": {"name": os.path.basename(os.path.normpath(burst_path)),
+                          "path": burst_path}}
 
 
-def process_one(burst_path, out_root):
+def process_one(burst_path, out_base, method):
     # one OpenCV thread per process: parallelism comes from running bursts
     # side by side, and nested thread pools would just oversubscribe the CPU
     import cv2
     cv2.setNumThreads(1)
-    from .pipeline import process_burst
-
     lines = []
-    try:
-        record = process_burst(burst_path, out_root, Params(), log=lines.append)
-    except Exception as exc:                     # keep the rest of the run going
-        record = {"status": "error", "skip_reason": f"{type(exc).__name__}: {exc}",
-                  "burst": {"name": os.path.basename(burst_path), "path": burst_path}}
-        lines.append(traceback.format_exc())
+    record = run_one(burst_path, out_base, method, lines.append)
     return record, lines

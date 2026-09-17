@@ -122,8 +122,9 @@ def write_qc_png(path, mean_raw, mean_st, traj, times, registered, good, rec):
     plot = _trajectory_plot(traj, times, registered, good, width, 260)
 
     m, q = rec["motion"], rec["quality"]
+    method = rec.get("method", "translation") + (" (EXPERIMENTAL)" if rec.get("experimental") else "")
     lines = [
-        f"{rec['burst']['name']}   {rec['burst']['width']}x{rec['burst']['height']} "
+        f"{rec['burst']['name']}   [{method}]   {rec['burst']['width']}x{rec['burst']['height']} "
         f"{rec['burst']['pixel_format']} @ {rec['burst']['fps']:.1f} fps, {rec['burst']['frames']} frames",
         f"STABILITY INDEX {rec['stability_index']:.3f}   usable {100 * rec['usable_fraction']:.0f}%   "
         f"vessel overlap {q['before']['overlap']:.3f} -> {q['after']['overlap']:.3f}   "

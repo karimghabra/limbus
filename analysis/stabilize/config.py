@@ -3,6 +3,8 @@ it. Change the reasoning there first, then the number here, so the two never
 disagree. The full set is saved into every metrics.json, so a result can
 always be traced to the settings that produced it.
 """
+import hashlib
+import json
 from dataclasses import asdict, dataclass
 
 
@@ -55,3 +57,47 @@ class Params:
 
     def to_dict(self):
         return asdict(self)
+
+    def params_hash(self):
+        """Short fingerprint of every parameter. Recorded in each result and
+        used to decide whether a result is still current: a changed setting
+        must invalidate old results, which file times alone can't detect."""
+        blob = json.dumps(self.to_dict(), sort_keys=True, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+@dataclass(frozen=True)
+class NonrigidParams:
+    """§13 Non-rigid refinement (experimental). Kept apart from Params so that
+    tuning it doesn't invalidate translation results."""
+    # patches: large enough to hold several vessels (phase correlation needs
+    # structure in two directions), small enough to follow rotation and
+    # magnification across the field. Full-resolution pixels.
+    patch_px: int = 320
+    stride_px: int = 160
+    patch_min_response: float = 0.05
+    min_patches: int = 6
+    # local deviation from the frame's affine: bounded, so a wrong patch
+    # match can't tear the image. Full-resolution pixels.
+    max_local_px: float = 8.0
+    # single-pose reference: the most self-consistent run of this many frames
+    reference_frames: int = 25
+    reference_iterations: int = 2
+    max_iterations: int = 6
+    # converge on the 90th percentile of per-frame updates, not the median:
+    # the frames that cause doubling are the minority still moving
+    converge_p90_px: float = 0.25
+    # frames that still disagree with the template after refinement
+    reject_z: float = -3.5
+    reject_ncc_drop: float = 0.05
+    # tile grid for the residual-spread diagnostic (rows, cols)
+    tile_grid: tuple = (3, 4)
+
+    def to_dict(self):
+        return asdict(self)
+
+    def params_hash(self, base):
+        """Fingerprint of the translation stage's parameters and these."""
+        blob = json.dumps({"base": base.to_dict(), "nonrigid": self.to_dict()},
+                          sort_keys=True, default=str)
+        return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]

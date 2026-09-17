@@ -61,7 +61,7 @@ def motion_metrics(traj_px, times_s, registered, params):
     return out
 
 
-def mask_consensus(M, traj_ws, frames, params, aligned, O=None):
+def mask_consensus(M, traj_ws, frames, params, aligned, O=None, warp=None):
     """Vessel overlap and Dice of the vessel masks across frames (§9).
 
     overlap = probability that a pixel labelled vessel in one frame is also
@@ -87,8 +87,13 @@ def mask_consensus(M, traj_ws, frames, params, aligned, O=None):
     as disagreement (O is the per-frame observed mask; None = all observed).
     Only pixels observed by at least coverage_min_fraction of frames count, so
     borders shifted in from outside the field can't distort the score either.
+
+    warp(img, i) aligns frame i; the default shifts by traj_ws[i]. The
+    non-rigid method passes its own, so both are scored identically.
     """
     from .register import observed
+
+    warp = warp or (lambda img, i: shift(img, traj_ws[i]))
 
     h, w = M.shape[1:]
     msum = np.zeros((h, w), np.float32)
@@ -102,8 +107,8 @@ def mask_consensus(M, traj_ws, frames, params, aligned, O=None):
             # masks and deflates overlap for any burst that moved — penalising
             # motion that was correctly removed. Thresholding at 0.5 keeps the
             # sub-pixel edge position without the blur.
-            seen = shift(obs, traj_ws[i]) >= 0.5
-            msum += (shift(m, traj_ws[i]) >= 0.5) & seen
+            seen = warp(obs, i) >= 0.5
+            msum += (warp(m, i) >= 0.5) & seen
             cover += seen
         else:
             seen = obs >= 0.5
@@ -123,8 +128,8 @@ def mask_consensus(M, traj_ws, frames, params, aligned, O=None):
         m = M[i].astype(np.float32)
         obs = observed(O, i, (h, w))
         if aligned:
-            m = shift(m, traj_ws[i])
-            obs = shift(obs, traj_ws[i])
+            m = warp(m, i)
+            obs = warp(obs, i)
         # compare only where this frame could see
         region = valid & (obs >= 0.5)
         mb = (m >= 0.5) & region
@@ -139,12 +144,13 @@ def mask_consensus(M, traj_ws, frames, params, aligned, O=None):
     }, consensus
 
 
-def residual_motion(V, traj_ws, frames, scale, params):
+def residual_motion(V, traj_ws, frames, scale, params, warp=None):
     """Motion left over after stabilization (§9): phase-correlate consecutive
     stabilized frames, which should now differ by ~0 px. Reported in
     full-resolution pixels, on an evenly spread subsample."""
     if len(frames) < 2:
         return {}
+    warp = warp or (lambda img, i: shift(img, traj_ws[i]))
     pairs = list(zip(frames[:-1], frames[1:]))
     take = np.linspace(0, len(pairs) - 1,
                        min(params.diagnostic_frames, len(pairs))).astype(int)
@@ -152,7 +158,7 @@ def residual_motion(V, traj_ws, frames, scale, params):
     steps = []
     for k in take:
         a, b = pairs[k]
-        d, _ = correlator(shift(V[a], traj_ws[a]), shift(V[b], traj_ws[b]))
+        d, _ = correlator(warp(V[a], a), warp(V[b], b))
         steps.append(np.hypot(*d) / scale)
     steps = np.array(steps)
     return {"residual_step_median_px": float(np.median(steps)),
@@ -182,7 +188,7 @@ def closure_error(V, frames, scale, params):
             "closure_p90_px": float(np.percentile(errs, 90))}
 
 
-def rotation_diagnostic(V, traj_ws, template_v, frames, scale, params):
+def rotation_diagnostic(V, traj_ws, template_v, frames, scale, params, warp=None):
     """Is a translation model enough? (§10) After alignment, register each
     quadrant separately against the template's quadrant. Pure translation
     leaves every quadrant at ~0; rotation moves opposite quadrants in
@@ -191,6 +197,7 @@ def rotation_diagnostic(V, traj_ws, template_v, frames, scale, params):
     h, w = V.shape[1:]
     if h < 64 or w < 64 or len(frames) == 0:
         return {}
+    warp = warp or (lambda img, i: shift(img, traj_ws[i]))
     quads = [(0, h // 2, 0, w // 2), (0, h // 2, w // 2, w),
              (h // 2, h, 0, w // 2), (h // 2, h, w // 2, w)]
     correlators = [PhaseCorrelator((y1 - y0, x1 - x0)) for y0, y1, x0, x1 in quads]
@@ -199,7 +206,7 @@ def rotation_diagnostic(V, traj_ws, template_v, frames, scale, params):
     spreads = []
     for k in take:
         i = frames[k]
-        aligned = shift(V[i], traj_ws[i])
+        aligned = warp(V[i], i)
         shifts = []
         for (y0, y1, x0, x1), corr in zip(quads, correlators):
             d, _ = corr(template_v[y0:y1, x0:x1], aligned[y0:y1, x0:x1])
