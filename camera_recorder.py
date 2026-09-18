@@ -487,10 +487,14 @@ class TiffBurstWriter:
         os.makedirs(directory, exist_ok=True)
         self.static = dict(static_meta)
         self.bit_depth = int(bit_depth or 16)
-        # The pylon converter MSB-aligns, i.e. puts the camera's 12 bits at the
-        # top of a 16-bit word (values x16). Shift them back so the TIFF holds
-        # true sensor DN — what analysis code and ImageJ measurements expect.
-        self.shift = max(0, 16 - self.bit_depth)
+        # The pylon converter MSB-aligns high-bit-depth formats, i.e. puts the
+        # camera's 12 bits at the top of a 16-bit word (values x16). Shift
+        # them back so the TIFF holds true sensor DN — what analysis code and
+        # ImageJ measurements expect. Only 16-bit frames are aligned this way:
+        # Mono8 arrives as plain 8-bit and must never be shifted, or every
+        # pixel becomes zero.
+        self.shift = max(0, 16 - self.bit_depth) if self.bit_depth > 8 else 0
+        self.dtype = None       # recorded from the frames actually written
         self.frames_written = 0
         self.frames_dropped = 0
         self.rows = []
@@ -516,8 +520,9 @@ class TiffBurstWriter:
             index, frame, row = item
             name = f"frame_{index:06d}.tif"
             try:
-                if self.shift:
+                if self.shift and frame.dtype == np.uint16:
                     frame = frame >> self.shift
+                self.dtype = self.dtype or frame.dtype.name
                 tifffile.imwrite(os.path.join(self.dir, name), frame,
                                  photometric="minisblack",
                                  description=json.dumps(row, default=str))
@@ -575,7 +580,7 @@ class TiffBurstWriter:
             "write_errors": self.errors,
         }
         manifest["pixel_values"] = {
-            "dtype": "uint16",
+            "dtype": self.dtype or ("uint8" if self.bit_depth <= 8 else "uint16"),
             "bit_depth": self.bit_depth,
             "alignment": "right",
             "max_value": (1 << self.bit_depth) - 1,
@@ -2065,7 +2070,16 @@ class ReviewTab(QtWidgets.QWidget):
             self.view.size(), QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation))
         self.counter.setText(f"{self.index + 1} / {len(self.source)}")
-        self._fill(self.frame_form, self.source.meta(self.index))
+        # The frame's real pixel range, in sensor DN. A black-looking frame
+        # can be dim-but-valid or genuinely empty, and a bright one can be
+        # clipped — neither is visible from the picture alone.
+        meta = list(self.source.meta(self.index))
+        lo, hi = int(frame.min()), int(frame.max())
+        top = (1 << int(getattr(self.source, "bit_depth", 8))) - 1
+        flag = ("  ⚠ all zero" if hi == 0
+                else "  ⚠ saturated" if hi >= top else "")
+        meta.append(("Pixel range", f"{lo}–{hi} of {top}{flag}"))
+        self._fill(self.frame_form, meta)
 
     def _to_8bit(self, frame):
         if frame.dtype != np.uint16:
@@ -2120,6 +2134,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pixel_format = None    # explicit choice once connected
         self.roi = None             # (width, height), None = full sensor
         self.bursting = False
+        # which control started the running burst — "record" (the hold/tap
+        # Record button, open-ended) or "panel" (fixed-length Capture burst)
+        self._burst_origin = None
+        # what the running Record-button capture is ("burst" or "video"),
+        # fixed at start so changing the setting mid-capture can't confuse
+        # which kind of capture a stop should end
+        self._record_kind = None
         # Settings the user has chosen, re-applied after a reconnect: changing
         # the pixel format reloads the camera's factory defaults, which would
         # otherwise switch auto-brightness back on and forget the exposure
@@ -2129,6 +2150,7 @@ class MainWindow(QtWidgets.QMainWindow):
         os.makedirs(self.output_dir, exist_ok=True)
 
         self._build_ui()
+        self._record_mode_changed()
         self._refresh_cameras(auto_connect=True)
 
         self.status_timer = QtCore.QTimer(self)
@@ -2205,18 +2227,34 @@ class MainWindow(QtWidgets.QMainWindow):
             " background-color: #c62828; color: white; border-radius: 8px;}"
             "QPushButton:disabled {background-color: #666666;}")
         self.record_btn.setToolTip(
-            "Hold down to record for as long as you hold.\n"
+            "Hold down to capture for as long as you hold.\n"
             "Or tap once to start, and tap again to stop.")
         self.record_btn.pressed.connect(self._record_pressed)
         self.record_btn.released.connect(self._record_released)
         self.record_btn.setEnabled(False)
         side.addWidget(self.record_btn)
 
-        hint = QtWidgets.QLabel("Hold for a short clip · tap to start/stop")
-        hint.setAlignment(QtCore.Qt.AlignCenter)
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #777777; font-size: 11px;")
-        side.addWidget(hint)
+        self.record_hint = QtWidgets.QLabel("")
+        self.record_hint.setAlignment(QtCore.Qt.AlignCenter)
+        self.record_hint.setWordWrap(True)
+        self.record_hint.setStyleSheet("color: #777777; font-size: 11px;")
+        side.addWidget(self.record_hint)
+
+        # What the Record button saves. TIFF bursts by default: lossless,
+        # all 12 bits, with per-frame metadata. Video stays one step away.
+        mode_row = QtWidgets.QHBoxLayout()
+        mode_row.addWidget(QtWidgets.QLabel("Record saves"))
+        self.record_mode = QtWidgets.QComboBox()
+        self.record_mode.addItem("TIFF burst (lossless)", "burst")
+        self.record_mode.addItem("Video file", "video")
+        self.record_mode.setToolTip(
+            "TIFF burst: every frame saved losslessly with all 12 bits, plus "
+            "manifest.json and frames.csv.\n"
+            "Video file: one compressed file, using the Quality setting.")
+        self.record_mode.currentIndexChanged.connect(
+            lambda _: self._record_mode_changed())
+        mode_row.addWidget(self.record_mode, stretch=1)
+        side.addLayout(mode_row)
 
         self.record_info = QtWidgets.QLabel(" ")
         self.record_info.setAlignment(QtCore.Qt.AlignCenter)
@@ -2701,7 +2739,41 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._toggle_record()   # a hold: the clip ends on release
             # a quick tap latches instead — recording runs until tapped again
 
+    def _record_mode_changed(self):
+        burst = self.record_mode.currentData() == "burst"
+        self.record_hint.setText(
+            "Hold to capture a TIFF burst · tap to start/stop" if burst
+            else "Hold for a short clip · tap to start/stop")
+        # Quality only shapes video files; bursts are lossless either way
+        self.quality_combo.setEnabled(not burst and not self.recording)
+        if not self.recording:
+            self._set_record_button(False)
+        self._update_rate_warning()
+
+    def _set_record_button(self, active):
+        if active:
+            self.record_btn.setText("■  Stop")
+            self.record_btn.setStyleSheet(
+                "QPushButton {font-size: 18px; font-weight: bold;"
+                " background-color: #2e7d32; color: white;"
+                " border-radius: 8px;}")
+            return
+        burst = self.record_mode.currentData() == "burst"
+        self.record_btn.setText("●  Record burst" if burst else "●  Record video")
+        self.record_btn.setStyleSheet(
+            "QPushButton {font-size: 18px; font-weight: bold;"
+            " background-color: #c62828; color: white;"
+            " border-radius: 8px;}"
+            "QPushButton:disabled {background-color: #666666;}")
+
     def _toggle_record(self):
+        # a stop always ends the kind of capture that was started, even if
+        # the setting has been changed since
+        kind = self._record_kind if self.recording \
+            else self.record_mode.currentData()
+        if kind == "burst":
+            self._toggle_record_burst()
+            return
         if not self.recording:
             ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
             quality = QUALITY_PRESETS[self.quality_combo.currentIndex()][1]
@@ -2728,27 +2800,67 @@ class MainWindow(QtWidgets.QMainWindow):
                     self, "Recording failed", str(exc))
                 return
             self.recording = True
+            self._record_kind = "video"
             self.record_started = time.monotonic()
             self.current_file = path
             self.quality_combo.setEnabled(False)
             self.pol_combo.setEnabled(False)
             self.depth_combo.setEnabled(False)
-            self.record_btn.setText("■  Stop")
-            self.record_btn.setStyleSheet(
-                "QPushButton {font-size: 18px; font-weight: bold;"
-                " background-color: #2e7d32; color: white;"
-                " border-radius: 8px;}")
+            self.record_mode.setEnabled(False)
+            self._set_record_button(True)
             self.fps_spin.setEnabled(False)
             self.camera_combo.setEnabled(False)
         else:
             self.recording = False
-            self.record_btn.setText("●  Record")
-            self.record_btn.setStyleSheet(
-                "QPushButton {font-size: 18px; font-weight: bold;"
-                " background-color: #c62828; color: white;"
-                " border-radius: 8px;}"
-                "QPushButton:disabled {background-color: #666666;}")
+            self._record_kind = None
+            self.record_mode.setEnabled(True)
+            self._set_record_button(False)
             self._finish_recording()
+
+    def _toggle_record_burst(self):
+        """The Record button as a TIFF burst: runs for as long as the button
+        is held, or from one tap to the next. Open-ended, unlike the
+        fixed-length Capture burst — the frame count is whatever the hold
+        lasted."""
+        if self.recording:
+            # Ask the grab loop to finish, so it records the camera's closing
+            # state before the writer closes. The button stays disabled until
+            # the files are written, so a new burst can't start underneath.
+            self.recording = False
+            self.record_btn.setEnabled(False)
+            self.record_btn.setText("Saving…")
+            if self.cam_thread:
+                self.cam_thread.stop_burst()
+            return
+        if not self.cam_thread or self.bursting:
+            return
+        free = shutil.disk_usage(self.output_dir).free
+        if free < 2 * MIN_FREE_BYTES:
+            QtWidgets.QMessageBox.warning(
+                self, "Disk almost full",
+                f"Only {free / 1e9:.1f} GB free — make space before capturing.")
+            return
+        ts = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        directory = os.path.join(self.output_dir, f"burst_{ts}")
+        try:
+            self.cam_thread.start_burst(
+                directory, 0,           # 0 frames = until stopped
+                self._static_metadata(), self._burst_bit_depth())
+        except Exception as exc:
+            QtWidgets.QMessageBox.critical(self, "Burst failed", str(exc))
+            return
+        self.recording = True
+        self.bursting = True
+        self._record_kind = "burst"
+        self._burst_origin = "record"
+        self.record_started = time.monotonic()
+        self._set_record_button(True)
+        self.record_info.setStyleSheet("")
+        self.record_info.setText("Capturing…")
+        # one burst at a time, and nothing that changes the frame size
+        for widget in (self.burst_btn, self.record_mode, self.depth_combo,
+                       self.camera_combo, *self._roi_buttons):
+            widget.setEnabled(False)
 
     def _finish_recording(self):
         """Finalize the recording in the background — encoding the buffered
@@ -2880,7 +2992,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Warn before recording if the chosen rate exceeds what the
         encoder can write, rather than letting frames vanish silently."""
         d = getattr(self, "_cam_info", None)
-        if not d:
+        # the encoder limit only applies to video files; bursts aren't encoded
+        if not d or self.record_mode.currentData() == "burst":
             self.rate_warning.setVisible(False)
             return
         quality = QUALITY_PRESETS[self.quality_combo.currentIndex()][1]
@@ -3035,9 +3148,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _burst_clicked(self):
         if self.bursting:
-            self.cam_thread.stop_burst()
+            if self._burst_origin == "panel":
+                self.cam_thread.stop_burst()
             return
-        if not self.cam_thread:
+        if not self.cam_thread or self.recording:
             return
         free = shutil.disk_usage(self.output_dir).free
         d = getattr(self, "_cam_info", None) or {}
@@ -3060,12 +3174,12 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.critical(self, "Burst failed", str(exc))
             return
         self.bursting = True
+        self._burst_origin = "panel"
         self.burst_btn.setText("■  Stop burst")
-        self.burst_frames.setEnabled(False)
-        self.burst_unit.setEnabled(False)
-        self.depth_combo.setEnabled(False)
-        for b in self._roi_buttons:
-            b.setEnabled(False)
+        # one burst at a time: the Record button would start a second one
+        for widget in (self.burst_frames, self.burst_unit, self.depth_combo,
+                       self.record_btn, self.record_mode, *self._roi_buttons):
+            widget.setEnabled(False)
         self.burst_info.setText("Capturing…")
 
     def _burst_bit_depth(self):
@@ -3075,28 +3189,49 @@ class MainWindow(QtWidgets.QMainWindow):
         return 16 if bits > 12 else (bits if bits > 8 else 8)
 
     def _on_burst_finished(self, result):
+        origin, self._burst_origin = self._burst_origin, None
         self.bursting = False
+        # restore whichever control started it, and release the other
+        if origin == "record":
+            self.recording = False
+            self._record_kind = None
+            self._set_record_button(False)
         self.burst_btn.setText("⦿  Capture burst")
-        self.burst_frames.setEnabled(True)
-        self.burst_unit.setEnabled(True)
-        self.depth_combo.setEnabled(True)
-        for b in self._roi_buttons:
-            b.setEnabled(True)
+        for widget in (self.burst_btn, self.burst_frames, self.burst_unit,
+                       self.depth_combo, self.record_mode, self.camera_combo,
+                       *self._roi_buttons):
+            widget.setEnabled(True)
+        self.record_btn.setEnabled(bool(getattr(self, "_cam_info", None)))
+
+        info = self.record_info if origin == "record" else self.burst_info
         written = result.get("written", 0)
         dropped = result.get("dropped", 0)
-        name = os.path.basename(result.get("directory", ""))
+        directory = result.get("directory", "")
+        name = os.path.basename(directory)
+        if written == 0:
+            # released before a single frame arrived: don't leave an empty
+            # folder behind to be mistaken for a capture — but only ever
+            # remove a burst folder that really holds no frames
+            if (directory and os.path.isdir(directory)
+                    and os.path.basename(directory).startswith("burst_")
+                    and not glob.glob(os.path.join(directory, "*.tif"))):
+                shutil.rmtree(directory, ignore_errors=True)
+            self.review.refresh()
+            info.setStyleSheet("font-size: 11px;")
+            info.setText("Too short — no frames captured. Hold a little longer.")
+            return
         # have it ready to play before the message says it is saved
-        self.review.refresh(select=result.get("directory"))
+        self.review.refresh(select=directory)
         msg = (f"Saved {written} frames to {name} at "
                f"{result.get('effective_fps', 0):.1f} fps — see the Review tab")
         if dropped:
             msg += f" — {dropped} dropped (disk too slow)"
-            self.burst_info.setStyleSheet("color: #b35000; font-size: 11px;")
+            info.setStyleSheet("color: #b35000; font-size: 11px;")
         else:
-            self.burst_info.setStyleSheet("font-size: 11px;")
+            info.setStyleSheet("font-size: 11px;")
         for err in result.get("errors", [])[:1]:
             msg += f"\nwrite error: {err}"
-        self.burst_info.setText(msg)
+        info.setText(msg)
 
     def _static_metadata(self):
         """Everything needed to reproduce this capture, saved into the
@@ -3219,15 +3354,21 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.exp_hint.setText("")
 
-        if self.bursting:
+        if self.bursting and "burst_offered" in status:
             offered = status.get("burst_offered", 0)
             target = status.get("burst_target", 0)
             dropped = status.get("burst_dropped", 0)
-            text = f"Capturing {offered}/{target}…" if target else \
-                f"Capturing {offered}…"
+            if target:
+                text = f"Capturing {offered}/{target}…"
+            else:
+                # open-ended (Record button): show elapsed time too
+                secs = time.monotonic() - (self.record_started or time.monotonic())
+                text = f"● {secs:.1f} s · {offered} frames"
             if dropped:
-                text += f"  {dropped} dropped"
-            self.burst_info.setText(text)
+                text += f"  ·  {dropped} dropped"
+            info = self.record_info if self._burst_origin == "record" \
+                else self.burst_info
+            info.setText(text)
 
     def _gain_changed(self, ticks):
         gain = self._gain_min + ticks * self._gain_scale
@@ -3256,7 +3397,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.cam_thread:
             return
         parts = [f"{self.cam_thread.measured_fps:.1f} fps"]
-        if self.recording:
+        if self.recording and self._record_kind == "burst":
+            # burst progress is shown from the live status; only guard the disk
+            if shutil.disk_usage(self.output_dir).free < MIN_FREE_BYTES:
+                self._toggle_record()
+                QtWidgets.QMessageBox.warning(
+                    self, "Disk full",
+                    "Burst stopped automatically — the disk is almost full.")
+                return
+        elif self.recording:
             free = shutil.disk_usage(self.output_dir).free
             if free < MIN_FREE_BYTES:
                 self._toggle_record()
@@ -3297,9 +3446,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 f"{self.cam_thread.measured_fps:.1f} fps — limited to "
                 f"{rf:.1f} fps by exposure time")
 
+    def _wait_for_burst(self):
+        """Don't let closing outrun a burst. Its manifest.json and frames.csv
+        are written as it finishes, on a background thread, and the app exits
+        without waiting for those — closing mid-burst would keep the frames
+        but lose the metadata that makes them reproducible."""
+        dlg = QtWidgets.QProgressDialog(
+            "Saving the burst and its metadata…", None, 0, 0, self)
+        dlg.setWindowTitle("Saving burst")
+        dlg.setWindowModality(QtCore.Qt.WindowModal)
+        dlg.setCancelButton(None)
+        dlg.setMinimumDuration(0)
+        dlg.show()
+        # the grab loop ends the burst on its next frame; if frames have
+        # stopped arriving, close the writer ourselves instead of hanging
+        nudge = time.monotonic() + 3.0
+        deadline = time.monotonic() + 600.0
+        while self.bursting and time.monotonic() < deadline:
+            if nudge and time.monotonic() > nudge:
+                nudge = None
+                self.cam_thread._finish_burst()
+            QtWidgets.QApplication.processEvents()
+            time.sleep(0.05)
+        dlg.close()
+
     def closeEvent(self, event):
         if self.bursting and self.cam_thread:
             self.cam_thread.stop_burst()  # flushes what was captured so far
+            self._wait_for_burst()
         if self.recording:
             self._toggle_record()  # starts background finalization
         fin = self._finishing

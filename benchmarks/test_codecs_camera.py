@@ -65,6 +65,7 @@ def start_one():
         finish()
         return
     idx, label = queue[0]
+    win.record_mode.setCurrentIndex(win.record_mode.findData("video"))   # Record defaults to TIFF bursts
     win.quality_combo.setCurrentIndex(idx)
     win._update_rate_warning()
     print(f"\n=== {label} === warning: "

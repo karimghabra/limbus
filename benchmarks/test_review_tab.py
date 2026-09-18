@@ -93,6 +93,7 @@ def capture_burst():
 
 @step
 def record_video():
+    win.record_mode.setCurrentIndex(win.record_mode.findData("video"))   # Record defaults to TIFF bursts
     win.quality_combo.setCurrentIndex(0)       # H.264, decodable by OpenCV
     win._toggle_record()
 

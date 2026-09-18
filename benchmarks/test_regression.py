@@ -83,6 +83,7 @@ def check_ceiling_recovers():
 @step
 def record_video():
     win.fps_spin.setValue(25.0)
+    win.record_mode.setCurrentIndex(win.record_mode.findData("video"))   # Record defaults to TIFF bursts
     win._toggle_record()          # start
     time.sleep(0.1)
 
