@@ -11,3 +11,9 @@ recordings/
 venv/
 __pycache__/
 *.py[cod]
+
+# Stabilization results and fetched reference bursts — both regenerable
+# (results from the recordings, bursts with tools/fetch_reference_data.py)
+stabilization/
+reference_data/burst_*/
+_work/

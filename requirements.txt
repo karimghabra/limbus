@@ -1,0 +1,10 @@
+# The camera recorder (camera_recorder.py) and its benchmarks.
+# Tested with Python 3.12 on Windows 11: numpy 2.5.3, opencv-python 5.0.0.93,
+# PyQt5 5.15.11, tifffile 2026.9.15, pypylon 26.8, psutil 7.2.2.
+# Basler cameras also need the pylon runtime (USB driver) from basler.com.
+numpy>=2.0
+opencv-python>=4.8
+PyQt5>=5.15
+tifffile>=2024.1
+pypylon>=4.0
+psutil>=5.9          # benchmarks only
