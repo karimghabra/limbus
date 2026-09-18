@@ -123,6 +123,35 @@ too; 12-bit HEVC may not, since it depends on the codecs OpenCV was built
 with — those files open in VLC or ImageJ, and the tab says so rather than
 failing silently.
 
+### Stabilizing a burst
+
+The **Stabilization** panel runs the offline stabilization in
+`analysis/stabilize` on the selected TIFF burst:
+
+- **Method** — *Translation (validated)* shifts each frame, and has been
+  checked against synthetic bursts with known motion (0.06–0.12 px RMS
+  error). *Non-rigid (experimental)* also corrects rotation and
+  magnification between fixations, which translation leaves as doubled
+  vessels toward the corners of wide frames; it is not yet validated the
+  same way.
+- **Stabilize** runs it in a separate process, so the window stays
+  responsive; progress appears underneath, and **Cancel** stops it. A
+  burst takes from under a minute (short strips) to a few minutes (full
+  frames).
+- **View** — *Raw*, *Stabilized* (every frame warped by its correction,
+  with frames the result didn't use labelled) or *Stabilized mean* (the
+  average of the frames used; **magenta** marks regions too few frames
+  saw, never black, which would look like a vessel).
+- The status line gives the **stability index** (how well vessel masks
+  agree across frames after stabilization), the usable fraction and
+  rejected frames, and warns when a result was made by older code or
+  settings.
+
+Results go to a `stabilization/<method>/<burst>/` folder **beside** the
+recordings folder — raw bursts are never written to. See
+[`analysis/stabilize/METHODS.md`](analysis/stabilize/METHODS.md) for how
+every step works and how it was validated.
+
 ## Analysis on another computer
 
 Stabilization needs no camera, driver or GUI — only Python 3.10+ and three

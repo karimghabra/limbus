@@ -1821,15 +1821,120 @@ class VideoSource:
             pass
 
 
+ANALYSIS_DIR = os.path.join(APP_DIR, "analysis")
+NO_DATA_RGB = (200, 60, 180)   # magenta: never mistaken for a dark vessel
+
+
+def _analysis_modules():
+    """The offline stabilization package (analysis/stabilize), or None.
+    Imported lazily: the recorder itself never needs it."""
+    if not os.path.isdir(os.path.join(ANALYSIS_DIR, "stabilize")):
+        return None
+    if ANALYSIS_DIR not in sys.path:
+        sys.path.insert(0, ANALYSIS_DIR)
+    try:
+        from stabilize import fields, methods
+        return methods, fields
+    except Exception:
+        return None
+
+
+def stabilization_base(burst_path):
+    """Results live beside the recordings folder, never inside a burst:
+    <recordings parent>/stabilization/<method>/<burst>/ — the same default
+    the command line uses."""
+    recordings = os.path.dirname(os.path.abspath(burst_path))
+    return os.path.join(os.path.dirname(recordings), "stabilization")
+
+
+class StabilizationResult:
+    """One burst's stabilization result, for playback in the Review tab."""
+
+    def __init__(self, folder, fields_module):
+        self.folder = folder
+        with open(os.path.join(folder, "metrics.json"), encoding="utf-8") as f:
+            self.metrics = json.load(f)
+        self.rows = {}
+        try:
+            with open(os.path.join(folder, "transforms.csv"), encoding="utf-8",
+                      newline="") as f:
+                for row in csv.DictReader(f):
+                    self.rows[int(row["index"])] = row
+        except (OSError, ValueError, KeyError):
+            pass
+        self.fields = None
+        path = os.path.join(folder, "fields.npz")
+        if os.path.exists(path) and fields_module is not None:
+            self.fields = fields_module.FieldSet(path)
+        self._mean = None
+
+    @property
+    def ok(self):
+        return self.metrics.get("status") == "ok"
+
+    def used(self, index):
+        row = self.rows.get(index)
+        return bool(row) and row.get("registered") == "1"
+
+    def why_unused(self, index):
+        row = self.rows.get(index) or {}
+        if row.get("gate_reason"):
+            return f"rejected by quality gate ({row['gate_reason']})"
+        if row.get("translation_registered") == "1":
+            return "disagreed with the non-rigid template"
+        return "could not be registered"
+
+    def stabilize(self, index, frame):
+        """The frame as stabilized, in its own dtype. Frames the result didn't
+        use are still aligned where a correction exists, and labelled."""
+        if self.fields is not None:
+            warped = self.fields.warp_frame(index, frame)
+            if warped is None:
+                return frame, "not used: " + self.why_unused(index) + " (shown unaligned)"
+            if np.issubdtype(frame.dtype, np.integer):
+                top = np.iinfo(frame.dtype).max
+                warped = np.clip(np.rint(warped), 0, top).astype(frame.dtype)
+        else:
+            row = self.rows.get(index)
+            if row is None:
+                return frame, "no correction for this frame (shown unaligned)"
+            dx, dy = float(row["dx_px"]), float(row["dy_px"])
+            m = np.float32([[1, 0, -dx], [0, 1, -dy]])
+            warped = cv2.warpAffine(frame, m, (frame.shape[1], frame.shape[0]),
+                                    flags=cv2.INTER_LINEAR,
+                                    borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+        note = None if self.used(index) else "not used: " + self.why_unused(index)
+        return warped, note
+
+    def mean_image(self):
+        """mean_stabilized.tif as RGB, NaN (no valid data) in magenta."""
+        if self._mean is None:
+            mean = tifffile.imread(os.path.join(self.folder, "mean_stabilized.tif"))
+            finite = np.isfinite(mean)
+            lo, hi = (np.percentile(mean[finite], [1, 99]) if finite.any() else (0, 1))
+            gray = np.clip((np.nan_to_num(mean, nan=lo) - lo) / max(hi - lo, 1e-6) * 255,
+                           0, 255).astype(np.uint8)
+            rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+            rgb[~finite] = NO_DATA_RGB
+            self._mean = (np.ascontiguousarray(rgb), float(lo), float(hi),
+                          float(1 - finite.mean()))
+        return self._mean
+
+
 class ReviewTab(QtWidgets.QWidget):
     """Play back a capture immediately after taking it: scrub through the
-    frames, and see the settings each one was taken with."""
+    frames, and see the settings each one was taken with. TIFF bursts can be
+    stabilized here too (analysis/stabilize), and played back stabilized."""
 
     def __init__(self, main, parent=None):
         super().__init__(parent)
         self.main = main
         self.source = None
         self.index = 0
+        self.result = None          # StabilizationResult for the view
+        self.proc = None            # the running stabilization, if any
+        self._run = None            # (burst path, method) it is working on
+        self.analysis = _analysis_modules()
         self._build_ui()
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._advance)
@@ -1917,6 +2022,49 @@ class ReviewTab(QtWidgets.QWidget):
         self.listing.itemSelectionChanged.connect(self._selection_changed)
         side.addWidget(self.listing, stretch=1)
 
+        stab_box = QtWidgets.QGroupBox("Stabilization")
+        stab = QtWidgets.QFormLayout(stab_box)
+        self.method_combo = QtWidgets.QComboBox()
+        self.method_combo.setToolTip(
+            "Translation: validated against synthetic ground truth.\n"
+            "Non-rigid: also corrects rotation and magnification between "
+            "fixations; experimental — not yet validated the same way.")
+        if self.analysis:
+            for key, info in self.analysis[0].METHODS.items():
+                self.method_combo.addItem(info["label"], key)
+        self.method_combo.currentIndexChanged.connect(lambda _: self._load_result())
+        stab.addRow("Method", self.method_combo)
+        self.view_combo = QtWidgets.QComboBox()
+        for label, key in (("Raw", "raw"), ("Stabilized", "stabilized"),
+                           ("Stabilized mean", "mean")):
+            self.view_combo.addItem(label, key)
+        self.view_combo.setToolTip(
+            "Stabilized: each frame warped by its correction.\n"
+            "Stabilized mean: the average of the frames used; magenta marks "
+            "regions too few frames saw.")
+        self.view_combo.currentIndexChanged.connect(lambda _: self._view_changed())
+        stab.addRow("View", self.view_combo)
+        self.stab_btn = QtWidgets.QPushButton("Stabilize")
+        self.stab_btn.clicked.connect(self._stabilize_clicked)
+        stab.addRow(self.stab_btn)
+        self.stab_status = QtWidgets.QLabel("")
+        self.stab_status.setWordWrap(True)
+        stab.addRow(self.stab_status)
+        self.stab_log = QtWidgets.QPlainTextEdit()
+        self.stab_log.setReadOnly(True)
+        self.stab_log.setMaximumBlockCount(400)
+        self.stab_log.setFixedHeight(90)
+        self.stab_log.setStyleSheet("font-family: monospace; font-size: 10px;")
+        self.stab_log.setVisible(False)
+        stab.addRow(self.stab_log)
+        side.addWidget(stab_box)
+        if not self.analysis:
+            for w in (self.method_combo, self.view_combo, self.stab_btn):
+                w.setEnabled(False)
+            self.stab_status.setText(
+                "Unavailable: the analysis/stabilize folder wasn't found "
+                "beside the app.")
+
         info_box = QtWidgets.QGroupBox("Capture")
         self.info_form = QtWidgets.QFormLayout(info_box)
         side.addWidget(info_box)
@@ -1992,6 +2140,7 @@ class ReviewTab(QtWidgets.QWidget):
             self.play_btn.setEnabled(False)
             self.slider.setEnabled(False)
             self.counter.setText("—")
+            self._load_result()
             return
         count = len(self.source)
         self.index = 0
@@ -2003,7 +2152,7 @@ class ReviewTab(QtWidgets.QWidget):
         self.play_btn.setEnabled(count > 1)
         self._use_real_time()
         self._fill(self.info_form, self.source.summary())
-        self._render()
+        self._load_result()
 
     def _use_real_time(self):
         if self.source is not None:
@@ -2018,7 +2167,7 @@ class ReviewTab(QtWidgets.QWidget):
     def _toggle_play(self):
         if self.timer.isActive():
             self._stop()
-        elif self.source is not None:
+        elif self.source is not None and self.view_combo.currentData() != "mean":
             self.play_btn.setText("⏸")
             self.timer.start(max(4, int(1000.0 / self.play_fps.value())))
 
@@ -2054,6 +2203,17 @@ class ReviewTab(QtWidgets.QWidget):
     def _render(self):
         if self.source is None:
             return
+        view = self.view_combo.currentData()
+        if view != "raw" and not (self.result and self.result.ok):
+            self.view.setPixmap(QtGui.QPixmap())
+            self.view.setText(
+                "No stabilization result for this capture and method yet.\n"
+                "Press Stabilize, or switch the view to Raw.")
+            self._fill(self.frame_form, [])
+            return
+        if view == "mean":
+            self._render_mean()
+            return
         try:
             frame = self.source.frame(self.index)
         except Exception as exc:
@@ -2061,14 +2221,20 @@ class ReviewTab(QtWidgets.QWidget):
             return
         if frame is None:
             return
-        image = self._to_8bit(frame)
-        height, width = image.shape[:2]
-        qimg = QtGui.QImage(image.data, width, height, width,
-                            QtGui.QImage.Format_Grayscale8)
-        pix = QtGui.QPixmap.fromImage(qimg.copy())
-        self.view.setPixmap(pix.scaled(
-            self.view.size(), QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation))
+        shown, note = frame, None
+        if view == "stabilized":
+            try:
+                shown, note = self.result.stabilize(self.index, frame)
+            except Exception as exc:
+                shown, note = frame, f"could not stabilize: {exc}"
+        image = self._to_8bit(shown)
+        if note:
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+            scale = max(0.5, image.shape[1] / 1400)
+            cv2.putText(image, note, (int(10 * scale), int(34 * scale)),
+                        cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 190, 40),
+                        max(1, int(2 * scale)), cv2.LINE_AA)
+        self._show(image)
         self.counter.setText(f"{self.index + 1} / {len(self.source)}")
         # The frame's real pixel range, in sensor DN. A black-looking frame
         # can be dim-but-valid or genuinely empty, and a bright one can be
@@ -2079,7 +2245,211 @@ class ReviewTab(QtWidgets.QWidget):
         flag = ("  ⚠ all zero" if hi == 0
                 else "  ⚠ saturated" if hi >= top else "")
         meta.append(("Pixel range", f"{lo}–{hi} of {top}{flag}"))
+        if view == "stabilized":
+            meta.append(("Stabilized", note or "used"))
         self._fill(self.frame_form, meta)
+
+    def _show(self, image):
+        height, width = image.shape[:2]
+        if image.ndim == 3:
+            qimg = QtGui.QImage(image.data, width, height, 3 * width,
+                                QtGui.QImage.Format_RGB888)
+        else:
+            qimg = QtGui.QImage(image.data, width, height, width,
+                                QtGui.QImage.Format_Grayscale8)
+        pix = QtGui.QPixmap.fromImage(qimg.copy())
+        self.view.setPixmap(pix.scaled(
+            self.view.size(), QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation))
+
+    def _render_mean(self):
+        try:
+            rgb, lo, hi, missing = self.result.mean_image()
+        except Exception as exc:
+            self.view.setPixmap(QtGui.QPixmap())
+            self.view.setText(f"Could not read the stabilized mean:\n{exc}")
+            return
+        self._show(rgb)
+        self.counter.setText("mean")
+        frames = self.result.metrics.get("frames", {})
+        self._fill(self.frame_form, [
+            ("Showing", f"mean of {frames.get('registered', '?')} frames"),
+            ("Display range", f"{lo:.0f}–{hi:.0f} DN (1st–99th pct)"),
+            ("No data", f"{100 * missing:.1f}% (magenta)"),
+        ])
+
+    # ---- stabilization -------------------------------------------------------
+    def _burst_path(self):
+        src = self.source
+        return src.path if src is not None and getattr(src, "kind", "") == "burst" else None
+
+    def _method(self):
+        return self.method_combo.currentData()
+
+    def _load_result(self):
+        """Pick up the result for the selected burst and method, if any."""
+        self.result = None
+        burst = self._burst_path()
+        if self.analysis and burst and self._method():
+            folder = os.path.join(stabilization_base(burst), self._method(),
+                                  os.path.basename(os.path.normpath(burst)))
+            if os.path.exists(os.path.join(folder, "metrics.json")):
+                try:
+                    self.result = StabilizationResult(folder, self.analysis[1])
+                except Exception as exc:
+                    self.result = None
+                    self.stab_log.setVisible(True)
+                    self.stab_log.appendPlainText(f"could not read result: {exc}")
+        self._update_stab_status()
+        self._render()
+
+    def _update_stab_status(self):
+        if not self.analysis:
+            return
+        burst = self._burst_path()
+        running = self.proc is not None
+        if running:
+            self.stab_btn.setText("Cancel")
+            mine = burst and self._run == (burst, self._method())
+            self.stab_btn.setEnabled(bool(mine))
+            if not mine:
+                self.stab_status.setText(
+                    f"Busy: stabilizing {os.path.basename(self._run[0])} "
+                    f"({self._run[1]}).")
+                return
+            self.stab_status.setText("Stabilizing… progress below.")
+            return
+        self.stab_btn.setText("Stabilize")
+        self.stab_btn.setEnabled(bool(burst))
+        if not burst:
+            self.stab_status.setText("Stabilization works on TIFF bursts.")
+            return
+        methods = self.analysis[0]
+        lines = []
+        if methods.METHODS[self._method()]["experimental"]:
+            lines.append("Experimental: not yet validated against ground truth.")
+        rec = self.result.metrics if self.result else None
+        if rec is None:
+            lines.append("Not stabilized with this method yet.")
+        elif rec.get("status") != "ok":
+            lines.append(f"Skipped: {rec.get('skip_reason', 'unknown reason')}")
+            self.stab_btn.setText("Re-run")
+        else:
+            frames = rec.get("frames", {})
+            when = str(rec.get("processing", {}).get("finished_utc", ""))[:16].replace("T", " ")
+            lines.append(
+                f"Stability index {rec.get('stability_index', 0):.3f} · usable "
+                f"{100 * rec.get('usable_fraction', 0):.0f}% "
+                f"({frames.get('registered', '?')}/{frames.get('total', '?')})")
+            rejected = sum((frames.get("rejected_by_gate") or {}).values())
+            extra = frames.get("rejected_by_template")
+            lines.append(f"Rejected: {rejected} by gate"
+                         + (f", {extra} by template" if extra is not None else "")
+                         + f" · {when} UTC")
+            nr = rec.get("diagnostics", {}).get("nonrigid", {})
+            if nr.get("fallback_reason"):
+                lines.append(f"Translation fallback: {nr['fallback_reason']}.")
+            self.stab_btn.setText("Re-run")
+        if rec is not None:
+            try:
+                current = methods.is_current(burst, stabilization_base(burst), self._method())
+            except Exception:
+                current = False
+            if not current:
+                lines.append("⚠ Made with older code or settings — re-run to update.")
+        self.stab_status.setText("\n".join(lines))
+
+    def _view_changed(self):
+        if self.view_combo.currentData() == "mean":
+            self._stop()
+        self._render()
+
+    def _stabilize_clicked(self):
+        if self.proc is not None:
+            self._cancel_stabilization()
+            return
+        burst = self._burst_path()
+        if not burst or not self.analysis:
+            return
+        method = self._method()
+        base = stabilization_base(burst)
+        args = ["-u", "-m", "stabilize", burst, "--method", method, "--out", base]
+        if self.result is not None:
+            args.append("--force")      # the button reads Re-run
+        proc = QtCore.QProcess(self)
+        proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
+        env = QtCore.QProcessEnvironment.systemEnvironment()
+        env.insert("PYTHONPATH", ANALYSIS_DIR)
+        env.insert("PYTHONIOENCODING", "utf-8")
+        env.insert("PYTHONUNBUFFERED", "1")
+        proc.setProcessEnvironment(env)
+        proc.setWorkingDirectory(ANALYSIS_DIR)
+        proc.readyReadStandardOutput.connect(self._proc_output)
+        proc.finished.connect(self._proc_finished)
+        self.stab_log.clear()
+        self.stab_log.setVisible(True)
+        self.stab_log.appendPlainText(f"{method}: {os.path.basename(burst)}")
+        # a separate process: the window stays responsive, and a crash in
+        # the analysis can't take the recorder down with it
+        self.proc = proc
+        self._run = (burst, method)
+        proc.start(sys.executable, args)
+        self._update_stab_status()
+
+    def _proc_output(self):
+        if self.proc is None:
+            return
+        text = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
+        for line in text.splitlines():
+            if line.strip():
+                self.stab_log.appendPlainText(line)
+
+    def _proc_finished(self, code, _status):
+        self._proc_output()
+        burst, method = self._run
+        self.stab_log.appendPlainText("finished" if code == 0 else f"exited with code {code}")
+        self.proc = None
+        self._run = None
+        if self._burst_path() == burst and self._method() == method:
+            self._load_result()
+        else:
+            self._update_stab_status()
+
+    def _cancel_stabilization(self):
+        if self.proc is None:
+            return
+        burst, method = self._run
+        self.proc.finished.disconnect(self._proc_finished)
+        pid = int(self.proc.processId() or 0)
+        if sys.platform == "win32" and pid:
+            # Kill the whole tree: a venv's python.exe is only a launcher that
+            # runs the real interpreter as a child process, which outlives the
+            # launcher for a moment and keeps its files open.
+            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                           capture_output=True,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        self.proc.kill()
+        self.proc.waitForFinished(5000)
+        self.proc = None
+        self._run = None
+        # a killed run can't tidy up: remove its working maps (hundreds of MB),
+        # retrying while the dying interpreter still holds them open
+        name = os.path.basename(os.path.normpath(burst))
+        deadline = time.time() + 10
+        for m in ("translation", method):
+            work = os.path.join(stabilization_base(burst), m, name, "_work")
+            while os.path.exists(work):
+                shutil.rmtree(work, ignore_errors=True)
+                if not os.path.exists(work) or time.time() > deadline:
+                    break
+                time.sleep(0.2)
+        self.stab_log.appendPlainText("cancelled")
+        self._load_result()
+
+    def shutdown(self):
+        """Called when the window closes: don't leave an analysis running."""
+        if self.proc is not None:
+            self._cancel_stabilization()
 
     def _to_8bit(self, frame):
         if frame.dtype != np.uint16:
@@ -3493,6 +3863,7 @@ class MainWindow(QtWidgets.QMainWindow):
             dlg.close()
         if self.cam_thread:
             self.cam_thread.shutdown()
+        self.review.shutdown()
         event.accept()
 
 
