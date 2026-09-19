@@ -81,16 +81,21 @@ detection):
 
 | planted vessel | 1522L (sharp) | 1550C (defocused) |
 |---|---|---|
-| r 1.0 px, 3 % deep | 98 % | 100 % |
-| r 1.5 px, 3 % deep | 98 % | 100 % |
-| r 2.5 px, 3 % deep | 82 % | 95 % |
+| r 1.0 px, 3 % deep | 95 % | 100 % |
+| r 1.5 px, 3 % deep | 92 % | 98 % |
+| r 2.5 px, 3 % deep | 88 % | 95 % |
 | any, ≥ 5 % deep | 100 % | 98–100 % |
 
+(At the default settings. Raising `--t-hi` to 4 and `--t-lo` to 2 halves the
+false alarms and keeps the thin-vessel recall, at the cost of the wider faint
+ones: 95 / 98 / 52 % on 1522L.)
+
 False alarms, measured two ways because both are biased and the truth lies
-between them: on a **phase-randomised texture surrogate** (same power spectrum,
-no vessels) 147–283 px per megapixel, against 19 000–26 000 px/MP of real
-detections — under 1.5 %; on the **inverted frame** (pessimistic: every filter
-echoes along the flanks of the now-bright vessels) 4 200–8 000 px/MP.
+between them: on a **phase-randomised texture surrogate** (same power spectrum
+and amplitude distribution, no vessels) 227 px per megapixel on 1522L and 424 on
+1550C, against 19 400 and 27 200 px/MP of real detections — 1.2 % and 1.6 %; on
+the **inverted frame**, which is pessimistic because every centre-surround
+filter echoes along the flanks of the now-bright vessels, 5 900 and 9 400 px/MP.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
