@@ -167,8 +167,22 @@ The signs differ between vessels, as they should when some carry blood towards
 the limbus and others away. A vessel reading near zero with a low match peak
 (vessel 2 here) means the flow left no trackable pattern, not that it stopped.
 
-Speeds are in pixels per second; converting to mm/s needs the image scale,
-which the grid-target burst will give.
+## Image scale
+
+```bash
+python -m vessels.scale burst_2026-09-16_15-05-41 --pitch-um <grid pitch>
+```
+
+`vessels.scale` measures the grid period of a ruled-target burst from the peak
+of its power spectrum, refined to sub-pixel and reported with the grid's
+rotation and the peak-to-background ratio, so a frame with no grid is obvious
+rather than silently fitted. The two calibration bursts recorded on 16 Sep give
+**27.46 px** (15-05-41) and **24.99 px** (12-57-20) per grid period, each stable
+to better than 0.01 px across frames — they differ by 10 %, so the working
+distance was not the same and each session needs its own calibration.
+
+With the target's pitch that becomes µm/px, and speeds in px/s become mm/s.
+Until the pitch is supplied everything downstream stays in pixels.
 
 ## Tests
 

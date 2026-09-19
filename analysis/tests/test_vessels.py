@@ -184,5 +184,20 @@ noise_kymo = rng.normal(0, 1, (int(fps * 4), span)).astype(np.float32)
 wt, wv, wp = streak_velocity_xcorr(noise_kymo, np.arange(int(fps * 4)) / fps)
 check(np.isnan(wv).mean() > 0.9, "structureless noise gives unknown speed, not a number")
 
+# ---- scale: a synthetic grid of known period comes back --------------------
+from vessels.scale import grid_period  # noqa: E402
+
+for true_period, rot in ((27.46, 0.0), (12.0, 7.0), (40.0, -30.0)):
+    yy, xx = np.mgrid[0:400, 0:600].astype(np.float32)
+    th = np.radians(rot)
+    u = xx * np.cos(th) + yy * np.sin(th)
+    grid = (1000 + 200 * np.sin(2 * np.pi * u / true_period)).astype(np.float32)
+    got, ang, ratio = grid_period(grid)
+    check(got is not None and abs(got - true_period) < 0.05 * true_period,
+          f"grid period {true_period} px measured (got {got:.2f}, {ang:+.1f} deg, peak/bg {ratio:.0f})")
+plain = np.random.default_rng(0).normal(1000, 20, (400, 600)).astype(np.float32)
+_, _, ratio = grid_period(plain)
+check(ratio < 1e3, f"an image with no grid gives a weak peak (ratio {ratio:.0f})")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
