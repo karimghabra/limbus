@@ -87,23 +87,27 @@ peak absorbance planted in the absorbance of two crops, one sharp and one
 defocused; "found" means half the planted centreline is within 2.5 px of a
 detection):
 
-| planted vessel | 1522L (sharp) | 1550C (defocused) |
-|---|---|---|
-| r 1.0 px, 3 % deep | 95 % | 100 % |
-| r 1.5 px, 3 % deep | 92 % | 98 % |
-| r 2.5 px, 3 % deep | 88 % | 95 % |
-| any, ≥ 5 % deep | 100 % | 98–100 % |
+| planted vessel | 1522L (sharp) | 1522R | 1550C (defocused) |
+|---|---|---|---|
+| r 1.0 px, 3 % deep | 95 % | 100 % | 100 % |
+| r 1.5 px, 3 % deep | 95 % | 100 % | 98 % |
+| r 2.5 px, 3 % deep | 85 % | 100 % | 100 % |
+| any, ≥ 5 % deep | 98–100 % | 100 % | 100 % |
 
-(At the default settings. Raising `--t-hi` to 4 and `--t-lo` to 2 halves the
-false alarms and keeps the thin-vessel recall, at the cost of the wider faint
-ones: 95 / 98 / 52 % on 1522L.)
+Detected centreline on the untouched crops is 18 800–28 000 px per megapixel.
+Turning the hysteresis off (`--t-lo 3 --L-lo 40`) costs 7 points of thin-vessel
+recall on the sharp crop and 30 on the wide faint ones, which is what the
+faint-stretch rule buys. The stricter setting (`--t-hi 4 --t-lo 2`) halves the
+false alarms and keeps thin-vessel recall, losing the wide faint vessels
+(48 % at r 2.5).
 
-False alarms, measured two ways because both are biased and the truth lies
-between them: on a **phase-randomised texture surrogate** (same power spectrum
-and amplitude distribution, no vessels) 227 px per megapixel on 1522L and 424 on
-1550C, against 19 400 and 27 200 px/MP of real detections — 1.2 % and 1.6 %; on
-the **inverted frame**, which is pessimistic because every centre-surround
-filter echoes along the flanks of the now-bright vessels, 5 900 and 9 400 px/MP.
+False alarms are measured two ways, because both are biased and the truth lies
+between them. On the **inverted frame** — pessimistic, since every
+centre-surround filter echoes along the flanks of the now-bright vessels —
+6 100 to 11 100 px/MP. On a **phase-randomised texture surrogate**, which has
+the texture's power spectrum and no vessels at all, far less (measured
+separately below). Neither control can be taken for precision on real data,
+which is why detections were also reviewed by eye, tile by tile, on both crops.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
