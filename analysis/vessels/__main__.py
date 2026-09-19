@@ -47,6 +47,10 @@ def build_parser():
     p.add_argument("--psf", type=float, default=d.psf, help="optical blur sigma, px")
     p.add_argument("--no-join", action="store_true", help="do not join ridge pieces into one vessel")
     p.add_argument("--no-fit", action="store_true", help="skip the model fit (no radii, no echo trimming)")
+    p.add_argument("--no-fixed-pattern", action="store_true",
+                   help="keep the sensor's row and column offsets in the image")
+    p.add_argument("--border-px", type=int, default=25,
+                   help="margin kept away from the edge of the covered region")
     p.add_argument("--move-fit", type=float, default=d.fit_move,
                    help="let the fit move the centreline this far (px); 0 keeps the ridge")
     return p
@@ -68,7 +72,7 @@ def main(argv=None):
                         fit_move=a.move_fit, min_depth=a.min_depth, psf=a.psf)
     os.makedirs(out, exist_ok=True)
     mean = tifffile.imread(src).astype(np.float32)
-    A, valid = img.prepare(mean)
+    A, valid = img.prepare(mean, fixed_pattern=not a.no_fixed_pattern, border_px=a.border_px)
     print(f"{os.path.basename(src)}  {mean.shape[1]}x{mean.shape[0]}", flush=True)
     ves, _, _ = net.detect(A, valid, cfg, log=lambda m: print(m, flush=True))
     lab = net.labels(ves, A.shape, psf=cfg.psf) if cfg.fit else np.zeros(A.shape, np.int32)

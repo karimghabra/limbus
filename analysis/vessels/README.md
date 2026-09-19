@@ -45,6 +45,14 @@ lab = labels(vessels, A.shape)
    (a morphological closing wider than any vessel) and turned into
    `A = -log(T)`: a vessel is then a positive ridge whose height is its peak
    absorbance, which is what the physical model fits.
+   A sensor's row and column offsets survive averaging and look exactly like
+   long, perfectly straight vessels - they were being detected as such, with
+   zero deviation from a single image row. They are removed first, as the
+   narrow part of each row's and column's median offset: an offset one or two
+   rows wide goes completely, while a vessel running the full width along a
+   row - the worst case - keeps over 80 % of its depth (`--no-fixed-pattern`
+   to switch this off). A margin is also kept away from the edge of the
+   covered region, where only a few frames contributed to the average.
 2. **Evidence** (`evidence.py`). Hessian ridge strength of the blurred
    transmission at σ = 1–3 px, each scale put in units of **its own** robust
    spread before the scales are combined. Coarse scales respond strongly to the
@@ -105,6 +113,44 @@ length depends on — is recovered within about 10 %. Radii of vessels wider tha
 about 3 px are accurate to ~0.2 px. Treat a small vessel's radius as an upper
 bound and use `radius × peak_absorbance` when a quantity has to be compared
 between vessels.
+
+## Per-vessel profiles, spectra and speed
+
+Once vessels have identities, `vessels.profiles` samples every raw frame of the
+burst along each vessel's own centreline:
+
+```bash
+python -m vessels.profiles burst_2026-09-16_15-22-26 --max-vessels 20
+```
+
+Stabilization maps `stabilized(x) = raw(x + d(x))`, so a centreline point `p`
+sits at `p + d(p)` in raw frame `i`. Sampling the **raw** frames keeps every
+measurement on the pixels the camera recorded, with one interpolation instead
+of two. Frames the stabilization rejected are skipped, and the camera's own
+timestamps give the time axis, so dropped frames leave a real gap instead of
+shifting everything after them.
+
+For each vessel this produces
+
+- `kymo_<id>.png` and `kymographs.npz` — the **kymograph** `K[frame, position]`:
+  absorbance along the vessel, averaged across the lumen, background beside the
+  vessel subtracted. Moving blood draws diagonal streaks in it.
+- an **amplitude spectrum**, computed by least squares at each frequency (a
+  Lomb-Scargle periodogram, correct for uneven sampling) after the **common
+  mode** — the median of the detrended series across vessels, which is the
+  focus and illumination drift every vessel shares — has been regressed out of
+  each vessel.
+- a **speed** from the slope of the streaks, measured with the structure tensor
+  over 0.3 s windows, with a coherence value; windows below the coherence
+  threshold are reported as unknown rather than guessed. Against synthetic
+  kymographs of known slope the speed is recovered within 10 % between 200 and
+  600 px/s. Past roughly 8 px per frame, features move further between frames
+  than they are long, the slope is under-read, and those windows are **flagged**
+  (`speed_windows_beyond_frame_rate`) rather than silently reported — at 74 fps
+  that limit is around 600 px/s.
+
+Speeds are in pixels per second; converting to mm/s needs the image scale,
+which the grid-target burst will give.
 
 ## Tests
 

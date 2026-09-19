@@ -70,11 +70,26 @@ H, W = 200, 300
 C = np.stack([np.linspace(20, 280, 800), np.full(800, 100.0)], 1)
 A_true = tube((H, W), C, 2.0, 0.08)
 mean = (1000 * np.exp(-A_true)).astype(np.float32)
-A, valid = vimg.prepare(mean)
-peak = float(A[98:103, 140:160].max())
-true_peak = float(A_true.max())          # the blur lowers a thin vessel's peak
+# a diagonal vessel, as most are: the row/column correction leaves it alone
+Cd = np.stack([np.linspace(20, 280, 800), np.linspace(30, 170, 800)], 1)
+diag = tube((H, W), Cd, 2.0, 0.08)
+A, valid = vimg.prepare((1000 * np.exp(-diag)).astype(np.float32), border_px=0)
+peak = float(A[95:105, 140:160].max())
+true_peak = float(diag.max())            # the blur lowers a thin vessel's peak
 check(abs(peak - true_peak) < 0.005,
       f"flat-fielded absorbance recovers the planted depth ({peak:.3f} vs {true_peak:.3f})")
+
+# ---- fixed pattern: a sensor row offset goes, a vessel stays ---------------
+art = A_true.copy()
+art[40, :] += 0.01                      # one-row sensor offset
+art[150, :] += 0.01
+art[151, :] += 0.01                     # two-row offset
+fixed = vimg.remove_fixed_pattern(art, np.ones(art.shape, bool))
+check(abs(float(np.median(fixed[40]) - np.median(fixed))) < 1e-4 and
+      abs(float(np.median(fixed[150]) - np.median(fixed))) < 1e-4,
+      "row offsets of one and two rows are removed")
+kept = float(fixed[95:106, 150].max()) / float(art[95:106, 150].max())
+check(kept > 0.75, f"a vessel running the full width along a row survives ({kept * 100:.0f}% kept)")
 
 # ---- evidence and ridges ---------------------------------------------------
 scene = A_true + tube((H, W), np.stack([np.full(600, 150.0), np.linspace(20, 180, 600)], 1), 1.5, 0.05)
@@ -134,6 +149,40 @@ anch = [v["anchor"] for v in v1]
 check(anch == sorted(anch, key=lambda p: (int(p[1] // 40), p[0])), "ids follow position order")
 flat = texture((H, W), 5, amp=0.004)
 check(len(net.detect(flat, valid, net.NetConfig())[0]) == 0, "a vessel-free image gives no vessels")
+
+# ---- kymograph velocity: a known streak slope comes back -------------------
+from vessels.profiles import streak_velocity_xcorr  # noqa: E402
+
+rng = np.random.default_rng(0)
+fps, dur, span = 74.0, 8.0, 400
+tt = np.arange(0, dur, 1 / fps)
+for v_true, tol in ((-200.0, 0.05), (400.0, 0.05), (900.0, 0.05), (1500.0, 0.05)):
+    # features carried by the flow: fine structure a few pixels across, as
+    # red-cell clusters and plasma gaps look in a real vessel
+    pat = cv2.GaussianBlur(rng.normal(0, 1, (1, span * 6)).astype(np.float32), (0, 0), 2.0)[0]
+    pat = (pat - pat.mean()) / pat.std()
+    K = np.empty((len(tt), span), np.float32)
+    x = np.arange(span)
+    for i, ti in enumerate(tt):
+        K[i] = np.interp((x - v_true * ti) % (span * 6), np.arange(span * 6), pat)
+    K = K + rng.normal(0, 0.5, K.shape)
+    wt, wv, wp = streak_velocity_xcorr(K, tt)
+    ok = np.isfinite(wv)
+    got = float(np.median(wv[ok])) if ok.any() else float("nan")
+    check(ok.any() and abs(got - v_true) <= tol * abs(v_true),
+          f"streak speed {v_true:+.0f} px/s recovered (got {got:+.0f}, {int(ok.sum())}/{len(wv)} windows)")
+
+# past the search range the answer must be unknown, never a confident number
+pat = cv2.GaussianBlur(rng.normal(0, 1, (1, span * 8)).astype(np.float32), (0, 0), 2.0)[0]
+K = np.empty((len(tt), span), np.float32)
+for i, ti in enumerate(tt):
+    K[i] = np.interp((np.arange(span) - 2500.0 * ti) % (span * 8), np.arange(span * 8), pat)
+wt, wv, wp = streak_velocity_xcorr(K + rng.normal(0, 0.5, K.shape), tt)
+check(np.isnan(wv).all(), f"a speed past the search range is unknown, not a number "
+                          f"({int(np.isfinite(wv).sum())} windows claimed one)")
+noise_kymo = rng.normal(0, 1, (int(fps * 4), span)).astype(np.float32)
+wt, wv, wp = streak_velocity_xcorr(noise_kymo, np.arange(int(fps * 4)) / fps)
+check(np.isnan(wv).mean() > 0.9, "structureless noise gives unknown speed, not a number")
 
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)

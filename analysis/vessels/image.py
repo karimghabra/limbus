@@ -33,7 +33,44 @@ def local_noise(img, valid, floor_pct=5.0):
     return np.maximum(sd, np.percentile(sd[valid], floor_pct))
 
 
-def prepare(mean, close_px=101, erode_px=15):
-    """(absorbance, valid) from a raw averaged frame."""
+def remove_fixed_pattern(A, valid, width=5):
+    """Subtract per-row and per-column offsets.
+
+    A sensor's row and column offsets survive averaging and look exactly like
+    long, perfectly straight vessels to any line detector - they were being
+    detected as vessels with zero deviation from a single image row. The
+    The offset of a row is the median of that row, which a vessel crossing it
+    barely moves - but a vessel that runs ALONG a row would be removed with
+    the artefact. So only the NARROW part of the offset profile is taken: the
+    profile minus its own running median over `width` rows. With width 5 an
+    offset one or two rows wide is removed completely, while a vessel running
+    the full width of the frame along a row - the worst case, since a vessel
+    crossing rows is untouched - keeps 80-97 % of its depth.
+    """
+    A = np.asarray(A, np.float32).copy()
+    m = np.where(valid, A, np.nan)
+
+    def narrow(prof):
+        prof = np.where(np.isfinite(prof), prof, 0).astype(np.float64)
+        pad = width // 2
+        padded = np.pad(prof, pad, mode="edge")
+        smooth = np.median(np.lib.stride_tricks.sliding_window_view(padded, width), axis=1)
+        return (prof - smooth).astype(np.float32)
+
+    row = narrow(np.nanmedian(m, axis=1))
+    col = narrow(np.nanmedian(m, axis=0))
+    return A - row[:, None] - col[None, :]
+
+
+def prepare(mean, close_px=101, erode_px=15, fixed_pattern=True, border_px=25):
+    """(absorbance, valid) from a raw averaged frame. border_px keeps the
+    detector away from the edge of the covered region, where a few frames
+    contributed and the average is neither flat nor complete."""
     valid = valid_mask(mean, erode_px)
-    return flat_absorbance(mean, valid, close_px), valid
+    A = flat_absorbance(mean, valid, close_px)
+    if fixed_pattern:
+        A = remove_fixed_pattern(A, valid)
+    if border_px:
+        valid = cv2.erode(valid.astype(np.uint8),
+                          np.ones((2 * border_px + 1,) * 2, np.uint8)) > 0
+    return np.where(valid, A, 0).astype(np.float32), valid
