@@ -109,6 +109,31 @@ cl = rg.detect(z, ang)
 check(len(cl) >= 2 and sum(np.hypot(*np.diff(c, axis=0).T).sum() for c in cl) > 350,
       f"both vessels are traced ({len(cl)} pieces)")
 
+# ---- hysteresis reach: a faint chain cannot run away from a strong ridge ---
+# built directly in evidence units: a strong ridge from x=20 to x=120, then a
+# faint one continuing to x=560. How far the faint part is followed is what
+# `reach` controls.
+zz = np.zeros((120, 600), np.float32)
+zz[60, 20:120] = 6.0
+zz[60, 120:560] = 2.0
+aa = np.full(zz.shape, np.pi / 2, np.float32)          # ridge normal: vertical
+
+
+def followed(cls):
+    """How far along x the detection reaches past the strong part."""
+    xs = [float(np.asarray(c, float)[:, 0].max()) for c in cls] or [0.0]
+    return max(xs)
+
+
+near_only = rg.detect(zz, aa, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, reach=40)
+far_too = rg.detect(zz, aa, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, reach=0)
+check(120 < followed(near_only) < 200,
+      f"reach 40 follows the faint ridge a little past the strong part (to x={followed(near_only):.0f})")
+check(followed(far_too) > 500,
+      f"an unbounded reach follows it the whole way (to x={followed(far_too):.0f})")
+check(followed(rg.detect(zz, aa, reach=200)) > followed(near_only),
+      "a larger reach follows further")
+
 # ---- joining: one vessel in two pieces gets one identity -------------------
 broken = texture((H, W), 2, amp=0.012)
 for seg in (C[:330], C[470:]):

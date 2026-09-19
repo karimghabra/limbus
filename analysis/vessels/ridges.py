@@ -33,15 +33,36 @@ def trace(keep, min_len=25.0, spur=8):
     return out
 
 
-def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0):
+def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0, reach=60):
     """Centrelines of every ridge that is long and strong, plus the faint
-    ridges connected to one."""
+    ridges connected to one.
+
+    `reach` is how far (px, along the faint ridge) an extension may run from
+    the strong ridge it hangs off. Without it, keeping a whole connected
+    component lets texture chain: on a crop that is three-quarters bare
+    sclera, whole-component hysteresis produced nearly as much centreline on
+    a vessel-free texture surrogate as on the real image. A vessel's faint
+    stretch is a gap of tens of pixels, not hundreds, so a bounded reach
+    keeps the gap-filling and drops the chaining.
+    """
     ridge = ev.nms(z, ang)
     ridge = cv2.dilate(ridge.astype(np.uint8), np.ones((2, 2), np.uint8)) > 0   # close 1-px NMS breaks
     strong = pathopen.path_length(ridge & (z > t_hi), gap=gap) >= L_hi
     weak = (pathopen.path_length(ridge & (z > t_lo), gap=gap) >= L_lo) | strong
-    _, lab = cv2.connectedComponents(cv2.dilate(weak.astype(np.uint8), np.ones((3, 3), np.uint8)),
-                                     connectivity=8)
-    hit = np.unique(lab[strong])
-    keep = weak & np.isin(lab, hit[hit > 0])
+    weak_u = weak.astype(np.uint8)
+    if reach:
+        # geodesic growth: dilate from the strong ridges, but only through
+        # weak-ridge pixels, `reach` steps at most
+        grown = (strong & weak).astype(np.uint8)
+        k = np.ones((3, 3), np.uint8)
+        for _ in range(int(reach)):
+            nxt = cv2.dilate(grown, k) & weak_u
+            if np.array_equal(nxt, grown):
+                break
+            grown = nxt
+        keep = (grown > 0) | strong
+    else:
+        _, lab = cv2.connectedComponents(cv2.dilate(weak_u, np.ones((3, 3), np.uint8)), connectivity=8)
+        hit = np.unique(lab[strong])
+        keep = weak & np.isin(lab, hit[hit > 0])
     return trace(keep, min_len)

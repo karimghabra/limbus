@@ -37,6 +37,7 @@ class NetConfig:
     L_lo: int = 20
     gap: int = 2               # path-opening gap tolerance (px)
     min_len: float = 25.0      # shortest centreline kept
+    reach: int = 60            # how far a faint ridge may extend from a strong one (px)
     join: bool = True
     join_gap: float = 50.0     # longest gap joined (px)
     join_turn: float = 40.0    # how far an end may point off the gap (degrees)
@@ -54,7 +55,8 @@ def detect(A, valid, cfg=None, log=None):
     and anchor."""
     cfg = cfg or NetConfig()
     z, ang = ev.ridge_z(A, valid, cfg.sigmas, with_angle=True)
-    cl = ridges.detect(z, ang, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo, cfg.gap, cfg.min_len)
+    cl = ridges.detect(z, ang, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo, cfg.gap, cfg.min_len,
+                       reach=cfg.reach)
     if cfg.join:
         groups, joins = joinmod.join_ends(cl, z, cfg.join_gap, np.radians(cfg.join_turn), cfg.join_min_z)
     else:

@@ -42,6 +42,8 @@ def build_parser():
     p.add_argument("--t-lo", type=float, default=d.t_lo, help="faint ridge threshold (kept when connected)")
     p.add_argument("--L-lo", type=int, default=d.L_lo)
     p.add_argument("--min-len", type=float, default=d.min_len)
+    p.add_argument("--reach", type=int, default=d.reach,
+                   help="how far a faint ridge may extend from a strong one (px); 0 = unbounded")
     p.add_argument("--join-gap", type=float, default=d.join_gap)
     p.add_argument("--min-depth", type=float, default=d.min_depth, help="shallowest vessel accepted")
     p.add_argument("--psf", type=float, default=d.psf, help="optical blur sigma, px")
@@ -68,6 +70,7 @@ def main(argv=None):
     if not os.path.exists(src):
         raise SystemExit(f"no averaged frame at {src} - stabilize the burst first")
     cfg = net.NetConfig(t_hi=a.t_hi, L_hi=a.L_hi, t_lo=a.t_lo, L_lo=a.L_lo, min_len=a.min_len,
+                        reach=a.reach,
                         join=not a.no_join, join_gap=a.join_gap, fit=not a.no_fit,
                         fit_move=a.move_fit, min_depth=a.min_depth, psf=a.psf)
     os.makedirs(out, exist_ok=True)

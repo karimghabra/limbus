@@ -93,54 +93,6 @@ def periodogram(t, y, freqs):
     return amp
 
 
-def streak_velocity(K, t, win_s=0.3, min_coherence=0.3, smooth=1.5, max_px_per_frame=8.0):
-    """Speed along a vessel from the slope of its kymograph's streaks.
-
-    Blood carries features - red-cell clusters, plasma gaps - along the
-    vessel, so in the kymograph (position across, time down) they draw
-    diagonal streaks whose slope IS the speed, in pixels of vessel per
-    second. The slope is measured with the structure tensor: over a window,
-    the eigenvector of the smallest eigenvalue of [[Sxx, Sxt], [Sxt, Stt]]
-    points along the streaks, and the eigenvalue ratio (the coherence) says
-    how streak-like the window is at all. Windows below min_coherence are
-    reported as unknown rather than guessed.
-
-    There is a hard limit: if the flow carries features further between two
-    frames than the features are long, successive frames cannot be matched and
-    the slope is under-read. With features a few pixels across this sets in
-    around max_px_per_frame; windows past it are still returned but flagged,
-    because reporting a confidently wrong speed would be worse than saying
-    the frame rate was too low for that vessel.
-
-    Returns (times, speed px/s, coherence, aliased flag), one per window.
-    """
-    K = _prepare_kymo(K, smooth)
-    gx = cv2.Sobel(K, cv2.CV_32F, 1, 0, ksize=3)              # along the vessel
-    gt = cv2.Sobel(K, cv2.CV_32F, 0, 1, ksize=3)              # along time
-    dt = float(np.median(np.diff(t)))
-    n = max(4, int(round(win_s / dt)))
-    out_t, out_v, out_c, out_a = [], [], [], []
-    for a in range(0, len(t) - n + 1, max(1, n // 2)):
-        x, y = gx[a:a + n], gt[a:a + n]
-        Sxx, Stt, Sxt = float((x * x).sum()), float((y * y).sum()), float((x * y).sum())
-        tr = Sxx + Stt
-        if tr <= 0:
-            continue
-        d = np.sqrt(max((Sxx - Stt) ** 2 + 4 * Sxt ** 2, 0.0))
-        l1, l2 = 0.5 * (tr + d), 0.5 * (tr - d)               # l1 across the streaks
-        coh = float((l1 - l2) / max(l1 + l2, 1e-12))
-        # eigenvector of l2 points ALONG the streaks: (dx, dtime)
-        vx, vtime = Sxt, l2 - Sxx
-        if abs(vtime) < 1e-12:
-            continue
-        speed = (vx / vtime) / dt                              # px of vessel per second
-        out_t.append(float(t[a] + n * dt / 2))
-        out_v.append(float(speed) if coh >= min_coherence else np.nan)
-        out_c.append(coh)
-        out_a.append(abs(speed) * dt > max_px_per_frame)
-    return np.array(out_t), np.array(out_v), np.array(out_c), np.array(out_a, bool)
-
-
 def _prepare_kymo(K, smooth=1.5):
     """A kymograph ready for motion measurement: the static pattern (the
     vessel's own shape, which does not move) removed as the median over time
