@@ -79,11 +79,21 @@ def main(argv=None):
     tifffile.imwrite(os.path.join(out, "vessel_labels.tif"), lab)
     recs = []
     for v in ves:
-        pieces = [{"points": np.asarray(P, float).round(2).tolist(),
-                   "radius_px": (None if R is None else np.asarray(R, float).round(2).tolist()),
-                   "peak_absorbance": (None if D is None else round(float(D), 4)),
-                   "depth": rec.get("depth"), "length_px": rec.get("length")}
-                  for (P, R, D, rec) in v["pieces"]]
+        pieces = []
+        for (P, R, D, rec) in v["pieces"]:
+            rr = None if R is None else np.asarray(R, float)
+            pieces.append({
+                "points": np.asarray(P, float).round(2).tolist(),
+                "radius_px": (None if rr is None else rr.round(2).tolist()),
+                "peak_absorbance": (None if D is None else round(float(D), 4)),
+                "depth": rec.get("depth"), "length_px": rec.get("length"),
+                # the fit's radius floor is 0.8 px. A vessel the optics can
+                # resolve does not land there - of planted vessels of radius
+                # 1-2.5 px only about one in ten does - so a piece sitting on
+                # the floor is more likely a sensor line or a texture ridge
+                # than a vessel. It is FLAGGED, not dropped: some real thin
+                # vessels do land there too.
+                "radius_at_limit": (None if rr is None else bool(np.median(rr) <= 0.85))})
         L = float(sum(np.hypot(*np.diff(c, axis=0).T).sum() for c in v["centrelines"] if len(c) > 1))
         rr = [np.median(p["radius_px"]) for p in pieces if p["radius_px"]]
         recs.append({"id": v["id"], "anchor": list(v["anchor"]), "length_px": round(L, 1),

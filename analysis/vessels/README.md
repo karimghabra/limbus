@@ -114,6 +114,12 @@ about 3 px are accurate to ~0.2 px. Treat a small vessel's radius as an upper
 bound and use `radius × peak_absorbance` when a quantity has to be compared
 between vessels.
 
+A piece whose fitted radius sits on the model's 0.8 px floor carries
+`"radius_at_limit": true` in the JSON. The optics cannot produce a vessel that
+narrow, so such a piece is more likely a sensor line or a texture ridge — but
+about one planted vessel in ten lands there too, so they are flagged rather
+than dropped, and filtering them is left to whoever is counting.
+
 ## Per-vessel profiles, spectra and speed
 
 Once vessels have identities, `vessels.profiles` samples every raw frame of the
