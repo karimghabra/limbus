@@ -243,6 +243,7 @@ def build(burst_dir, res_dir, vessels_json, min_length=80.0, max_vessels=40, log
 
     series = {k: [] for k in lines}
     kymo = {k: [] for k in lines}
+    ctrl = {k: [] for k in lines}
     times, used = [], []
     for i in range(len(b)):
         if fs is not None:
@@ -255,7 +256,7 @@ def build(burst_dir, res_dir, vessels_json, min_length=80.0, max_vessels=40, log
             fx = fy = None
         raw = read_frame(b.files[i]).astype(np.float32)
         A = vimg.flat_absorbance(raw, np.ones(raw.shape, bool))
-        for k, (_, C, rad) in lines.items():
+        for k, (_, C, rad) in lines.items():   # the vessel, then its control
             if fx is None:
                 Ci = C + [float(rows[i]["dx_px"]), float(rows[i]["dy_px"])]
             else:
@@ -265,6 +266,13 @@ def build(burst_dir, res_dir, vessels_json, min_length=80.0, max_vessels=40, log
             p = sample_along(A, Ci, max(rad, 1.5))
             kymo[k].append(p.astype(np.float32))
             series[k].append(float(np.mean(p)))
+            # control: the same line pushed sideways into the background. Any
+            # speed found there is residual motion or a sampling artefact,
+            # not blood: nothing flows along a line beside the vessel.
+            tg = np.gradient(Ci, axis=0)
+            tg /= np.maximum(np.hypot(tg[:, 0], tg[:, 1]), 1e-9)[:, None]
+            off = np.stack([-tg[:, 1], tg[:, 0]], 1) * (max(rad, 1.5) + 12.0)
+            ctrl[k].append(sample_along(A, Ci + off, max(rad, 1.5)).astype(np.float32))
         times.append(float(b.times_s[i]))
         used.append(i)
     if len(times) < 4:
@@ -315,6 +323,12 @@ def build(burst_dir, res_dir, vessels_json, min_length=80.0, max_vessels=40, log
             "speed_px_s_iqr": (round(float(np.subtract(*np.percentile(wv[ok], [75, 25]))), 1)
                                if ok.sum() > 3 else None),
             "match_peak_median": round(float(np.median(wp)), 3) if len(wp) else None})
+        ct, cv_, cp = streak_velocity_xcorr(np.asarray(ctrl[k], np.float32), t)
+        cok = np.isfinite(cv_)
+        summary["vessels"][str(k)].update({
+            "control_speed_px_s_median": (round(float(np.median(cv_[cok])), 1) if cok.any() else None),
+            "control_windows": int(cok.sum()),
+            "control_match_peak_median": round(float(np.median(cp)), 3) if len(cp) else None})
         speeds[k] = np.stack([wt, wv, wp], 1)
     summary["common_mode_rms"] = round(float(common.std()), 4)
     summary["freqs_hz"] = [round(float(f), 4) for f in freqs]

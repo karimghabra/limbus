@@ -149,6 +149,24 @@ For each vessel this produces
   (`speed_windows_beyond_frame_rate`) rather than silently reported — at 74 fps
   that limit is around 600 px/s.
 
+Every vessel is measured twice: along its centreline, and along a **control
+line pushed 12 px sideways into the background**, where nothing flows. If the
+measurement were picking up residual motion or a sampling artefact, both would
+read the same. On burst 15-22-26 the vessels read between -243 and +228 px/s
+while their controls sit within a few px/s of zero:
+
+| vessel | length | speed | control |
+|---|---|---|---|
+| 14 | 630 px | -243 px/s | -3.6 px/s |
+| 56 | 543 px | +228 px/s | +4.9 px/s |
+| 6 | 458 px | -219 px/s | -4.3 px/s |
+| 3 | 469 px | +119 px/s | +1.7 px/s |
+| 2 | 648 px | -2.7 px/s | -2.0 px/s |
+
+The signs differ between vessels, as they should when some carry blood towards
+the limbus and others away. A vessel reading near zero with a low match peak
+(vessel 2 here) means the flow left no trackable pattern, not that it stopped.
+
 Speeds are in pixels per second; converting to mm/s needs the image scale,
 which the grid-target burst will give.
 
