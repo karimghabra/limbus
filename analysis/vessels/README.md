@@ -87,27 +87,38 @@ peak absorbance planted in the absorbance of two crops, one sharp and one
 defocused; "found" means half the planted centreline is within 2.5 px of a
 detection):
 
-| planted vessel | 1522L (sharp) | 1522R | 1550C (defocused) |
+| planted vessel | 1522L (sharp) | 1522R (sparse) | 1550C (defocused) |
 |---|---|---|---|
 | r 1.0 px, 3 % deep | 95 % | 100 % | 100 % |
-| r 1.5 px, 3 % deep | 95 % | 100 % | 98 % |
-| r 2.5 px, 3 % deep | 85 % | 100 % | 100 % |
+| r 1.5 px, 3 % deep | 92 % | 100 % | 98 % |
+| r 2.5 px, 3 % deep | 80 % | 100 % | 100 % |
 | any, ≥ 5 % deep | 98–100 % | 100 % | 100 % |
 
-Detected centreline on the untouched crops is 18 800–28 000 px per megapixel.
+Detected centreline on the untouched crops is 18 700–26 800 px per megapixel.
 Turning the hysteresis off (`--t-lo 3 --L-lo 40`) costs 7 points of thin-vessel
-recall on the sharp crop and 30 on the wide faint ones, which is what the
-faint-stretch rule buys. The stricter setting (`--t-hi 4 --t-lo 2`) halves the
-false alarms and keeps thin-vessel recall, losing the wide faint vessels
-(48 % at r 2.5).
+recall on the sharp crop and 25 on the wide faint ones, which is what the
+faint-stretch rule buys.
 
 False alarms are measured two ways, because both are biased and the truth lies
-between them. On the **inverted frame** — pessimistic, since every
-centre-surround filter echoes along the flanks of the now-bright vessels —
-6 100 to 11 100 px/MP. On a **phase-randomised texture surrogate**, which has
-the texture's power spectrum and no vessels at all, far less (measured
-separately below). Neither control can be taken for precision on real data,
-which is why detections were also reviewed by eye, tile by tile, on both crops.
+between them.
+
+| control | 1522L | 1522R | 1550C |
+|---|---|---|---|
+| phase-randomised texture surrogate | 2.0 % | 8.2 % | 1.3 % |
+| inverted frame (px/MP) | 4 400 | 6 800 | 8 900 |
+
+The surrogate has the texture's power spectrum and no vessels at all, so
+anything found in it is texture turned into a vessel; it is the optimistic end,
+since real texture also has fibres and other non-Gaussian structure. The
+inverted frame is the pessimistic end: every centre-surround filter echoes along
+the flanks of the now-bright vessels, and those echoes are counted even though
+the model fit removes most of them later.
+
+1522R is the crop that is three-quarters bare sclera, and it is where the
+surrogate rate is worst — sparse fields give hysteresis more room to chain
+texture. Bounding the reach (see below) brought it down from 49 %. Neither
+control can be taken for precision on real data, which is why detections were
+also reviewed by eye, tile by tile, on both crops.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
