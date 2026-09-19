@@ -329,6 +329,16 @@ def build(burst_dir, res_dir, vessels_json, min_length=80.0, max_vessels=40, log
             "control_speed_px_s_median": (round(float(np.median(cv_[cok])), 1) if cok.any() else None),
             "control_windows": int(cok.sum()),
             "control_match_peak_median": round(float(np.median(cp)), 3) if len(cp) else None})
+        # A speed is worth using when the vessel clearly beats its own control
+        # and the frames actually matched. Vessel 88 of burst 15-22-26 is the
+        # case this catches: -47 px/s along the vessel against -76 px/s in the
+        # background beside it, which is not flow.
+        vs = summary["vessels"][str(k)]
+        cs = vs["control_speed_px_s_median"]
+        vs["speed_trusted"] = bool(vs["speed_px_s_median"] is not None and cs is not None
+                                   and abs(vs["speed_px_s_median"]) > 3 * abs(cs)
+                                   and (vs["match_peak_median"] or 0) >= 0.3
+                                   and vs["speed_windows"] >= 0.5 * vs["speed_windows_total"])
         speeds[k] = np.stack([wt, wv, wp], 1)
     summary["common_mode_rms"] = round(float(common.std()), 4)
     summary["freqs_hz"] = [round(float(f), 4) for f in freqs]

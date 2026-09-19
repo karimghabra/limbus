@@ -169,6 +169,12 @@ while their controls sit within a few px/s of zero:
 | 3 | 469 px | +119 px/s | +1.7 px/s |
 | 2 | 648 px | -2.7 px/s | -2.0 px/s |
 
+Each vessel carries `speed_trusted`: the speed beat its control by more than a
+factor of three, the frames matched (peak ≥ 0.3), and at least half the windows
+returned a value. On this burst 9 of 20 vessels pass; the ones that fail
+include a vessel whose background control moved faster than the vessel itself,
+which is exactly the case the control exists to catch.
+
 The signs differ between vessels, as they should when some carry blood towards
 the limbus and others away. A vessel reading near zero with a low match peak
 (vessel 2 here) means the flow left no trackable pattern, not that it stopped.
