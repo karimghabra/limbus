@@ -1,0 +1,47 @@
+"""Ridge pixels -> centreline polylines.
+
+Two filters decide what counts as a vessel, and neither is a plain
+threshold on brightness:
+
+  length   a path opening keeps a pixel only if it lies on a path of at
+           least L connected ridge pixels running in one direction (with a
+           small gap tolerance). Texture blotches are round and short; a
+           vessel is long and thin, so length separates them far better than
+           contrast does.
+  hysteresis  a faint ridge is kept when it connects to a strong long one.
+           A vessel's evidence dips where another vessel crosses it or where
+           it fades, and lowering the threshold everywhere would let texture
+           in; requiring the connection keeps the dip without the texture.
+"""
+import cv2
+import numpy as np
+
+from . import evidence as ev
+from . import pathopen
+from . import skeleton as sk
+
+
+def trace(keep, min_len=25.0, spur=8):
+    """Binary mask -> smoothed centrelines, junctions split into edges."""
+    thin = sk.prune(sk.thin(keep), np.full(keep.shape, 2.0, np.float32), spur)
+    _, edges = sk.trace_graph(thin)
+    out = []
+    for e in edges:
+        c = sk.smooth_path(e["path"], k=3)
+        if len(c) > 1 and np.hypot(*np.diff(c, axis=0).T).sum() >= min_len:
+            out.append(c)
+    return out
+
+
+def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0):
+    """Centrelines of every ridge that is long and strong, plus the faint
+    ridges connected to one."""
+    ridge = ev.nms(z, ang)
+    ridge = cv2.dilate(ridge.astype(np.uint8), np.ones((2, 2), np.uint8)) > 0   # close 1-px NMS breaks
+    strong = pathopen.path_length(ridge & (z > t_hi), gap=gap) >= L_hi
+    weak = (pathopen.path_length(ridge & (z > t_lo), gap=gap) >= L_lo) | strong
+    _, lab = cv2.connectedComponents(cv2.dilate(weak.astype(np.uint8), np.ones((3, 3), np.uint8)),
+                                     connectivity=8)
+    hit = np.unique(lab[strong])
+    keep = weak & np.isin(lab, hit[hit > 0])
+    return trace(keep, min_len)
