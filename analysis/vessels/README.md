@@ -64,7 +64,10 @@ lab = labels(vessels, A.shape)
    path — texture blotches are round and short, so *length*, not contrast,
    does most of the rejecting — and **hysteresis** keeps a faint stretch when
    it connects to a strong one, which is how a vessel survives the dip where
-   another vessel crosses it.
+   another vessel crosses it. A faint extension may run only `--reach` px
+   (default 60) from the strong ridge it hangs off: a vessel's faint stretch
+   is a gap of tens of pixels, and without the bound, texture chains across a
+   sparse field (49 % false alarms on the surrogate, against 8 % with it).
 4. **Joining** (`join.py`). Two pieces whose free ends point at each other
    across a short gap become one vessel when the cheapest path between them
    through the evidence stays on vessel-like pixels. This carries **identity
@@ -116,7 +119,7 @@ the model fit removes most of them later.
 
 1522R is the crop that is three-quarters bare sclera, and it is where the
 surrogate rate is worst — sparse fields give hysteresis more room to chain
-texture. Bounding the reach (see below) brought it down from 49 %. Neither
+texture. Bounding the reach (stage 3) brought it down from 49 %. Neither
 control can be taken for precision on real data, which is why detections were
 also reviewed by eye, tile by tile, on both crops.
 
