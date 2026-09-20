@@ -69,6 +69,10 @@ class NetConfig:
     under: bool = True         # rejoin a vessel across the shadow of a wider one
     under_gap: float = 45.0    # widest such shadow crossed (px)
     node_tol: float = 10.0     # piece ends this close meet at one junction (px)
+    trim_split_fits: bool = True  # a piece split at a touch carries its own fit, covering
+                               # only the span it kept, instead of sharing the original
+                               # with its other half (which made two vessels export the
+                               # same geometry, and read the same kymograph)
     touch_tol: float = 8.0     # an end this close to another piece splits it (px)
     fit: bool = True
     fit_move: float = 0.0      # how far the fit may move the centreline (0 = keep the ridge)
@@ -134,7 +138,8 @@ def detect(A, valid, cfg=None, log=None):
 def _thread(pieces, A, valid, z, occupied, cfg, log=None):
     """Pieces -> vessels: split at touches, classify every junction, add the
     long-gap joins as further pairings, then walk the chains."""
-    gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol)
+    gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol,
+                          trim_split_fits=cfg.trim_split_fits)
     segs = list(pieces)
     n_dup = 0
     if cfg.consolidate:             # the same vessel found by both passes
@@ -183,10 +188,11 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
                                        float(segs[sg]["radius"])) for sg, _ in chain])
         fits, seen = [], set()
         for s, _ in chain:                       # a piece split at a touch appears once
-            key = id(segs[s]["fit"])
-            if key not in seen:
-                seen.add(key)
-                fits.append(segs[s]["fit"])
+            for f in (segs[s].get("fits") or ([segs[s]["fit"]]
+                                              if segs[s].get("fit") is not None else [])):
+                if id(f) not in seen:
+                    seen.add(id(f))
+                    fits.append(f)
         rr = [float(segs[s]["radius"]) for s, _ in chain]
         dd = [float(segs[s]["fit"][2]) for s, _ in chain
               if segs[s].get("fit") is not None and segs[s]["fit"][2] is not None]

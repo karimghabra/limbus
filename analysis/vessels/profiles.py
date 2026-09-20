@@ -42,9 +42,30 @@ from . import image as vimg                      # noqa: E402
 from . import model as vmodel                    # noqa: E402
 
 
-def centreline_of(v, step=1.0):
+def centreline_of(v, step=1.0, threaded=True):
     """Dense centrelines of one vessel record from vessels.json, longest
-    piece first: (length, points, radius)."""
+    first: (length, points, radius).
+
+    A vessel is threaded from several fitted pieces, and until the export
+    carried that threading the only geometry here was the pieces - so a vessel
+    that qualified for measurement on its THREADED length was then measured
+    along its longest single piece, which on one crop was 60 % of the total
+    and on its longest vessel 18 %. When the record carries `centreline`, that
+    is what gets sampled, with the per-point radius beside it.
+    """
+    if threaded and v.get("centreline"):
+        C = np.asarray(v["centreline"], float)
+        if len(C) >= 2:
+            L = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(C, axis=0).T))])
+            if L[-1] >= 4:
+                t = np.arange(0, L[-1], step)
+                pts = np.stack([np.interp(t, L, C[:, 0]), np.interp(t, L, C[:, 1])], 1)
+                rp = v.get("radius_profile")
+                if rp and len(rp) == len(C):
+                    r = float(np.median(np.asarray(rp, float)))
+                else:
+                    r = float(v.get("radius_px") or 2.0)
+                return [(float(L[-1]), pts, r)]
     out = []
     for p in v["pieces"]:
         P = np.asarray(p["points"], float)

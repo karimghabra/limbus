@@ -58,6 +58,13 @@ class GraphConfig:
     join_turn_deg: float = 45.0       # how far the two ends may be from continuing
     dup_overlap: float = 0.5          # share of the shorter piece lying on the longer
     dup_dist: float = 1.2             # ... within this many radii of it
+    trim_split_fits: bool = True      # a piece split at a touch gets its OWN fit, covering
+                                      # only the part it kept. Without this the two halves
+                                      # share one fit object, and if they end up in
+                                      # different vessels both export the whole original -
+                                      # 26 % of the exported pieces on one crop were the
+                                      # same geometry claimed by two vessels, which then
+                                      # read the same kymograph and the same velocity.
 
 
 def _tangent(C, at_start, arc=10.0):
@@ -266,6 +273,19 @@ def merge_gaps(segments, z, join_ends_fn, max_gap=50.0, turn=np.radians(40), min
         seg["points"] = np.concatenate([q for q in ps if len(q)], 0)
         members = [k for k in range(len(segments)) if root(k) == i]
         seg["radius"] = float(np.median([segments[k]["radius"] for k in members]))
+        # Keep EVERY member's fit, not just the one whose dict was copied. The
+        # merged piece spans all of them, and dropping the rest is why a vessel
+        # could report 681 px of centreline and carry a single 120 px fit - and
+        # why the velocity stage, which samples the longest fitted piece, saw
+        # only 58 % of what the threading produced.
+        fits = []
+        for k in members:
+            for f in (segments[k].get("fits") or ([segments[k]["fit"]]
+                                                  if segments[k].get("fit") is not None else [])):
+                if all(f is not g for g in fits):
+                    fits.append(f)
+        if fits:
+            seg["fits"] = fits
         out.append(seg)
     return out
 
@@ -363,14 +383,72 @@ def split_at_touches(segments, cfg=None):
             if not merged or k - merged[-1] > 3:
                 merged.append(k)
         bounds = [0] + merged + [len(C) - 1]
+        split = len(bounds) > 2
         for a, b in zip(bounds[:-1], bounds[1:]):
             if b - a < 3:
                 continue
             piece = dict(s)
             piece["points"] = C[a:b + 1]
             piece["source"] = s.get("source", si)
+            if split and cfg.trim_split_fits:
+                if s.get("fits"):
+                    piece["fits"] = _fits_within(s["fits"], C[a:b + 1])
+                elif s.get("fit") is not None:
+                    piece["fit"] = _trim_fit(s["fit"], a, b)
             out.append(piece)
     return out
+
+
+def _fits_within(fits, span, tol=4.0):
+    """The fits that belong to this part of a split piece.
+
+    A piece merged from several fragments carries all their fits; splitting it
+    at a touch must hand each fit to the part that actually contains it, or
+    every part claims all of them and two vessels export the same geometry
+    again - the defect this is here to remove, reappearing one stage later.
+    """
+    from . import model
+    out = []
+    for f in fits:
+        P = np.asarray(f[0], float)
+        if len(P) < 2:
+            continue
+        C = model.catmull(P)[0] if len(P) > 2 else P
+        d = np.hypot(*(C[:, None, :] - span[None, :, :]).transpose(2, 0, 1)).min(1)
+        if float((d <= tol).mean()) >= 0.5:
+            out.append(f)
+    return out
+
+
+def _trim_fit(fit, a, b, spacing=16.0):
+    """The part of a fit that belongs to one half of a split piece.
+
+    `dict(s)` copies the mapping but not the fit inside it, so both halves of
+    a split would otherwise carry - and export - the whole original vessel.
+    The control points are resampled along the span that was kept, and the
+    radii interpolated at the same places, so each half describes itself and
+    nothing else. Depth and the fit record are unchanged: they are properties
+    of the vessel, not of the span.
+    """
+    from . import model
+    P, R, D, rec = fit
+    P = np.asarray(P, float)
+    if R is None or len(P) < 2:
+        return fit
+    C, u = model.catmull(P)
+    b = min(int(b), len(C) - 1)
+    a = max(0, int(a))
+    if b - a < 3:
+        return fit
+    seg, useg = C[a:b + 1], u[a:b + 1]
+    L = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(seg, axis=0).T))])
+    if L[-1] <= 1e-6:
+        return fit
+    k = max(2, int(round(L[-1] / spacing)) + 1)
+    s = np.linspace(0.0, L[-1], k)
+    Pn = np.stack([np.interp(s, L, seg[:, 0]), np.interp(s, L, seg[:, 1])], 1)
+    Rn = np.interp(np.interp(s, L, useg), np.arange(len(R)), np.asarray(R, float))
+    return (Pn, Rn, D, rec)
 
 
 def build(segments, cfg=None):

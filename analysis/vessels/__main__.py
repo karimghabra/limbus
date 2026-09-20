@@ -99,8 +99,21 @@ def main(argv=None):
                 "radius_at_limit": (None if rr is None else bool(np.median(rr) <= 0.85))})
         L = float(sum(np.hypot(*np.diff(c, axis=0).T).sum() for c in v["centrelines"] if len(c) > 1))
         rr = [np.median(p["radius_px"]) for p in pieces if p["radius_px"]]
+        # The THREADED centreline, and what the junction reading made of it.
+        # These were being computed and thrown away: the export carried only
+        # the fitted pieces, and the velocity stage then sampled the longest
+        # single piece - 60 % of the threaded length on one crop, and 18 % on
+        # its longest vessel. Everything the crossing and bifurcation work
+        # produces lives in these fields.
+        C = np.asarray(v["centreline"], float)
+        prof = np.asarray(v.get("radius_profile", []), float)
         recs.append({"id": v["id"], "anchor": list(v["anchor"]), "length_px": round(L, 1),
                      "radius_px": (round(float(np.median(rr)), 2) if rr else None),
+                     "centreline": C.round(2).tolist(),
+                     "radius_profile": (prof.round(2).tolist() if len(prof) == len(C) else None),
+                     "label": v.get("label"), "strahler": v.get("strahler"),
+                     "parent": v.get("parent"), "children": v.get("children"),
+                     "junctions": v.get("junctions"),
                      "n_pieces": len(pieces), "pieces": pieces})
     json.dump({"source": src, "method": a.method, "config": asdict(cfg), "n_vessels": len(recs),
                "total_length_px": round(sum(r["length_px"] for r in recs), 1), "vessels": recs},

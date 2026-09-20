@@ -326,5 +326,53 @@ plain = np.random.default_rng(0).normal(1000, 20, (400, 600)).astype(np.float32)
 _, _, ratio = grid_period(plain)
 check(ratio < 1e3, f"an image with no grid gives a weak peak (ratio {ratio:.0f})")
 
+# ---- what the export hands to whoever measures the vessels ----------------
+# The junction reading threads several fitted pieces into one vessel, and two
+# things used to happen to that work before it reached anyone. The threaded
+# centreline was not exported at all, so the stage that measures velocity
+# sampled the longest single piece - 60 % of the threaded length on one crop,
+# and 18 % on its longest vessel. And a piece split at a touch was shared by
+# reference with its other half, so when the halves landed in different
+# vessels both exported the whole original, and two vessels read the same
+# kymograph and reported the same speed.
+A = np.zeros((220, 460), np.float32)
+trunk = np.stack([np.arange(40, 420, 0.5), np.full(760, 110.0)], 1)
+A += tube(A.shape, trunk, 4.0, 0.10)
+bs = np.arange(230, 340, 0.5)
+branch = np.stack([bs, 110 + (bs - 230) * 0.9], 1)
+A += tube(A.shape, branch, 3.0, 0.08)
+A += texture(A.shape, 5)
+valid = np.ones(A.shape, bool)
+ves, _, _ = net.detect(A, valid, net.NetConfig())
+
+seen, dup = {}, 0
+for i, v in enumerate(ves):
+    for (P, R, D, rec) in v["pieces"]:
+        k = np.asarray(P, float).round(3).tobytes()
+        if k in seen and seen[k] != i:
+            dup += 1
+        seen.setdefault(k, i)
+check(dup == 0, f"no fitted piece is exported by two different vessels ({dup} shared)")
+
+v = max(ves, key=lambda x: len(np.asarray(x["centreline"], float)))
+C = np.asarray(v["centreline"], float)
+prof = np.asarray(v.get("radius_profile", []), float)
+check(len(C) >= 2 and len(prof) == len(C),
+      "a vessel carries a threaded centreline with a radius at every point")
+
+from vessels import profiles as vprof  # noqa: E402
+
+rec = {"id": v["id"], "centreline": C.round(2).tolist(),
+       "radius_profile": prof.round(2).tolist(), "radius_px": v.get("radius_px"),
+       "pieces": [{"points": np.asarray(P, float).round(2).tolist(),
+                   "radius_px": (None if R is None else np.asarray(R, float).round(2).tolist())}
+                  for (P, R, D, r_) in v["pieces"]]}
+thr = vprof.centreline_of(rec, threaded=True)[0][0]
+only = vprof.centreline_of(rec, threaded=False)
+best = only[0][0] if only else 0.0
+check(thr >= best - 1.0,
+      f"the sampler is given the whole threaded vessel, not its longest piece "
+      f"({thr:.0f} px vs {best:.0f} px)")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
