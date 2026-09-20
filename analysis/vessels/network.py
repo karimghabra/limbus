@@ -69,11 +69,10 @@ class NetConfig:
     under: bool = True         # rejoin a vessel across the shadow of a wider one
     under_gap: float = 45.0    # widest such shadow crossed (px)
     node_tol: float = 10.0     # piece ends this close meet at one junction (px)
-    merged_occupancy: str = "full"  # what a fit whose cross-profile says TWO vessels is
-                               # allowed to declare occupied. "full" (current) marks its
-                               # whole inflated lumen and cuts the neighbour away before
-                               # it is fitted; "core" marks only the middle; "off" marks
-                               # nothing and lets the two compete on the residual.
+    evidence: str = "hessian"  # "hessian" or "orientation": one strength and one
+                               # direction per pixel, or a plane per direction. At a
+                               # right-angle crossing the Hessian falls to 0.12 of the
+                               # vessel's own strength and the orientation stack to 1.00.
     trim_split_fits: bool = True  # a piece split at a touch carries its own fit, covering
                                # only the span it kept, instead of sharing the original
                                # with its other half (which made two vessels export the
@@ -123,8 +122,7 @@ def detect(A, valid, cfg=None, log=None):
     cands = [(1e6 + strength(C), C) for C in large] + [(strength(C), C) for C in small]
     if cfg.fit:
         acc, mdl, rej, occ = vfit.run(A, valid, cands, psf=cfg.psf, kappa=cfg.kappa,
-                                      min_depth=cfg.min_depth, max_move=cfg.fit_move,
-                                      merged_occupancy=cfg.merged_occupancy, log=log)
+                                      min_depth=cfg.min_depth, max_move=cfg.fit_move, log=log)
     else:
         acc = [(C, None, None, {}) for _, C in cands]
         mdl, occ = None, np.zeros(A.shape, bool)

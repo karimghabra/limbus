@@ -21,7 +21,6 @@ import numpy as np
 
 from . import image as img
 from . import model as vmodel
-from . import ridges
 
 
 SPACING = 16.0
@@ -87,7 +86,7 @@ def densify(C, step=0.5):
 
 
 def run(A, valid, candidates, psf=1.8, kappa=10.0, min_depth=0.015, min_len=20.0, max_D=2.5,
-        max_move=0.0, merged_occupancy="full", log=None):
+        max_move=0.0, log=None):
     """candidates: list of (strength, centreline). Returns accepted vessels
     [(control_points, radii, D, record)], the model image and rejects."""
     H, W = A.shape
@@ -141,27 +140,9 @@ def run(A, valid, candidates, psf=1.8, kappa=10.0, min_depth=0.015, min_len=20.0
             # wide enough for a 12 px vessel swallows a thin vessel running
             # 8 px from a thin one. It therefore scales with the radius.
             pad = max(1, int(round(0.2 * float(np.median(R)) + psf)))
-            # A fit whose cross-profile DIPS in the middle is describing two
-            # vessels as one, and its radius is not a measurement of anything.
-            # Two r=2 vessels 5 px apart fit at r=6, 8 px apart at r=7.75, and
-            # the occupied zone that follows - lumen plus margin - is then far
-            # wider than the separation, so the neighbour is cut away by
-            # split_outside before it is ever fitted. The absorbance is still
-            # subtracted into the model, so nothing is claimed twice; the
-            # ground is simply not declared taken, and the two candidates
-            # compete on the residual instead.
-            merged = (merged_occupancy != "full"
-                      and not ridges.single_peaked(A, vmodel.catmull(Pf)[0]))
-            if merged and merged_occupancy == "off":
-                rec["merged_profile"] = True
-            else:
-                if merged:                      # "core": keep the middle only
-                    lumen = v.render(xs, ys, 0.0, with_offset=False) > 0.7 * D
-                    pad = 1
-                    rec["merged_profile"] = True
-                occ = occupied[y0:y1, x0:x1]
-                occ |= cv2.dilate(lumen.astype(np.uint8),
-                                  cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1,) * 2)) > 0
+            occ = occupied[y0:y1, x0:x1]
+            occ |= cv2.dilate(lumen.astype(np.uint8),
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1,) * 2)) > 0
             accepted.append((Pf, R, D, rec))
     if log:
         log(f"  {len(candidates)} candidates -> {len(accepted)} vessels accepted, {len(rejected)} pieces rejected")

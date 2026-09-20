@@ -17,6 +17,7 @@ import cv2
 import numpy as np
 
 from . import evidence as ev
+from . import orientation as orient
 from . import pathopen
 from . import skeleton as sk
 
@@ -79,12 +80,19 @@ def detect_staged(A, valid, cfg, log=None):
     thresholds used downstream.
     """
     out = []
-    zl, angl, scl = ev.ridge_z(A, valid, cfg.sigmas_large, with_angle=True, with_scale=True)
+    # Which filter provides the evidence. The Hessian has to describe two
+    # crossing vessels with one number and loses the junction; the orientation
+    # stack keeps a plane per direction and reads 1.00 where the Hessian reads
+    # 0.12. It buys nothing for vessels running close together in PARALLEL -
+    # measured, the same answer at every separation - so it is a crossing fix
+    # and not a resolution fix.
+    ridge_z = orient.ridge_z if getattr(cfg, "evidence", "hessian") == "orientation" else ev.ridge_z
+    zl, angl, scl = ridge_z(A, valid, cfg.sigmas_large, with_angle=True, with_scale=True)
     large = detect(zl, angl, cfg.t_hi_large, cfg.L_hi_large, cfg.t_lo_large, cfg.L_lo_large,
                    cfg.gap, cfg.min_len_large, reach=cfg.reach)
     n_raw = len(large)
     large = [C for C in large if single_peaked(A, C)]
-    zs, angs, scs = ev.ridge_z(A, valid, cfg.sigmas_small, with_angle=True, with_scale=True)
+    zs, angs, scs = ridge_z(A, valid, cfg.sigmas_small, with_angle=True, with_scale=True)
     small = detect(zs, angs, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo, cfg.gap, cfg.min_len,
                    reach=cfg.reach)
     if log:
