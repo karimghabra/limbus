@@ -233,6 +233,7 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
                 add = cryst.grow_end(A, valid, p0, gr._tangent(P, at_start), r, D,
                                      occupied, cfg.grow_cfg, cfg.psf)
                 if len(add) >= 2:
+                    v.setdefault("grown_parts", []).append(np.vstack([p0, add]))
                     prof = np.asarray(v["radius_profile"], float)
                     edge = np.full(len(add), prof[0] if at_start else prof[-1])
                     v["centreline"] = np.vstack([add[::-1], P]) if at_start else np.vstack([P, add])
