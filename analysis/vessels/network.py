@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 import cv2
 import numpy as np
 
+from . import crystal as cryst
 from . import evidence as ev
 from . import fit as vfit
 from . import graph as gr
@@ -57,7 +58,12 @@ class NetConfig:
     join_turn: float = 40.0    # how far an end may point off the gap (degrees)
     join_min_z: float = 1.0    # mean evidence required along the connector
     graph: bool = True         # resolve crossings and bifurcations, thread pieces into vessels
-    consolidate: bool = True   # drop fragments that trace a vessel already traced
+    crystallize: bool = True   # grow each free end using that vessel's own profile
+                               # and the direction of the local spectrum
+    grow_seed_len: float = 80.0    # only vessels at least this long may seed growth
+    grow_seed_depth: float = 0.03  # ... and at least this deep (peak absorbance)
+    consolidate: bool = True   # join fragments only when diameter, darkness and
+                               # direction agree, and drop a vessel traced twice
     attach: bool = True        # extend a branch that stops short of the vessel it leaves
     attach_gap: float = 30.0   # how far it may be extended (px)
     under: bool = True         # rejoin a vessel across the shadow of a wider one
@@ -69,6 +75,7 @@ class NetConfig:
     kappa: float = 0.0         # fit-gain required per free parameter
     min_depth: float = 0.015   # shallowest vessel accepted (peak absorbance)
     psf: float = 1.8           # optical blur (px), measured bound 2.1
+    grow_cfg: object = None    # crystal.GrowConfig, or None for its defaults
 
 
 def detect(A, valid, cfg=None, log=None):
@@ -121,10 +128,10 @@ def detect(A, valid, cfg=None, log=None):
                        "fit": (P, R, D, rec)})
     if not cfg.graph:
         return group([p["fit"] for p in pieces]), mdl, z
-    return _thread(pieces, A, z, occ, cfg, log), mdl, z
+    return _thread(pieces, A, valid, z, occ, cfg, log), mdl, z
 
 
-def _thread(pieces, A, z, occupied, cfg, log=None):
+def _thread(pieces, A, valid, z, occupied, cfg, log=None):
     """Pieces -> vessels: split at touches, classify every junction, add the
     long-gap joins as further pairings, then walk the chains."""
     gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol)
@@ -138,7 +145,8 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
     if cfg.join:                    # repair broken pieces before reading junctions
         before = len(segs)
         segs = gr.merge_gaps(segs, z, joinmod.join_ends, cfg.join_gap,
-                             np.radians(cfg.join_turn), cfg.join_min_z, gcfg, A)
+                             np.radians(cfg.join_turn), cfg.join_min_z, gcfg,
+                             A if cfg.consolidate else None)
         n_merged = before - len(segs)
     if cfg.attach:
         segs = gr.attach_to_body(segs, A, gcfg, cfg.attach_gap)
@@ -180,9 +188,12 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
                 seen.add(key)
                 fits.append(segs[s]["fit"])
         rr = [float(segs[s]["radius"]) for s, _ in chain]
+        dd = [float(segs[s]["fit"][2]) for s, _ in chain
+              if segs[s].get("fit") is not None and segs[s]["fit"][2] is not None]
         out.append({"chain": ci, "pieces": fits, "centrelines": [C], "centreline": C,
                     "radius_profile": prof,
                     "radius_px": round(float(h["calibre"][ci]), 2),
+                    "depth_abs": round(float(np.median(dd)), 4) if dd else 0.0,
                     "radius_max_px": round(float(np.max(rr)), 2),
                     "length_px": round(float(np.hypot(*np.diff(C, axis=0).T).sum()), 1),
                     "label": h["label"].get(ci), "strahler": h["strahler"].get(ci),
@@ -194,6 +205,47 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
     for new_id, (ci, depth) in enumerate(h["order"], start=1):
         out[ci]["id"] = new_id
         out[ci]["depth"] = depth
+    # Crystallisation runs LAST, on finished vessels. Growing before the
+    # junctions are read means every grown tip lands on another vessel and
+    # splits it, and the network comes apart: 52 vessels became 85 and the
+    # longest fell from 941 px to 585. Growing afterwards extends what has
+    # already been decided and leaves the topology alone.
+    n_grown, grown_px = 0, 0.0
+    if cfg.crystallize:
+        lines = [np.asarray(v["centreline"], float) for v in out]
+        for vi, v in enumerate(out):
+            r = float(v["radius_px"])
+            D = max(float(v.get("depth_abs", 0.0)), 0.01)
+            # Only a vessel we are sure of may seed growth. Growing from
+            # everything extends the detector's own false positives, and on a
+            # vessel-free texture surrogate that more than doubled the
+            # centreline while adding almost nothing on real data.
+            if v["length_px"] < cfg.grow_seed_len or D < cfg.grow_seed_depth:
+                continue
+            for at_start in (True, False):
+                P = np.asarray(v["centreline"], float)
+                if len(P) < 3:
+                    continue
+                p0 = P[0] if at_start else P[-1]
+                if any(float(np.hypot(*(L - p0).T).min()) <= gcfg.node_tol
+                       for j, L in enumerate(lines) if j != vi):
+                    continue                        # this end already meets a vessel
+                add = cryst.grow_end(A, valid, p0, gr._tangent(P, at_start), r, D,
+                                     occupied, cfg.grow_cfg, cfg.psf)
+                if len(add) >= 2:
+                    prof = np.asarray(v["radius_profile"], float)
+                    edge = np.full(len(add), prof[0] if at_start else prof[-1])
+                    v["centreline"] = np.vstack([add[::-1], P]) if at_start else np.vstack([P, add])
+                    v["radius_profile"] = (np.concatenate([edge, prof]) if at_start
+                                           else np.concatenate([prof, edge]))
+                    v["centrelines"] = [v["centreline"]]
+                    v["length_px"] = round(float(np.hypot(*np.diff(v["centreline"], axis=0).T).sum()), 1)
+                    lines[vi] = v["centreline"]
+                    n_grown += 1
+                    grown_px += float(np.hypot(*np.diff(np.vstack([p0, add]), axis=0).T).sum())
+        if log:
+            log(f"  crystallised: {n_grown} ends grown, {grown_px:.0f} px added")
+
     id_of_chain = {ci: v["id"] for ci, v in enumerate(out)}
     for ci, v in enumerate(out):
         p_ = v["parent_chain"]
