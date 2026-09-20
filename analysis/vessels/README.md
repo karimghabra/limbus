@@ -86,9 +86,9 @@ lab = labels(vessels, A.shape)
 ## What it measures, and how well
 
 Injection–recovery on real averaged frames (small vessels of known radius and
-peak absorbance planted in the absorbance of two crops, one sharp and one
-defocused; "found" means half the planted centreline is within 2.5 px of a
-detection):
+peak absorbance planted in the absorbance of three crops - one sharp, one
+mostly bare sclera, one defocused; "found" means half the planted centreline is
+within 2.5 px of a detection):
 
 | planted vessel | 1522L (sharp) | 1522R (sparse) | 1550C (defocused) |
 |---|---|---|---|
@@ -121,7 +121,7 @@ the model fit removes most of them later.
 surrogate rate is worst — sparse fields give hysteresis more room to chain
 texture. Bounding the reach (stage 3) brought it down from 49 %. Neither
 control can be taken for precision on real data, which is why detections were
-also reviewed by eye, tile by tile, on both crops.
+also reviewed by eye, tile by tile, on the sharp and defocused crops.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
