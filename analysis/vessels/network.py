@@ -32,7 +32,11 @@ from . import ridges
 @dataclass
 class NetConfig:
     sigmas: tuple = ev.SIGMAS  # Hessian scales (px)
-    drop_echoes: bool = True   # drop the fine-scale lines a wide vessel throws along its walls
+    drop_echoes: bool = False  # suppress wall echoes in the EVIDENCE (blunt: also eats
+                               # thin vessels running beside a wide one). Off by default -
+                               # the model fit removes echoes instead, by trimming whatever
+                               # lies inside an accepted vessel's lumen, which is a physical
+                               # boundary rather than a fixed radius around a coarse ridge.
     t_hi: float = 3.0          # strong ridge threshold (robust z)
     L_hi: int = 40             # strong ridge minimum path length (px)
     t_lo: float = 1.5          # faint ridge threshold, kept when connected
@@ -71,12 +75,17 @@ def detect(A, valid, cfg=None, log=None):
     if log:
         log(f"  ridges: {len(cl)} centrelines")
     H, W = A.shape
+    # Order candidates by how much absorbance they carry: depth x length. The
+    # centre of a wide vessel is its darkest line, so it is fitted before the
+    # wall echoes beside it, and its lumen then trims them away. Ordering by
+    # evidence z instead let a fine-scale wall echo be fitted first, and the
+    # vessel came back with the radius of its own wall.
     cands = []
     for C in cl:
         xi = np.clip(np.rint(C[:, 0]).astype(int), 0, W - 1)
         yi = np.clip(np.rint(C[:, 1]).astype(int), 0, H - 1)
         L = float(np.hypot(*np.diff(C, axis=0).T).sum())
-        cands.append((float(np.clip(z[yi, xi], 0, None).mean()) * L, C))
+        cands.append((float(np.median(A[yi, xi])) * L, C))
     if cfg.fit:
         acc, mdl, rej, occ = vfit.run(A, valid, cands, psf=cfg.psf, kappa=cfg.kappa,
                                       min_depth=cfg.min_depth, max_move=cfg.fit_move, log=log)
@@ -135,6 +144,8 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
     out = []
     for ci, chain in enumerate(chains):
         C = gr.centreline(segs, chain)
+        prof = np.concatenate([np.full(len(np.asarray(segs[sg]["points"], float)),
+                                       float(segs[sg]["radius"])) for sg, _ in chain])
         fits, seen = [], set()
         for s, _ in chain:                       # a piece split at a touch appears once
             key = id(segs[s]["fit"])
@@ -143,6 +154,7 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
                 fits.append(segs[s]["fit"])
         rr = [float(segs[s]["radius"]) for s, _ in chain]
         out.append({"chain": ci, "pieces": fits, "centrelines": [C], "centreline": C,
+                    "radius_profile": prof,
                     "radius_px": round(float(h["calibre"][ci]), 2),
                     "radius_max_px": round(float(np.max(rr)), 2),
                     "length_px": round(float(np.hypot(*np.diff(C, axis=0).T).sum()), 1),
@@ -197,19 +209,38 @@ def centrelines(vessels):
 
 
 def labels(vessels, shape, psf=1.8):
-    """Per-vessel label image: each fitted vessel's lumen carries its id.
-    Longer vessels are drawn first, so a short piece cannot overwrite them."""
+    """Per-vessel label image: each vessel's lumen carries its id.
+
+    Painted from the vessel's own centreline and the radius measured along it,
+    so the labels always match the geometry that is reported. Painting from
+    the fitted pieces instead left gaps wherever two pieces had been threaded
+    into one vessel. Longer vessels are painted first, so a short piece cannot
+    overwrite them.
+    """
     lab = np.zeros(shape, np.int32)
-    for v in sorted(vessels, key=lambda v: -sum(len(c) for c in v["centrelines"])):
-        for (P, R, D, rec) in v["pieces"]:
-            if R is None:
-                continue
-            P = np.asarray(P, float)
-            ve = model.Vessel(P, 1.0, float(D))
-            ve.p[:] = np.concatenate([np.zeros(len(P)), np.asarray(R, float), [float(D), 0.0]])
-            x0, y0, x1, y1 = ve.box(shape, psf)
-            xs, ys = np.arange(x0, x1, dtype=np.float32), np.arange(y0, y1, dtype=np.float32)
-            lumen = ve.render(xs, ys, 0.0, with_offset=False) > 0.25 * D
-            sub = lab[y0:y1, x0:x1]
-            sub[(sub == 0) & lumen] = v["id"]
+    H, W = shape
+    for v in sorted(vessels, key=lambda v: -float(v.get("length_px", 0))):
+        C = np.asarray(v.get("centreline", v["centrelines"][0]), float)
+        if len(C) < 2:
+            continue
+        r = np.asarray(v.get("radius_profile", np.full(len(C), v.get("radius_px", 2.0))), float)
+        if len(r) != len(C):
+            r = np.interp(np.linspace(0, 1, len(C)), np.linspace(0, 1, len(r)), r)
+        pad = int(np.ceil(r.max() + 3))
+        x0 = max(0, int(C[:, 0].min()) - pad); x1 = min(W, int(C[:, 0].max()) + pad + 1)
+        y0 = max(0, int(C[:, 1].min()) - pad); y1 = min(H, int(C[:, 1].max()) + pad + 1)
+        if x1 <= x0 or y1 <= y0:
+            continue
+        seeds = np.ones((y1 - y0, x1 - x0), np.uint8)
+        xi = np.clip(np.rint(C[:, 0]).astype(int) - x0, 0, x1 - x0 - 1)
+        yi = np.clip(np.rint(C[:, 1]).astype(int) - y0, 0, y1 - y0 - 1)
+        seeds[yi, xi] = 0
+        dist, idx = cv2.distanceTransformWithLabels(seeds, cv2.DIST_L2, 5,
+                                                    labelType=cv2.DIST_LABEL_PIXEL)
+        # map each pixel's nearest seed to that centreline sample's radius
+        table = np.zeros(int(idx.max()) + 1, np.float32)
+        table[idx[yi, xi]] = r.astype(np.float32)
+        lumen = dist <= table[idx]
+        sub = lab[y0:y1, x0:x1]
+        sub[(sub == 0) & lumen] = v["id"]
     return lab

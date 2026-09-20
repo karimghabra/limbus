@@ -49,11 +49,28 @@ class GraphConfig:
     min_radius: float = 0.5
 
 
-def _tangent(C, at_start, n=10):
-    """Unit vector pointing OUT of the piece at one of its ends."""
+def _tangent(C, at_start, arc=10.0):
+    """Unit vector pointing OUT of the piece at one of its ends.
+
+    Measured over a fixed LENGTH of the centreline, not a fixed number of
+    samples: centrelines are sampled every half pixel, so ten samples span
+    five pixels and the direction they give is mostly noise - which quietly
+    cost branches their attachment to the vessel they leave.
+    """
     C = np.asarray(C, float)
-    n = min(n, len(C) - 1)
-    d = C[0] - C[n] if at_start else C[-1] - C[-1 - n]
+    if len(C) < 2:
+        return np.array([1.0, 0.0])
+    step = np.hypot(*np.diff(C, axis=0).T)
+    walk = np.concatenate([[0.0], np.cumsum(step)])
+    if at_start:
+        n = int(np.searchsorted(walk, arc))
+        n = min(max(n, 1), len(C) - 1)
+        d = C[0] - C[n]
+    else:
+        back = walk[-1] - walk
+        n = int(np.searchsorted(-back, -arc))
+        n = min(max(n, 1), len(C) - 1)
+        d = C[-1] - C[len(C) - 1 - n] if n < len(C) else C[-1] - C[0]
     return d / max(np.hypot(*d), 1e-9)
 
 

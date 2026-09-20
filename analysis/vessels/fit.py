@@ -129,9 +129,16 @@ def run(A, valid, candidates, psf=1.8, kappa=10.0, min_depth=0.015, min_len=20.0
             x0, y0, x1, y1 = v.box((H, W), psf)
             xs, ys = np.arange(x0, x1, dtype=np.float32), np.arange(y0, y1, dtype=np.float32)
             model[y0:y1, x0:x1] += v.render(xs, ys, psf, with_offset=False)
+            # The occupied zone is the lumen plus a margin of a couple of blur
+            # widths: a wide vessel throws a ridge along each WALL, which sits
+            # just outside the lumen itself, and without the margin those
+            # echoes are fitted as vessels in their own right - the radius
+            # then comes back as the wall's, not the vessel's.
             lumen = v.render(xs, ys, 0.0, with_offset=False) > 0.25 * D
+            pad = max(1, int(round(1.5 * psf)))
             occ = occupied[y0:y1, x0:x1]
-            occ |= cv2.dilate(lumen.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+            occ |= cv2.dilate(lumen.astype(np.uint8),
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1,) * 2)) > 0
             accepted.append((Pf, R, D, rec))
     if log:
         log(f"  {len(candidates)} candidates -> {len(accepted)} vessels accepted, {len(rejected)} pieces rejected")

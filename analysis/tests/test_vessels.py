@@ -96,7 +96,14 @@ scene = A_true + tube((H, W), np.stack([np.full(600, 150.0), np.linspace(20, 180
 scene = scene + texture((H, W), 0)
 valid = np.ones((H, W), bool)
 z, ang = ev.ridge_z(scene, valid, with_angle=True)
-check(z[100, 150] > 5 and z[40, 60] < 3, "evidence is high on a vessel and low on texture")
+# sampled along the planted vessel, not at one pixel: the crossing in the
+# middle of this scene is genuinely ambiguous evidence
+vx = np.clip(np.rint(C[:, 0]).astype(int), 0, W - 1)
+vy = np.clip(np.rint(C[:, 1]).astype(int), 0, H - 1)
+on_vessel = float(np.median(z[vy, vx]))
+off_vessel = float(np.median(z[30:60, 30:90]))
+check(on_vessel > 5 and off_vessel < 3,
+      f"evidence is high on a vessel ({on_vessel:.1f}) and low on texture ({off_vessel:.1f})")
 two = tube((H, W), np.stack([np.linspace(20, 280, 800), np.full(800, 80.0)], 1), 1.5, 0.06) + \
       tube((H, W), np.stack([np.linspace(20, 280, 800), np.full(800, 88.0)], 1), 1.5, 0.06) + texture((H, W), 1)
 z2, ang2 = ev.ridge_z(two, valid, with_angle=True)
@@ -163,7 +170,9 @@ check(abs(rad * depth - 2.0 * 0.08) < 0.25 * 2.0 * 0.08,
 check(0.4 * 0.08 < depth < 1.6 * 0.08,
       f"the fitted peak absorbance is within a factor 1.6 of the true 0.08 (got {depth:.3f})")
 lab = net.labels(ves, scene.shape)
-check(lab[100, 150] > 0 and lab[40, 60] == 0, "labels cover the vessel and not the background")
+inside = float((lab[vy, vx] > 0).mean())
+check(inside > 0.8 and (lab[30:60, 30:90] > 0).mean() < 0.02,
+      f"labels cover the vessel ({100 * inside:.0f}% of it) and not the background")
 
 # ---- determinism and empty input -------------------------------------------
 v1 = net.detect(scene, valid, net.NetConfig(fit=False))[0]

@@ -34,7 +34,7 @@ def trace(keep, min_len=25.0, spur=8):
 
 
 def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0, reach=60,
-           scale=None, A=None):
+           scale=None, A=None, ridge=None):
     """Centrelines of every ridge that is long and strong, plus the faint
     ridges connected to one.
 
@@ -46,7 +46,8 @@ def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0, re
     stretch is a gap of tens of pixels, not hundreds, so a bounded reach
     keeps the gap-filling and drops the chaining.
     """
-    ridge = ev.nms(z, ang)
+    if ridge is None:
+        ridge = ev.nms(z, ang)
     if scale is not None:
         ridge = ev.drop_wall_echoes(ridge, scale, z > t_lo, A, ang)
     ridge = cv2.dilate(ridge.astype(np.uint8), np.ones((2, 2), np.uint8)) > 0   # close 1-px NMS breaks
