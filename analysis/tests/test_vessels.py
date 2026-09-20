@@ -425,5 +425,43 @@ check(not s["merges"], "a vessel running from parent into one child is not a mer
 s = scen.score(bif, [np.vstack([ch1[::-1], ch2]), par], shape)
 check(len(s["merges"]) == 1, "one detection covering BOTH children is a merge")
 
+# ---- identifiers that survive a perturbation ------------------------------
+# Ids are a depth-first rank over the hierarchy, so inserting one vessel moves
+# every id after it. Measured on a real crop, a half-pixel shift left NOT ONE
+# vessel of 31 holding its id. Identity therefore has to be established
+# between runs by matching geometry, not read off a position in a list.
+from vessels import identity as vident  # noqa: E402
+
+base = [{"id": 1, "centreline": np.stack([np.arange(20, 200, 0.5),
+                                          np.full(360, 40.0)], 1), "radius_px": 3.0},
+        {"id": 2, "centreline": np.stack([np.arange(20, 200, 0.5),
+                                          np.full(360, 90.0)], 1), "radius_px": 2.0},
+        {"id": 3, "centreline": np.stack([np.full(360, 150.0),
+                                          np.arange(20, 200, 0.5)], 1), "radius_px": 2.5}]
+
+shifted = [{"id": 99 - k, "centreline": np.asarray(v["centreline"], float) + [0.4, -0.3],
+            "radius_px": v["radius_px"]} for k, v in enumerate(base)]
+ids, rep = vident.inherit(base, shifted)
+check(ids == [1, 2, 3],
+      f"a shifted rerun inherits the reference's ids regardless of its own numbering ({ids})")
+check(rep["missing"] == [] and rep["new"] == 0, "nothing is invented or lost by a half-pixel shift")
+
+# one reference vessel found as two pieces is recorded as parts of it, not renumbered
+C = np.asarray(base[0]["centreline"], float)
+split = [{"id": 7, "centreline": C[:150], "radius_px": 3.0},
+         {"id": 8, "centreline": C[210:], "radius_px": 3.0},
+         {"id": 9, "centreline": base[1]["centreline"], "radius_px": 2.0},
+         {"id": 10, "centreline": base[2]["centreline"], "radius_px": 2.5}]
+ids, rep = vident.inherit(base, split)
+kept = [i for i in ids if isinstance(i, str) and i.startswith("1.")]
+check(1 in ids or kept, f"a vessel found in two pieces stays attached to vessel 1 ({ids})")
+check(all(not (isinstance(i, int) and i > 3) for i in ids[:2]),
+      "the pieces of a known vessel are not minted as new vessels")
+
+# a vessel that genuinely is not there is reported missing, not reassigned
+ids, rep = vident.inherit(base, [base[0], base[2]])
+check(rep["missing"] == [2], f"a vessel absent from the new run is reported missing ({rep['missing']})")
+check(ids == [1, 3], f"the others keep their own ids ({ids})")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
