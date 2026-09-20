@@ -73,10 +73,12 @@ class NetConfig:
                                # direction per pixel, or a plane per direction. At a
                                # right-angle crossing the Hessian falls to 0.12 of the
                                # vessel's own strength and the orientation stack to 1.00.
-    cluster: str = "complete"  # "single" (transitive; crowded junctions chain into one
-                               # unreadable node) or "complete" (a node's diameter stays
-                               # bounded). Measured on a trunk with three branches in a
-                               # 30 px window, where single linkage resolves 0.25.
+    cluster: str = "single"    # "single" (transitive; crowded junctions chain into one
+                               # node classify() cannot read) or "complete" (a node's
+                               # diameter stays bounded). Complete takes three branches
+                               # in a 30 px window from 0.24 to 0.64 and four branches in
+                               # 40 px from 0.87 to 0.56 - a wash overall, and it merges
+                               # more, so the shipped default is unchanged.
     trim_split_fits: bool = True  # a piece split at a touch carries its own fit, covering
                                # only the span it kept, instead of sharing the original
                                # with its other half (which made two vessels export the

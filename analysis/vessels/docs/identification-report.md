@@ -81,13 +81,35 @@ noise-free; the texture-limited limit on this data is nearer 6–8 px, and the
 detector's ~9 px is close to it. The factor of two that looked like method
 failure is mostly not there.
 
-The second **is** partly fixed, and it is the change this week delivers on the
-detector side: junction ends were clustered by single-linkage union-find,
-which is transitive, so crowded branches chained into one node of degree 7–8
-that the classifier could not read. Bounding a node's diameter takes the worst
-crowding case from 0.24 to **0.64** with non-overlapping intervals, and on the
-real networks gives 17 % fewer vessel objects for 1.4 % less centreline with
-the median vessel 30 % longer.
+The second has a candidate fix that is **not** a net gain, which took the full
+sweep to establish. Junction ends are clustered by single-linkage union-find,
+which is transitive, so crowded branches chain into one node of degree 7-8
+that the classifier cannot read - it handles degree <= 4 and leaves everything
+above it unpaired. Bounding a node's diameter (complete linkage) does exactly
+what that mechanism predicts in the tightest case and the opposite one cell
+away:
+
+| trunk scenario | single | complete |
+|---|---|---|
+| 2 branches in 60 px | 0.71 [0.56, 0.83] | 0.72 [0.60, 0.85] |
+| 3 branches in 60 px | 0.61 [0.45, 0.77] | 0.52 [0.35, 0.68] |
+| **3 branches in 30 px** | 0.24 [0.13, 0.38] | **0.64 [0.50, 0.79]** |
+| **4 branches in 40 px** | **0.87 [0.77, 0.97]** | 0.56 [0.42, 0.72] |
+| bifurcation at 20 deg | 0.21 [0.10, 0.33] | 0.23 [0.12, 0.35] |
+
+Two non-overlapping differences in opposite directions, a mean of 0.61 either
+way, and complete linkage merging more (0.11 against 0.03 merges per copy at
+four branches). On the real networks it gives 17 % fewer vessel objects for
+1.4 % less centreline with the median vessel 30 % longer - which is either
+better threading or wrong merging, and the scenarios say some of it is the
+latter. **The shipped default is therefore unchanged**, with complete linkage
+available and its trade-off documented.
+
+*(An earlier draft of this section, and the commit that introduced the change,
+claimed it as a win on the strength of the first three cells. The fourth
+reversed it. That is the third time in this report that a conclusion was drawn
+before the data was complete, and the only reason it did not stand is that the
+sweep was run to the end.)*
 
 The rest of what was tried failed, and the failures are the useful part:
 

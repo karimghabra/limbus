@@ -58,10 +58,14 @@ class GraphConfig:
     join_turn_deg: float = 45.0       # how far the two ends may be from continuing
     dup_overlap: float = 0.5          # share of the shorter piece lying on the longer
     dup_dist: float = 1.2             # ... within this many radii of it
-    cluster: str = "complete"     # how piece ends are grouped into meeting points.
+    cluster: str = "single"       # how piece ends are grouped into meeting points.
                                   # "single" is transitive and lets crowded junctions
                                   # chain into one node of degree 7-8 that classify()
-                                  # cannot read; "complete" bounds a node's diameter.
+                                  # cannot read; "complete" bounds a node's diameter and
+                                  # fixes the tightest crowding - 0.24 -> 0.64 on three
+                                  # branches in 30 px - but LOSES as much elsewhere
+                                  # (0.87 -> 0.56 on four branches in 40 px) and merges
+                                  # more, so it is offered rather than assumed.
     trim_split_fits: bool = True      # a piece split at a touch gets its OWN fit, covering
                                       # only the part it kept. Without this the two halves
                                       # share one fit object, and if they end up in
@@ -495,7 +499,7 @@ def build(segments, cfg=None):
     # is what breaks it. Complete linkage keeps a node's own diameter bounded:
     # two ends join a node only if the end is close to EVERY member, so a
     # chain of near-misses cannot become one junction.
-    if getattr(cfg, "cluster", "complete") == "single":
+    if getattr(cfg, "cluster", "single") == "single":
         for i in range(len(ends)):
             for j in range(i + 1, len(ends)):
                 if ends[i]["seg"] == ends[j]["seg"]:
