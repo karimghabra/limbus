@@ -374,5 +374,56 @@ check(thr >= best - 1.0,
       f"the sampler is given the whole threaded vessel, not its longest piece "
       f"({thr:.0f} px vs {best:.0f} px)")
 
+# ---- the scenario metric must be able to see what it claims to see --------
+# This exists because the first version of it could not. It gave every
+# detected point to the nearest truth line by a Voronoi partition, so a single
+# line drawn down the middle of a close pair landed wholly on one side and
+# scored as a clean hit on one vessel and a total miss on the other. Measured
+# on planted pairs, the detector did the same thing at 3, 4 and 5 px apart -
+# one midline detection every time - and the metric called it "both found",
+# "one found, one lost" and "both missed", purely according to where the
+# tolerance fell relative to half the separation. A metric is not believed
+# here until it has been shown the answers.
+from vessels import scenarios as scen  # noqa: E402
+
+shape = (200, 400)
+sx = np.arange(60, 340, 0.5)
+for sep in (3, 4, 5, 6, 8, 10):
+    pair = [{"C": np.stack([sx, np.full(len(sx), 100 - sep / 2)], 1), "r": 2.0, "role": "A"},
+            {"C": np.stack([sx, np.full(len(sx), 100 + sep / 2)], 1), "r": 2.0, "role": "B"}]
+    mid = np.stack([sx, np.full(len(sx), 100.0)], 1)
+
+    s = scen.score(pair, [pair[0]["C"], pair[1]["C"]], shape)
+    v = list(s["lines"].values())
+    check(v[0]["span"] > 0.9 and v[1]["span"] > 0.9 and not s["merges"],
+          f"s={sep}: two separate detections read as two vessels, not a merge")
+
+    s = scen.score(pair, [mid], shape)
+    v = list(s["lines"].values())
+    check(v[0]["span"] > 0.9 and v[1]["span"] > 0.9 and len(s["merges"]) == 1,
+          f"s={sep}: ONE line down the middle is read as a merge of both")
+
+    s = scen.score(pair, [pair[0]["C"]], shape)
+    v = list(s["lines"].values())
+    check(v[0]["span"] > 0.9 and v[1]["span"] < 0.1 and not s["merges"],
+          f"s={sep}: finding one vessel of two is scored as exactly that")
+
+    shards = [pair[0]["C"][i * 140:(i + 1) * 140] for i in range(4)] + [pair[1]["C"]]
+    s = scen.score(pair, shards, shape)
+    v = list(s["lines"].values())
+    check(v[0]["span"] < 0.4 and v[0]["cover"] > 0.9,
+          f"s={sep}: a vessel in four pieces has low span and full cover")
+
+# a bifurcation's parent continuing into a child is one vessel, not a merge
+par = np.stack([np.arange(60, 200, 0.5), np.full(280, 100.0)], 1)
+ch1 = np.stack([np.arange(200, 320, 0.5), 100 + (np.arange(200, 320, 0.5) - 200) * 0.5], 1)
+ch2 = np.stack([np.arange(200, 320, 0.5), 100 - (np.arange(200, 320, 0.5) - 200) * 0.5], 1)
+bif = [{"C": par, "r": 3.0, "role": "parent"}, {"C": ch1, "r": 2.4, "role": "child"},
+       {"C": ch2, "r": 2.4, "role": "child"}]
+s = scen.score(bif, [np.vstack([par, ch1]), ch2], shape)
+check(not s["merges"], "a vessel running from parent into one child is not a merge")
+s = scen.score(bif, [np.vstack([ch1[::-1], ch2]), par], shape)
+check(len(s["merges"]) == 1, "one detection covering BOTH children is a merge")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
