@@ -107,9 +107,35 @@ available and its trade-off documented.
 
 *(An earlier draft of this section, and the commit that introduced the change,
 claimed it as a win on the strength of the first three cells. The fourth
-reversed it. That is the third time in this report that a conclusion was drawn
-before the data was complete, and the only reason it did not stand is that the
-sweep was run to the end.)*
+reversed it.)*
+
+The fix that addresses the mechanism without that side effect — reading a
+meeting point of degree >= 5 instead of abandoning it — was then built, and is
+worse still. Pairing those ends greedily by turn and calibre takes the same
+crowded case from **0.23 to 0.14** and raises merges from 0.02 to **0.59 per
+copy**: at a crowded node a trunk and its own branch look exactly like a
+continuation, so the rule fuses them. Note that `span` went *up* over the same
+change, 0.86 to 0.91 — the metric of §3.4, had it not been fixed, would have
+called this an improvement.
+
+So the crowded-junction mechanism is established and neither repair works.
+What both share is that they decide from local geometry, which at a crowded
+node cannot distinguish a trunk continuing from a trunk branching.
+
+**Calibre cannot rescue it either**, which is the obvious next idea and is
+worth ruling out explicitly: by Murray's law a trunk that sheds a symmetric
+branch continues at *exactly* the branch's radius — r = 2.5 sheds r = 1.98 and
+carries on at 1.98, a ratio of 1.00. The two are equal by construction. Only
+an asymmetric split separates them at all (a 30 % branch leaves a ratio of
+1.33).
+
+What does separate them is **direction** — the trunk runs on, the branch turns
+away — and that is already the test. It fails at a crowded node for a
+mechanical reason: the pieces there are short, and an end's tangent measured
+over 10 px of a 15 px piece is mostly noise. So the repair to try is a tangent
+measured over an arc that provably excludes the junction, with a refusal to
+pair when no such arc exists. That is not built, and it is the single most
+specific thing this report can hand to whoever picks it up.
 
 The rest of what was tried failed, and the failures are the useful part:
 

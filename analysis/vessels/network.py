@@ -73,6 +73,10 @@ class NetConfig:
                                # direction per pixel, or a plane per direction. At a
                                # right-angle crossing the Hessian falls to 0.12 of the
                                # vessel's own strength and the orientation stack to 1.00.
+    high_degree: bool = False  # pair the ends at a meeting point of degree >= 5 rather
+                               # than leaving all of them unpaired. Off: it fuses a trunk
+                               # with its own branches (0.23 -> 0.14 resolved, 0.02 -> 0.59
+                               # merges per copy on three branches in a 30 px window).
     cluster: str = "single"    # "single" (transitive; crowded junctions chain into one
                                # node classify() cannot read) or "complete" (a node's
                                # diameter stays bounded). Complete takes three branches
@@ -149,7 +153,8 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
     """Pieces -> vessels: split at touches, classify every junction, add the
     long-gap joins as further pairings, then walk the chains."""
     gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol,
-                          trim_split_fits=cfg.trim_split_fits, cluster=cfg.cluster)
+                          trim_split_fits=cfg.trim_split_fits, cluster=cfg.cluster,
+                          high_degree=cfg.high_degree)
     segs = list(pieces)
     n_dup = 0
     if cfg.consolidate:             # the same vessel found by both passes
