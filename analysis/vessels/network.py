@@ -73,6 +73,10 @@ class NetConfig:
                                # direction per pixel, or a plane per direction. At a
                                # right-angle crossing the Hessian falls to 0.12 of the
                                # vessel's own strength and the orientation stack to 1.00.
+    cluster: str = "complete"  # "single" (transitive; crowded junctions chain into one
+                               # unreadable node) or "complete" (a node's diameter stays
+                               # bounded). Measured on a trunk with three branches in a
+                               # 30 px window, where single linkage resolves 0.25.
     trim_split_fits: bool = True  # a piece split at a touch carries its own fit, covering
                                # only the span it kept, instead of sharing the original
                                # with its other half (which made two vessels export the
@@ -143,7 +147,7 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
     """Pieces -> vessels: split at touches, classify every junction, add the
     long-gap joins as further pairings, then walk the chains."""
     gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol,
-                          trim_split_fits=cfg.trim_split_fits)
+                          trim_split_fits=cfg.trim_split_fits, cluster=cfg.cluster)
     segs = list(pieces)
     n_dup = 0
     if cfg.consolidate:             # the same vessel found by both passes

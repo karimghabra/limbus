@@ -30,11 +30,48 @@ the transfer function of -d^2/dn^2 of an anisotropic Gaussian, with
 Lindeberg's gamma-normalisation so scales can be compared. One forward FFT of
 the image, then one multiply and one inverse FFT per (theta, scale).
 
-WHAT THIS DOES NOT FIX. Two vessels running close together IN PARALLEL are in
-the same plane, and the lift does nothing for them: measured against the
-Hessian on planted pairs it gives the same answer at every separation. That
-limit is the transverse scale, not the filter's shape, and it is dealt with
-elsewhere.
+WHAT THIS DOES NOT FIX, MEASURED.
+
+Two vessels running close together IN PARALLEL are in the same plane, and the
+lift does nothing for them: against the Hessian on planted pairs it gives the
+same answer at every separation. That limit is the transverse scale, not the
+filter's shape.
+
+AND IT DOES NOT, IN THE END, FIX CROSSINGS EITHER.
+
+Filling the hole in the evidence turns out not to be the same thing as keeping
+the crossing's identity. At its default thresholds the stack finds 30-43 % more
+centreline on real crops, and most of it is texture - 53 % of the detected
+length appears on a vessel-free surrogate, against 9 % for the Hessian. Taking
+the maximum over sixteen planes is a multiple-comparisons problem, so the
+threshold has to move; the operating points are
+
+    hessian     t 3.0    17 728 px/MP real     578 surrogate   (3.3 %)
+    orientation t 5.0    19 056                6 072           (31.9 %)
+    orientation t 6.0    18 188                1 528           (8.4 %)
+    orientation t 7.0    16 513                    0           (0.0 %)
+
+which looks like a win: 93 % of the length with no measurable false alarms.
+But at that threshold the crossings it was built for come apart, because the
+junction is exactly where one vessel's evidence is weakest and a strict cut
+removes it:
+
+    planted crossings, resolved     hessian t3.0     orientation t7.0
+      90 degrees                      1.00 (3/3)         0.00 (0/3)
+      60 degrees                      1.00 (3/3)         0.67 (2/3)
+      40 degrees                      0.25 (1/4)         0.25 (1/4)
+      25 degrees                      0.25 (1/4)         0.50 (2/4)
+
+Small samples, but the cell that matters is the wrong way round. So the hole
+is real and this is not the way to close it. The pipeline continues to survive
+steep crossings because hysteresis bridges the gap, which works and is luck
+rather than design.
+
+Kept, selectable with NetConfig(evidence="orientation"), because the hole it
+measures is real and the next attempt should start from it: a properly
+constructed cake wavelet with a threshold PER PLANE, rather than a maximum
+over planes followed by one global cut, is the version that has not been
+tried.
 """
 import cv2
 import numpy as np

@@ -58,6 +58,10 @@ class GraphConfig:
     join_turn_deg: float = 45.0       # how far the two ends may be from continuing
     dup_overlap: float = 0.5          # share of the shorter piece lying on the longer
     dup_dist: float = 1.2             # ... within this many radii of it
+    cluster: str = "complete"     # how piece ends are grouped into meeting points.
+                                  # "single" is transitive and lets crowded junctions
+                                  # chain into one node of degree 7-8 that classify()
+                                  # cannot read; "complete" bounds a node's diameter.
     trim_split_fits: bool = True      # a piece split at a touch gets its OWN fit, covering
                                       # only the part it kept. Without this the two halves
                                       # share one fit object, and if they end up in
@@ -481,16 +485,56 @@ def build(segments, cfg=None):
     # radius or two apart; a fixed tolerance clusters only some of them and
     # the junction is then misread as a continuation between two different
     # vessels.
-    for i in range(len(ends)):
-        for j in range(i + 1, len(ends)):
-            if ends[i]["seg"] == ends[j]["seg"]:
-                continue
-            tol = cfg.node_tol + ends[i]["r"] + ends[j]["r"]
-            if np.hypot(*(ends[i]["p"] - ends[j]["p"])) <= tol:
-                parent[root(i)] = root(j)
-    nodes = {}
-    for i in range(len(ends)):
-        nodes.setdefault(root(i), []).append(i)
+    #
+    # Single linkage is transitive, and that is a problem where junctions
+    # crowd: three branches leaving a trunk within 30 px chain into ONE node
+    # whose ends are 35 px apart, classify() handles degree <= 4 and returns
+    # "unresolved" above it, and every end in the cluster is left unpaired.
+    # Measured, the same three branches resolve 0.64 of the time in a 60 px
+    # window and 0.25 in a 30 px one - crowding, not the number of branches,
+    # is what breaks it. Complete linkage keeps a node's own diameter bounded:
+    # two ends join a node only if the end is close to EVERY member, so a
+    # chain of near-misses cannot become one junction.
+    if getattr(cfg, "cluster", "complete") == "single":
+        for i in range(len(ends)):
+            for j in range(i + 1, len(ends)):
+                if ends[i]["seg"] == ends[j]["seg"]:
+                    continue
+                tol = cfg.node_tol + ends[i]["r"] + ends[j]["r"]
+                if np.hypot(*(ends[i]["p"] - ends[j]["p"])) <= tol:
+                    parent[root(i)] = root(j)
+        nodes = {}
+        for i in range(len(ends)):
+            nodes.setdefault(root(i), []).append(i)
+    else:
+        groups = [[i] for i in range(len(ends))]
+        merged = True
+        while merged:
+            merged = False
+            best = None
+            for a in range(len(groups)):
+                for b in range(a + 1, len(groups)):
+                    ok, worst = True, 0.0
+                    for i in groups[a]:
+                        for j in groups[b]:
+                            if ends[i]["seg"] == ends[j]["seg"]:
+                                ok = False
+                                break
+                            d = float(np.hypot(*(ends[i]["p"] - ends[j]["p"])))
+                            if d > cfg.node_tol + ends[i]["r"] + ends[j]["r"]:
+                                ok = False
+                                break
+                            worst = max(worst, d)
+                        if not ok:
+                            break
+                    if ok and (best is None or worst < best[0]):
+                        best = (worst, a, b)
+            if best is not None:
+                _, a, b = best
+                groups[a] = groups[a] + groups[b]
+                groups.pop(b)
+                merged = True
+        nodes = {min(g): sorted(g) for g in groups}
     pairs = {i: -1 for i in range(len(ends))}
     records = []
     for r, members in sorted(nodes.items()):
