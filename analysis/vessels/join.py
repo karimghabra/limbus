@@ -140,7 +140,8 @@ def join_ends(cl, z, max_gap=50.0, max_turn=np.radians(40), min_z=1.0, max_tort=
         owner[rb] = ra
         used.add(a)
         used.add(b)
-        joins.append({"a": ia, "b": ib, "gap": round(g, 1), "mean_z": round(float(zs.mean()), 2),
+        joins.append({"a": ia, "b": ib, "a_start": bool(sa), "b_start": bool(sb),
+                      "gap": round(g, 1), "mean_z": round(float(zs.mean()), 2),
                       "path": path.round(1).tolist()})
     groups = [sorted(m) for m in members.values()]
     groups.sort(key=lambda m: m[0])

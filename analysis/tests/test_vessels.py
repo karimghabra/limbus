@@ -170,10 +170,64 @@ v1 = net.detect(scene, valid, net.NetConfig(fit=False))[0]
 v2 = net.detect(scene, valid, net.NetConfig(fit=False))[0]
 check([v["id"] for v in v1] == [v["id"] for v in v2] and
       all(np.allclose(a["anchor"], b["anchor"]) for a, b in zip(v1, v2)), "ids are deterministic")
-anch = [v["anchor"] for v in v1]
-check(anch == sorted(anch, key=lambda p: (int(p[1] // 40), p[0])), "ids follow position order")
 flat = texture((H, W), 5, amp=0.004)
 check(len(net.detect(flat, valid, net.NetConfig())[0]) == 0, "a vessel-free image gives no vessels")
+
+# ---- junctions: a known network comes back with the right topology --------
+from vessels import graph as gr  # noqa: E402
+
+NH, NW = 300, 500
+net_img = texture((NH, NW), 11, amp=0.006)
+trunk = np.stack([np.linspace(40, 460, 1200), 150 + 18 * np.sin(np.linspace(0, 2, 1200))], 1)
+branch1 = np.stack([np.linspace(180, 300, 400), np.linspace(150, 40, 400)], 1)
+branch2 = np.stack([np.linspace(250, 360, 400), np.linspace(155, 275, 400)], 1)
+crosser = np.stack([np.linspace(430, 300, 500), np.linspace(20, 280, 500)], 1)   # crosses the trunk far from any branch
+net_img = net_img + tube((NH, NW), trunk, 4.0, 0.12)
+net_img = net_img + tube((NH, NW), branch1, 2.2, 0.07)
+net_img = net_img + tube((NH, NW), branch2, 2.0, 0.06)
+net_img = net_img + tube((NH, NW), crosser, 2.6, 0.08)
+nv, _, _ = net.detect(net_img, np.ones((NH, NW), bool), net.NetConfig())
+by_len = sorted(nv, key=lambda v: -v["length_px"])
+main = by_len[0]
+check(main["length_px"] > 350,
+      f"the trunk comes back as one vessel through both bifurcations ({main['length_px']:.0f} px of 420)")
+check(main["parent"] is None and len(main["children"]) == 2,
+      f"it is a root with two branches (parent {main['parent']}, children {main['children']})")
+kinds = {}
+for v in nv:
+    for j in v["junctions"]:
+        kinds[j["kind"]] = kinds.get(j["kind"], 0) + 1
+check(kinds.get("bifurcation", 0) >= 2, f"both bifurcations are found ({kinds})")
+cross = [v for v in by_len[1:] if v["length_px"] > 200 and v["parent"] is None]
+check(bool(cross), "the vessel crossing the trunk is its own vessel, not a branch of it")
+labels = {v["label"] for v in nv}
+check("1" in labels and any(l.startswith("1.") for l in labels),
+      f"labels run from the trunk down ({sorted(labels)[:5]})")
+check(all(v["radius_px"] <= nv[v["parent"] - 1]["radius_px"] * 1.05
+          for v in nv if v["parent"]),
+      "no vessel is thicker than its parent")
+
+# a bifurcation sitting inside a crossing is genuinely ambiguous: the rule is
+# that it must be REPORTED as unresolved, never guessed at
+amb = texture((NH, NW), 12, amp=0.006)
+amb = amb + tube((NH, NW), trunk, 4.0, 0.12)
+amb = amb + tube((NH, NW), np.stack([np.linspace(300, 400, 300), np.linspace(152, 250, 300)], 1), 2.0, 0.06)
+amb = amb + tube((NH, NW), np.stack([np.linspace(360, 290, 400), np.linspace(40, 260, 400)], 1), 2.6, 0.08)
+av, _, _ = net.detect(amb, np.ones((NH, NW), bool), net.NetConfig())
+akinds = {}
+for v in av:
+    for j in v["junctions"]:
+        akinds[j["kind"]] = akinds.get(j["kind"], 0) + 1
+check(sum(akinds.values()) > 0,
+      f"a branch and a crossing at the same place still produce junction records ({akinds})")
+# ids follow the network's own order - largest vessels first, each branch
+# numbered after the vessel it leaves, which is the order blood takes
+roots = [v for v in nv if v["parent"] is None]
+check([r["id"] for r in roots] == sorted(r["id"] for r in roots)
+      and all(roots[i]["radius_px"] >= roots[i + 1]["radius_px"] - 1e-9 for i in range(len(roots) - 1)),
+      f"root vessels are numbered from the thickest down ({[(r['id'], r['radius_px']) for r in roots]})")
+check(all(v["id"] > nv[v["parent"] - 1]["id"] for v in nv if v["parent"]),
+      "a branch is numbered after the vessel it leaves")
 
 # ---- kymograph velocity: a known streak slope comes back -------------------
 from vessels.profiles import streak_velocity_xcorr  # noqa: E402

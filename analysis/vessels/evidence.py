@@ -10,22 +10,34 @@ this normalisation they would drown the thin vessels that the fine scales
 see. The value is therefore a robust z score, comparable between images.
 
 Small sigmas (1-3 px) are what small vessels need: their measured width is
-5-8 px FWHM at this magnification.
+5-8 px FWHM at this magnification. Large ones are just as necessary: a vessel
+whose radius is much larger than the scale gives a ridge response at each of
+its walls and nothing at its centre, so without coarse scales the widest
+vessels are traced as two parallel edges - or, past about 12 px radius, not
+traced down the middle at all.
 """
 import cv2
 import numpy as np
 
-SIGMAS = (1.0, 1.5, 2.0, 3.0)
+# Scales must cover the vessels present, not just the small ones: the Hessian
+# of a vessel much wider than the scale responds at its WALLS, not its centre,
+# so a 24 px-wide vessel detected only at sigma <= 3 comes back as two edge
+# lines with nothing down the middle. These scales run from the thinnest
+# vessel resolvable to the widest seen here (radius ~12 px).
+SIGMAS = (1.0, 1.5, 2.0, 3.0, 4.5, 6.5, 9.0, 12.0)
 
 
-def ridge_z(A, valid, sigmas=SIGMAS, with_angle=False):
+def ridge_z(A, valid, sigmas=SIGMAS, with_angle=False, with_scale=False):
     """Robust-z ridge strength of the absorbance A (vessels are positive).
 
     With with_angle, also returns the angle of the Hessian eigenvector ACROSS
-    the ridge at the winning scale, for non-maximum suppression."""
+    the ridge at the winning scale, for non-maximum suppression; with
+    with_scale, the winning scale itself, which says how wide the thing that
+    responded is."""
     T = np.exp(-A).astype(np.float32)          # ridges are dark in transmission
     best = np.full(A.shape, -np.inf, np.float32)
     ang = np.zeros(A.shape, np.float32)
+    scale = np.full(A.shape, float(min(sigmas)), np.float32)
     for s in sigmas:
         g = cv2.GaussianBlur(T, (0, 0), s)
         dxx = cv2.Sobel(g, cv2.CV_32F, 2, 0, ksize=3) / 4
@@ -37,12 +49,62 @@ def ridge_z(A, valid, sigmas=SIGMAS, with_angle=False):
         m = np.median(v[valid])
         mad = 1.4826 * np.median(np.abs(v[valid] - m))
         z = (v - m) / max(mad, 1e-12)
+        better = z > best
         if with_angle:
-            better = z > best
             ang = np.where(better, 0.5 * np.arctan2(2 * dxy, dxx - dyy), ang)
+        scale = np.where(better, np.float32(s), scale)
         np.maximum(best, z, out=best)
     best[~valid] = 0
-    return (best, ang) if with_angle else best
+    out = (best,)
+    if with_angle:
+        out += (ang,)
+    if with_scale:
+        out += (scale,)
+    return out if len(out) > 1 else best
+
+
+def drop_wall_echoes(ridge, scale, significant, A=None, ang=None, factor=1.5, reach=1.3,
+                     parallel_deg=25.0):
+    """Remove the ridge lines a wide vessel throws along its own walls.
+
+    A vessel much wider than the scale looking at it responds at each wall, so
+    a wide vessel comes back as its centreline (found at a coarse scale) plus
+    two fine-scale lines a radius either side. Those lie INSIDE the vessel the
+    coarse scale found. A ridge pixel is therefore dropped when a much coarser
+    ridge (at least `factor` times its scale) passes within that coarser
+    ridge's own width: two real vessels side by side respond at similar
+    scales, so neither suppresses the other.
+    """
+    import cv2 as _cv2
+    keep = ridge.copy()
+    base = ridge & significant
+    if not base.any():
+        return keep
+    for s in np.unique(scale[base])[::-1]:
+        coarse = base & (scale >= s)
+        if not coarse.any():
+            continue
+        k = int(max(1, round(reach * s)))
+        owned = _cv2.dilate(coarse.astype(np.uint8),
+                            _cv2.getStructuringElement(_cv2.MORPH_ELLIPSE, (2 * k + 1,) * 2)) > 0
+        drop = owned & base & (scale * factor <= s) & ~coarse
+        if drop.any() and (A is not None or ang is not None):
+            _, lab = _cv2.distanceTransformWithLabels(
+                (~coarse).astype(np.uint8), _cv2.DIST_L2, 5,
+                labelType=_cv2.DIST_LABEL_PIXEL)
+            ys, xs = np.nonzero(coarse)
+            own = lab[ys, xs]                         # each coarse pixel's own label
+            if A is not None:                         # the centre must be at least as dark
+                table = np.zeros(int(lab.max()) + 1, np.float32)
+                table[own] = A[ys, xs]
+                drop &= table[lab] >= A
+            if ang is not None:                       # and the two must run parallel
+                ta = np.zeros(int(lab.max()) + 1, np.float32)
+                ta[own] = ang[ys, xs]
+                d = np.abs(np.angle(np.exp(1j * 2 * (ta[lab] - ang))) / 2)
+                drop &= d <= np.radians(parallel_deg)
+        keep &= ~drop
+    return keep
 
 
 def nms(z, ang):
