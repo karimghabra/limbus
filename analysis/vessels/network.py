@@ -57,6 +57,7 @@ class NetConfig:
     join_turn: float = 40.0    # how far an end may point off the gap (degrees)
     join_min_z: float = 1.0    # mean evidence required along the connector
     graph: bool = True         # resolve crossings and bifurcations, thread pieces into vessels
+    consolidate: bool = True   # drop fragments that trace a vessel already traced
     attach: bool = True        # extend a branch that stops short of the vessel it leaves
     attach_gap: float = 30.0   # how far it may be extended (px)
     under: bool = True         # rejoin a vessel across the shadow of a wider one
@@ -113,7 +114,10 @@ def detect(A, valid, cfg=None, log=None):
     pieces = []
     for P, R, D, rec in acc:
         C = model.catmull(np.array(P, float))[0] if R is not None else np.asarray(P, float)
+        xi = np.clip(np.rint(C[:, 0]).astype(int), 0, W - 1)
+        yi = np.clip(np.rint(C[:, 1]).astype(int), 0, H - 1)
         pieces.append({"points": C, "radius": float(np.median(R)) if R is not None else 2.0,
+                       "darkness": float(np.median(A[yi, xi])),   # absorbance along it
                        "fit": (P, R, D, rec)})
     if not cfg.graph:
         return group([p["fit"] for p in pieces]), mdl, z
@@ -125,11 +129,16 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
     long-gap joins as further pairings, then walk the chains."""
     gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol)
     segs = list(pieces)
+    n_dup = 0
+    if cfg.consolidate:             # the same vessel found by both passes
+        before = len(segs)
+        segs = gr.drop_duplicates(segs, gcfg)
+        n_dup = before - len(segs)
     n_merged = 0
     if cfg.join:                    # repair broken pieces before reading junctions
         before = len(segs)
         segs = gr.merge_gaps(segs, z, joinmod.join_ends, cfg.join_gap,
-                             np.radians(cfg.join_turn), cfg.join_min_z)
+                             np.radians(cfg.join_turn), cfg.join_min_z, gcfg, A)
         n_merged = before - len(segs)
     if cfg.attach:
         segs = gr.attach_to_body(segs, A, gcfg, cfg.attach_gap)
@@ -156,7 +165,7 @@ def _thread(pieces, A, z, occupied, cfg, log=None):
     h = gr.hierarchy(segs, chains, records, ends)
     if log:
         log(f"  junctions: " + ", ".join(f"{v} {k}" for k, v in sorted(kinds.items()))
-            + f"; {n_merged} gaps repaired, {n_join} gap joins")
+            + f"; {n_dup} duplicates dropped, {n_merged} gaps repaired, {n_join} gap joins")
         log(f"  {len(segs)} segments -> {len(chains)} vessels")
     seg_chain = {s: ci for ci, ch in enumerate(chains) for s, _ in ch}
     out = []

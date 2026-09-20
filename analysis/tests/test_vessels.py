@@ -13,6 +13,7 @@ import numpy as np
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 from vessels import evidence as ev  # noqa: E402
+from vessels import graph as vgraph  # noqa: E402
 from vessels import image as vimg  # noqa: E402
 from vessels import join as vjoin  # noqa: E402
 from vessels import network as net  # noqa: E402
@@ -140,6 +141,35 @@ check(followed(far_too) > 500,
       f"an unbounded reach follows it the whole way (to x={followed(far_too):.0f})")
 check(followed(rg.detect(zz, aa, reach=200)) > followed(near_only),
       "a larger reach follows further")
+
+# ---- consolidation: diameter, darkness and direction decide ----------------
+def frag(x0, x1, y0, y1, r, dark, n=120):
+    return {"points": np.stack([np.linspace(x0, x1, n), np.linspace(y0, y1, n)], 1),
+            "radius": r, "darkness": dark}
+
+
+cfgg = vgraph.GraphConfig()
+same = frag(20, 120, 100, 100, 2.0, 0.08)
+cont = frag(150, 250, 100, 100, 2.1, 0.079)
+thick = frag(150, 250, 100, 100, 6.0, 0.079)
+faint = frag(150, 250, 100, 100, 2.1, 0.015)
+bent = frag(150, 200, 100, 190, 2.1, 0.079)
+ta = vgraph._tangent(same["points"], False)
+check(vgraph.same_vessel(same, cont, ta, vgraph._tangent(cont["points"], True), cfgg)[0],
+      "two fragments alike in diameter, darkness and direction are one vessel")
+check(not vgraph.same_vessel(same, thick, ta, vgraph._tangent(thick["points"], True), cfgg)[0],
+      "a fragment three times the diameter is not the same vessel")
+check(not vgraph.same_vessel(same, faint, ta, vgraph._tangent(faint["points"], True), cfgg)[0],
+      "a fragment five times lighter is not the same vessel")
+check(not vgraph.same_vessel(same, bent, ta, vgraph._tangent(bent["points"], True), cfgg)[0],
+      "a fragment leaving at a sharp angle is not the same vessel")
+
+# the same vessel traced twice, as the two passes do, collapses to one
+twice = [frag(20, 220, 100, 100, 3.0, 0.09), frag(30, 210, 101, 101, 3.2, 0.088, n=100)]
+check(len(vgraph.drop_duplicates(twice, cfgg)) == 1, "a vessel traced twice is kept once")
+apart_pair = [frag(20, 220, 100, 100, 2.0, 0.09), frag(20, 220, 112, 112, 2.0, 0.09)]
+check(len(vgraph.drop_duplicates(apart_pair, cfgg)) == 2,
+      "two vessels 12 px apart are kept as two")
 
 # ---- joining: one vessel in two pieces gets one identity -------------------
 broken = texture((H, W), 2, amp=0.012)

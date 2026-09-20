@@ -36,6 +36,7 @@ takes through the network, from large vessels into small ones.
 """
 from dataclasses import dataclass
 
+import cv2
 import numpy as np
 
 
@@ -47,6 +48,16 @@ class GraphConfig:
     branch_deg: float = 75.0      # how far from straight a bifurcation may continue
     radius_ratio: float = 1.8     # calibre agreement across a crossing
     min_radius: float = 0.5
+    # What makes two fragments one vessel. A vessel does not change calibre or
+    # darkness abruptly, and it does not turn sharply, so fragments are only
+    # consolidated when all three agree. Each is a ratio, so none of them
+    # depends on how thick or how dark the vessel happens to be.
+    join_radius_ratio: float = 2.0    # diameters may differ by this much (the width of a
+                                      # thin vessel is itself only good to a factor ~1.5)
+    join_dark_ratio: float = 2.0      # absorbance along them may differ by this much
+    join_turn_deg: float = 45.0       # how far the two ends may be from continuing
+    dup_overlap: float = 0.5          # share of the shorter piece lying on the longer
+    dup_dist: float = 1.2             # ... within this many radii of it
 
 
 def _tangent(C, at_start, arc=10.0):
@@ -80,7 +91,116 @@ def _turn(t1, t2):
     return float(np.degrees(np.arccos(np.clip(np.dot(t1, -t2), -1, 1))))
 
 
-def merge_gaps(segments, z, join_ends_fn, max_gap=50.0, turn=np.radians(40), min_z=1.0):
+def _ratio(a, b, floor=1e-6):
+    a, b = abs(float(a)), abs(float(b))
+    return max(a, b) / max(min(a, b), floor)
+
+
+def end_stats(points, at_start, A, span=24.0):
+    """Diameter and darkness measured NEAR one end of a piece.
+
+    Two fragments of one vessel match where they meet, not on average: a
+    vessel tapers, and a piece that runs through a crossing carries the other
+    vessel's absorbance in its middle. The width comes from the half-maximum
+    of the absorbance profile across the vessel, the darkness from the
+    absorbance along it, both over the last `span` pixels.
+    """
+    P = np.asarray(points, float)
+    if len(P) < 3:
+        return 2.0, 0.0
+    step = np.hypot(*np.diff(P, axis=0).T)
+    walk = np.concatenate([[0.0], np.cumsum(step)])
+    sel = walk <= span if at_start else walk >= walk[-1] - span
+    seg = P[sel]
+    if len(seg) < 3:
+        seg = P[:3] if at_start else P[-3:]
+    H, W = A.shape
+    xi = np.clip(np.rint(seg[:, 0]).astype(int), 0, W - 1)
+    yi = np.clip(np.rint(seg[:, 1]).astype(int), 0, H - 1)
+    dark = float(np.median(A[yi, xi]))
+    t = np.gradient(seg, axis=0)
+    t /= np.maximum(np.hypot(t[:, 0], t[:, 1]), 1e-9)[:, None]
+    n = np.stack([-t[:, 1], t[:, 0]], 1)
+    offs = np.arange(-12, 12.5, 0.5, dtype=np.float32)
+    px = (seg[:, None, 0] + n[:, None, 0] * offs[None, :]).astype(np.float32)
+    py = (seg[:, None, 1] + n[:, None, 1] * offs[None, :]).astype(np.float32)
+    prof = np.median(cv2.remap(A, px, py, cv2.INTER_LINEAR,
+                               borderMode=cv2.BORDER_REPLICATE), axis=0)
+    c = len(offs) // 2
+    base = min(float(np.median(prof[:6])), float(np.median(prof[-6:])))
+    peak = float(prof[max(c - 3, 0):c + 4].max()) - base
+    if peak <= 0:
+        return 2.0, dark
+    half = base + peak / 2
+    right = np.flatnonzero(prof[c:] < half)
+    left = np.flatnonzero(prof[:c + 1][::-1] < half)
+    hw = 0.25 * ((right[0] if right.size else 24) + (left[0] if left.size else 24))
+    return float(max(hw, 0.8)), dark
+
+
+def same_vessel(sa, sb, ta, tb, cfg):
+    """Do two fragments look like one vessel? Diameter, darkness, direction.
+
+    Returns (verdict, why) so a refusal can be read back. None of the three
+    tests is about how strong the evidence is - a faint vessel and a dark one
+    are both allowed, as long as each fragment matches the other.
+    """
+    dr = _ratio(sa.get("radius", 2.0), sb.get("radius", 2.0), 1.0)
+    dk = _ratio(sa.get("darkness", 1.0), sb.get("darkness", 1.0), 1e-3)
+    turn = _turn(ta, tb)
+    why = []
+    if dr > cfg.join_radius_ratio:
+        why.append(f"diameters differ x{dr:.1f}")
+    if dk > cfg.join_dark_ratio:
+        why.append(f"darkness differs x{dk:.1f}")
+    if turn > cfg.join_turn_deg:
+        why.append(f"turns {turn:.0f} deg")
+    return (not why), why
+
+
+def drop_duplicates(segments, cfg=None):
+    """Consolidate fragments that trace the SAME vessel twice.
+
+    The large and small passes overlap by design, so a vessel both can see
+    comes back as two nearly coincident lines. Where a piece runs within about
+    a radius of a longer piece over most of its length, and the two agree in
+    diameter and in darkness, it is the same vessel found twice and only the
+    longer line is kept. Direction needs no separate test here: lines that lie
+    on top of each other already run the same way.
+    """
+    cfg = cfg or GraphConfig()
+
+    def length(i):
+        P = np.asarray(segments[i]["points"], float)
+        return float(np.hypot(*np.diff(P, axis=0).T).sum()) if len(P) > 1 else 0.0
+
+    order = sorted(range(len(segments)), key=lambda i: -length(i))
+    keep, kept_pts = [], []
+    for i in order:
+        C = np.asarray(segments[i]["points"], float)
+        r = float(segments[i].get("radius", 2.0))
+        dup = False
+        for j, K in zip(keep, kept_pts):
+            if _ratio(segments[i].get("radius", 2.0), segments[j].get("radius", 2.0),
+                      cfg.min_radius) > cfg.join_radius_ratio:
+                continue
+            if _ratio(segments[i].get("darkness", 1.0),
+                      segments[j].get("darkness", 1.0)) > cfg.join_dark_ratio:
+                continue
+            step = max(1, len(C) // 200)                      # sampled, for speed
+            d = np.min(np.hypot(*(C[::step, None, :] - K[None, ::max(1, len(K) // 200), :]
+                                  ).transpose(2, 0, 1)), axis=1)
+            if float((d <= cfg.dup_dist * max(r, 1.0)).mean()) >= cfg.dup_overlap:
+                dup = True
+                break
+        if not dup:
+            keep.append(i)
+            kept_pts.append(C)
+    return [segments[i] for i in sorted(keep)]
+
+
+def merge_gaps(segments, z, join_ends_fn, max_gap=50.0, turn=np.radians(40), min_z=1.0,
+               cfg=None, A=None):
     """Repair a piece broken by a gap BEFORE any junction is interpreted.
 
     A vessel often breaks where a branch leaves it or where contrast dips, and
@@ -94,8 +214,24 @@ def merge_gaps(segments, z, join_ends_fn, max_gap=50.0, turn=np.radians(40), min
     The connector is inserted as centreline, unlike the identity-only joins:
     the evidence test has already established that a vessel runs there.
     """
+    cfg = cfg or GraphConfig()
     pts = [np.asarray(s["points"], float) for s in segments]
     _, joins = join_ends_fn(pts, z, max_gap, turn, min_z)
+    # a gap is only closed between fragments that look like the same vessel
+    ok = []
+    for j in joins:
+        ta = _tangent(pts[j["a"]], j["a_start"])
+        tb = _tangent(pts[j["b"]], j["b_start"])
+        if A is None:
+            good = True
+        else:
+            ra, da = end_stats(pts[j["a"]], j["a_start"], A)
+            rb, db = end_stats(pts[j["b"]], j["b_start"], A)
+            good, _ = same_vessel({"radius": ra, "darkness": da},
+                                  {"radius": rb, "darkness": db}, ta, tb, cfg)
+        if good:
+            ok.append(j)
+    joins = ok
     owner = list(range(len(segments)))
 
     def root(i):
@@ -300,7 +436,9 @@ def classify(ends, members, cfg):
         a, b = members
         turn = _turn(ends[a]["t"], ends[b]["t"])
         rec["turn_deg"] = round(turn, 1)
-        if turn <= cfg.branch_deg:
+        rr = _ratio(ends[a]["r"], ends[b]["r"], cfg.min_radius)
+        rec["radius_ratio"] = round(rr, 2)
+        if turn <= cfg.branch_deg and rr <= cfg.join_radius_ratio:
             rec["kind"] = "continuation"
             rec["pairs"] = [(a, b)]
         return rec

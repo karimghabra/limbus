@@ -80,7 +80,18 @@ lab = labels(vessels, A.shape)
    inside an accepted vessel's lumen are cut away first, which removes the echo
    ridges a fine-scale detector finds along the flanks of a wide vessel. By
    default the centreline stays where the ridge detector put it.
-6. **Ids** (`network.py`). Vessels are numbered by position (row band, then x),
+6. **Consolidation** (`graph.py`). Two fragments are declared one vessel only
+   when all three of the things that characterise a vessel agree ACROSS THE
+   GAP, measured over the last 24 px of each fragment rather than as
+   whole-piece averages: **diameter** (within a factor 2 — the width of a thin
+   vessel is itself only good to about a factor 1.5), **darkness** (the
+   absorbance along it, within a factor 2) and **direction** (the two ends
+   within 45° of continuing each other). On 1522L this accepts 18 of 25 gap
+   candidates that geometry and evidence alone would have joined; the seven
+   refusals are four turns of 50–64°, one diameter jump from 7.5 to 16 px, and
+   two brightness jumps of over a factor two. A vessel found by both passes at
+   once is also collapsed to one line, on the same calibre and darkness tests.
+7. **Ids** (`network.py`). Vessels are numbered by position (row band, then x),
    so the same network always gives the same labels.
 
 ## What it measures, and how well
@@ -90,38 +101,24 @@ peak absorbance planted in the absorbance of three crops - one sharp, one
 mostly bare sclera, one defocused; "found" means half the planted centreline is
 within 2.5 px of a detection):
 
-| planted vessel | 1522L (sharp) | 1522R (sparse) | 1550C (defocused) |
-|---|---|---|---|
-| r 1.0 px, 3 % deep | 95 % | 100 % | 100 % |
-| r 1.5 px, 3 % deep | 92 % | 100 % | 98 % |
-| r 2.5 px, 3 % deep | 80 % | 100 % | 100 % |
-| any, ≥ 5 % deep | 98–100 % | 100 % | 100 % |
+| planted vessel | 1522L (sharp) | 1522R (sparse) |
+|---|---|---|
+| r 1.0 px, 3 % deep | 92 % | 100 % |
+| r 1.5 px, 3 % deep | 92 % | 100 % |
+| r 2.5 px, 3 % deep | 78 % | 100 % |
+| r 5 px, 8 % deep | 100 % | 100 % |
+| r 8 px, 12 % deep | 100 % | 100 % |
+| r 12 px, 15 % deep | 92 % | 98 % |
 
-Detected centreline on the untouched crops is 18 700–26 800 px per megapixel.
-Turning the hysteresis off (`--t-lo 3 --L-lo 40`) costs 7 points of thin-vessel
-recall on the sharp crop and 25 on the wide faint ones, which is what the
-faint-stretch rule buys.
+The wide vessels are in that table because leaving them out hid a real defect:
+while nothing planted was wider than 2.5 px radius, the detector was tracing
+wide vessels along their walls, and the benchmark said everything was fine.
 
-False alarms are measured two ways, because both are biased and the truth lies
-between them.
-
-| control | 1522L | 1522R | 1550C |
-|---|---|---|---|
-| phase-randomised texture surrogate | 2.0 % | 8.2 % | 1.3 % |
-| inverted frame (px/MP) | 4 400 | 6 800 | 8 900 |
-
-The surrogate has the texture's power spectrum and no vessels at all, so
-anything found in it is texture turned into a vessel; it is the optimistic end,
-since real texture also has fibres and other non-Gaussian structure. The
-inverted frame is the pessimistic end: every centre-surround filter echoes along
-the flanks of the now-bright vessels, and those echoes are counted even though
-the model fit removes most of them later.
-
-1522R is the crop that is three-quarters bare sclera, and it is where the
-surrogate rate is worst — sparse fields give hysteresis more room to chain
-texture. Bounding the reach (stage 3) brought it down from 49 %. Neither
-control can be taken for precision on real data, which is why detections were
-also reviewed by eye, tile by tile, on the sharp and defocused crops.
+False alarms on a phase-randomised texture surrogate — same power spectrum, no
+vessels — are 5.0 % and 5.6 % of detected length. Lowering the seed length from
+40 px to 25 px raises thin-vessel recall on 1522L to 100 / 98 / 90 % but roughly
+doubles the surrogate rate on the sparse crop (5.6 % → 12.1 %), so it is
+available (`--L-hi 25`) rather than default.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
