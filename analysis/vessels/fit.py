@@ -135,7 +135,11 @@ def run(A, valid, candidates, psf=1.8, kappa=10.0, min_depth=0.015, min_len=20.0
             # echoes are fitted as vessels in their own right - the radius
             # then comes back as the wall's, not the vessel's.
             lumen = v.render(xs, ys, 0.0, with_offset=False) > 0.25 * D
-            pad = max(1, int(round(1.5 * psf)))
+            # The margin has to cover a wall echo, which sits at the vessel's
+            # own radius, without reaching a genuine neighbour: a fixed margin
+            # wide enough for a 12 px vessel swallows a thin vessel running
+            # 8 px from a thin one. It therefore scales with the radius.
+            pad = max(1, int(round(0.2 * float(np.median(R)) + psf)))
             occ = occupied[y0:y1, x0:x1]
             occ |= cv2.dilate(lumen.astype(np.uint8),
                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * pad + 1,) * 2)) > 0

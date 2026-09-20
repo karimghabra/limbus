@@ -33,6 +33,66 @@ def trace(keep, min_len=25.0, spur=8):
     return out
 
 
+def single_peaked(A, C, half=14.0, dip=0.12):
+    """Is the absorbance across this line one vessel, or two side by side?
+
+    A wide vessel absorbs most along its centre, so its cross-profile has a
+    single maximum there. Two vessels running close together look like one
+    wide vessel to a coarse scale, but the image between them is lighter than
+    on either - the profile dips in the middle. The dip is measured relative
+    to the profile's own height, so it does not depend on how dark the vessel
+    is.
+    """
+    C = np.asarray(C, float)
+    if len(C) < 5:
+        return True
+    t = np.gradient(C, axis=0)
+    t /= np.maximum(np.hypot(t[:, 0], t[:, 1]), 1e-9)[:, None]
+    n = np.stack([-t[:, 1], t[:, 0]], 1)
+    offs = np.arange(-half, half + 0.5, 0.5, dtype=np.float32)
+    sel = slice(None, None, max(1, len(C) // 40))
+    px = (C[sel, None, 0] + n[sel, None, 0] * offs[None, :]).astype(np.float32)
+    py = (C[sel, None, 1] + n[sel, None, 1] * offs[None, :]).astype(np.float32)
+    prof = np.median(cv2.remap(A, px, py, cv2.INTER_LINEAR,
+                               borderMode=cv2.BORDER_REPLICATE), axis=0)
+    c = len(offs) // 2
+    base = min(float(np.median(prof[:6])), float(np.median(prof[-6:])))
+    peak = float(prof.max()) - base
+    if peak <= 0:
+        return False
+    centre = float(prof[max(c - 2, 0):c + 3].max()) - base
+    return centre >= (1.0 - dip) * peak
+
+
+def detect_staged(A, valid, cfg, log=None):
+    """Large vessels first, then small ones, then reconcile.
+
+    Each pass runs the same rules over its own band of scales, so a pass only
+    ever sees structures its scales can resolve. The large pass is what keeps
+    wide vessels whole and centred; the small pass is free to be as sensitive
+    as it likes, because anything it finds lying inside a vessel the large
+    pass already accounted for is removed later, when the model fit trims
+    candidates inside an accepted lumen.
+
+    Returns (candidates, z, scale): candidates are (large first) centrelines
+    with the evidence maps of the small pass, which covers the wider range of
+    thresholds used downstream.
+    """
+    out = []
+    zl, angl, scl = ev.ridge_z(A, valid, cfg.sigmas_large, with_angle=True, with_scale=True)
+    large = detect(zl, angl, cfg.t_hi_large, cfg.L_hi_large, cfg.t_lo_large, cfg.L_lo_large,
+                   cfg.gap, cfg.min_len_large, reach=cfg.reach)
+    n_raw = len(large)
+    large = [C for C in large if single_peaked(A, C)]
+    zs, angs, scs = ev.ridge_z(A, valid, cfg.sigmas_small, with_angle=True, with_scale=True)
+    small = detect(zs, angs, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo, cfg.gap, cfg.min_len,
+                   reach=cfg.reach)
+    if log:
+        log(f"  large pass: {len(large)} centrelines ({n_raw - len(large)} dropped as "
+            f"two vessels side by side); small pass: {len(small)}")
+    return large, small, np.maximum(zl, zs), scl, scs
+
+
 def detect(z, ang, t_hi=3.0, L_hi=40, t_lo=1.5, L_lo=20, gap=2, min_len=25.0, reach=60,
            scale=None, A=None, ridge=None):
     """Centrelines of every ridge that is long and strong, plus the faint

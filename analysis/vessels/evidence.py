@@ -26,6 +26,18 @@ import numpy as np
 # vessel resolvable to the widest seen here (radius ~12 px).
 SIGMAS = (1.0, 1.5, 2.0, 3.0, 4.5, 6.5, 9.0, 12.0)
 
+# The search runs in two passes, and the split is what makes both work. One
+# pass over all scales has to choose a single scale per pixel, and whichever
+# rule it uses it loses one end of the range: choose by robust z and a fine
+# scale wins on a wide vessel (its own spread is small), putting the ridge on
+# the vessel's walls; choose by the response and a coarse scale wins on a thin
+# vessel lying over a texture blotch, burying it. Searching the coarse scales
+# and the fine scales separately means neither pass can steal the other's
+# scale, and the two sets of centrelines are reconciled afterwards by the
+# model fit, which takes the deeper line first and trims what lies inside it.
+SIGMAS_LARGE = (4.5, 6.5, 9.0, 12.0)
+SIGMAS_SMALL = (1.0, 1.5, 2.0, 3.0)
+
 # Scale-normalisation exponent. The ridge response has to be normalised across
 # scales before they can be compared, and the exponent decides which scale wins
 # on a given vessel: with gamma = 1 the response keeps growing with sigma and

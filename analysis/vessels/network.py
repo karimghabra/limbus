@@ -31,7 +31,15 @@ from . import ridges
 
 @dataclass
 class NetConfig:
-    sigmas: tuple = ev.SIGMAS  # Hessian scales (px)
+    sigmas: tuple = ev.SIGMAS         # (kept for single-pass use)
+    sigmas_large: tuple = ev.SIGMAS_LARGE   # scales of the large-vessel pass
+    sigmas_small: tuple = ev.SIGMAS_SMALL   # scales of the small-vessel pass
+    staged: bool = True               # search large vessels first, then small ones
+    t_hi_large: float = 3.0           # the large pass has its own thresholds: a wide
+    L_hi_large: int = 40              # vessel is strong, so completeness matters more
+    t_lo_large: float = 1.0           # than caution here
+    L_lo_large: int = 20
+    min_len_large: float = 30.0
     drop_echoes: bool = False  # suppress wall echoes in the EVIDENCE (blunt: also eats
                                # thin vessels running beside a wide one). Off by default -
                                # the model fit removes echoes instead, by trimming whatever
@@ -69,23 +77,33 @@ def detect(A, valid, cfg=None, log=None):
     the fitted pieces it is made of, one continuous centreline, and the
     junctions along it."""
     cfg = cfg or NetConfig()
-    z, ang, sc = ev.ridge_z(A, valid, cfg.sigmas, with_angle=True, with_scale=True)
-    cl = ridges.detect(z, ang, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo, cfg.gap, cfg.min_len,
-                       reach=cfg.reach, scale=sc if cfg.drop_echoes else None, A=A)
-    if log:
-        log(f"  ridges: {len(cl)} centrelines")
+    if cfg.staged:
+        large, small, z, _, sc = ridges.detect_staged(A, valid, cfg, log=log)
+    else:
+        z, ang, sc = ev.ridge_z(A, valid, cfg.sigmas, with_angle=True, with_scale=True)
+        large, small = [], ridges.detect(z, ang, cfg.t_hi, cfg.L_hi, cfg.t_lo, cfg.L_lo,
+                                         cfg.gap, cfg.min_len, reach=cfg.reach,
+                                         scale=sc if cfg.drop_echoes else None, A=A)
+    if log and not cfg.staged:
+        log(f"  ridges: {len(small)} centrelines")
     H, W = A.shape
     # Order candidates by how much absorbance they carry: depth x length. The
     # centre of a wide vessel is its darkest line, so it is fitted before the
     # wall echoes beside it, and its lumen then trims them away. Ordering by
     # evidence z instead let a fine-scale wall echo be fitted first, and the
     # vessel came back with the radius of its own wall.
-    cands = []
-    for C in cl:
+    # Large vessels are fitted first - every one of them, before any small
+    # candidate - so a wide vessel is measured on its own centreline and its
+    # lumen is marked before the small pass's lines beside it are considered.
+    # Within a pass, the order is depth x length: the darkest, longest line
+    # first.
+    def strength(C):
         xi = np.clip(np.rint(C[:, 0]).astype(int), 0, W - 1)
         yi = np.clip(np.rint(C[:, 1]).astype(int), 0, H - 1)
         L = float(np.hypot(*np.diff(C, axis=0).T).sum())
-        cands.append((float(np.median(A[yi, xi])) * L, C))
+        return float(np.median(A[yi, xi])) * L
+
+    cands = [(1e6 + strength(C), C) for C in large] + [(strength(C), C) for C in small]
     if cfg.fit:
         acc, mdl, rej, occ = vfit.run(A, valid, cands, psf=cfg.psf, kappa=cfg.kappa,
                                       min_depth=cfg.min_depth, max_move=cfg.fit_move, log=log)
