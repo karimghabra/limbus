@@ -62,7 +62,7 @@ bootstrap intervals:
 | crossing at 40° | 0.47 [0.29, 0.65] |
 | crossing at 15° | 0.00 |
 | thin vessel over a thick one, 25° | 0.05 [0.00, 0.12] |
-| bifurcation at 35° / 60° / 90° | 1.00 |
+| bifurcation at 35° / 60° / 90° | 0.98–1.00 (two independent runs) |
 | bifurcation at 20° | 0.19 [0.08, 0.31] |
 | trunk, 3 branches in 60 px | 0.61 [0.45, 0.77] |
 | **trunk, 3 branches in 30 px** | **0.24 [0.13, 0.38]** |
@@ -495,8 +495,9 @@ either side of a gap whose depth is 88 % of the signal.
 | crossing 15° | 0.00 [0.00, 0.00] |
 | thin over thick, 90° | 0.96 [0.87, 1.00] |
 | thin over thick, 25° | 0.05 [0.00, 0.12] |
+| **bifurcation 90°** | **1.00 [1.00, 1.00]** |
 | **bifurcation 60°** | **1.00 [1.00, 1.00]** |
-| **bifurcation 35°** | **1.00 [1.00, 1.00]** |
+| **bifurcation 35°** | **1.00 [1.00, 1.00]**, 0.98 [0.93, 1.00] on a rerun |
 | **bifurcation 20°** | **0.19 [0.08, 0.31]** |
 | trunk, 2 branches in 60 px | 0.50 [0.28, 0.72] |
 | trunk, 3 branches in 60 px | 0.29 [0.12, 0.53] |
