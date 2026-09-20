@@ -76,6 +76,11 @@ class GraphConfig:
     join_turn_deg: float = 45.0       # how far the two ends may be from continuing
     dup_overlap: float = 0.5          # share of the shorter piece lying on the longer
     dup_dist: float = 1.2             # ... within this many radii of it
+    tangent_standoff: float = 0.0 # skip this many px back from a piece's end before
+                                  # reading its direction. The last pixels of a piece are
+                                  # bent by whatever it ran into, and at a crowded node a
+                                  # piece may be 15 px long, so a tangent from the tip
+                                  # describes the junction and not the vessel.
     high_degree: bool = False     # read meeting points of degree >= 5 rather than
                                   # abandoning them. OFF: measured, greedy pairing at a
                                   # crowded node fuses a trunk with its own branches -
@@ -99,29 +104,43 @@ class GraphConfig:
                                       # read the same kymograph and the same velocity.
 
 
-def _tangent(C, at_start, arc=10.0):
+def _tangent(C, at_start, arc=10.0, standoff=0.0):
     """Unit vector pointing OUT of the piece at one of its ends.
 
     Measured over a fixed LENGTH of the centreline, not a fixed number of
     samples: centrelines are sampled every half pixel, so ten samples span
     five pixels and the direction they give is mostly noise - which quietly
     cost branches their attachment to the vessel they leave.
+
+    `standoff` skips that many pixels back from the end before measuring. The
+    last few pixels of a piece are the ones bent by whatever it ran into, and
+    at a crowded junction a piece may be only 15 px long, so a tangent taken
+    from its very tip describes the junction rather than the vessel. With a
+    standoff the direction is read from the part of the piece that is still
+    the vessel, and the chord is taken back to the tip so it still points out.
     """
     C = np.asarray(C, float)
     if len(C) < 2:
         return np.array([1.0, 0.0])
-    step = np.hypot(*np.diff(C, axis=0).T)
-    walk = np.concatenate([[0.0], np.cumsum(step)])
+    walk = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(C, axis=0).T))])
+    L = float(walk[-1])
+    if L <= 1e-9:
+        return np.array([1.0, 0.0])
+    if standoff + 2.0 > L:               # too short to stand off from
+        standoff = 0.0
+    arc = min(arc, max(L - standoff, 1e-9))
     if at_start:
-        n = int(np.searchsorted(walk, arc))
-        n = min(max(n, 1), len(C) - 1)
-        d = C[0] - C[n]
+        s_near, s_far = standoff, standoff + arc
     else:
-        back = walk[-1] - walk
-        n = int(np.searchsorted(-back, -arc))
-        n = min(max(n, 1), len(C) - 1)
-        d = C[-1] - C[len(C) - 1 - n] if n < len(C) else C[-1] - C[0]
-    return d / max(np.hypot(*d), 1e-9)
+        s_near, s_far = L - standoff, L - standoff - arc
+    near = np.array([np.interp(s_near, walk, C[:, 0]), np.interp(s_near, walk, C[:, 1])])
+    far = np.array([np.interp(s_far, walk, C[:, 0]), np.interp(s_far, walk, C[:, 1])])
+    d = near - far
+    n = float(np.hypot(*d))
+    if n < 1e-9:
+        d = C[0] - C[-1] if at_start else C[-1] - C[0]
+        n = max(float(np.hypot(*d)), 1e-9)
+    return d / n
 
 
 def _turn(t1, t2):
@@ -494,9 +513,10 @@ def build(segments, cfg=None):
     ends = []
     for si, s in enumerate(segments):
         C = np.asarray(s["points"], float)
-        ends.append({"seg": si, "start": True, "p": C[0], "t": _tangent(C, True),
+        so = float(getattr(cfg, "tangent_standoff", 0.0))
+        ends.append({"seg": si, "start": True, "p": C[0], "t": _tangent(C, True, standoff=so),
                      "r": float(s["radius"])})
-        ends.append({"seg": si, "start": False, "p": C[-1], "t": _tangent(C, False),
+        ends.append({"seg": si, "start": False, "p": C[-1], "t": _tangent(C, False, standoff=so),
                      "r": float(s["radius"])})
     # cluster ends into meeting points (union-find on distance)
     parent = list(range(len(ends)))

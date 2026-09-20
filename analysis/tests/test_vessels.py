@@ -463,5 +463,45 @@ ids, rep = vident.inherit(base, [base[0], base[2]])
 check(rep["missing"] == [2], f"a vessel absent from the new run is reported missing ({rep['missing']})")
 check(ids == [1, 3], f"the others keep their own ids ({ids})")
 
+# ---- an end's direction is the direction of its END --------------------
+# Every pairing decision at a junction - continuation, crossing, bifurcation,
+# gap join, branch attachment - is made from the direction a piece points at
+# its ends. The start tangent was measured over the requested arc; the end
+# tangent was not. It took the chord from 10 px past the START to the end, so
+# on a 120 px piece it described 109.5 px of vessel instead of the last 10,
+# and on a curved vessel it pointed somewhere the vessel had not been for a
+# hundred pixels.
+from vessels.graph import _tangent  # noqa: E402
+
+for L in (20.0, 40.0, 120.0):
+    C = np.stack([np.arange(0, L, 0.5), np.zeros(int(L / 0.5))], 1)
+    check(np.allclose(_tangent(C, True), [-1, 0], atol=1e-6)
+          and np.allclose(_tangent(C, False), [1, 0], atol=1e-6),
+          f"a straight {L:.0f} px piece points out at both ends")
+
+# a quarter circle: the end tangents are perpendicular to each other, and each
+# matches the curve's own direction there. Measured over the whole piece they
+# would both come back at 45 degrees.
+t = np.linspace(0, np.pi / 2, 400)
+R = 60.0
+C = np.stack([R * np.cos(t), R * np.sin(t)], 1)
+t0, t1 = _tangent(C, True), _tangent(C, False)
+ang0 = np.degrees(np.arctan2(t0[1], t0[0])) % 360
+ang1 = np.degrees(np.arctan2(t1[1], t1[0])) % 360
+check(abs(((ang0 - 270) + 180) % 360 - 180) < 8,
+      f"a quarter circle's start tangent follows the curve there ({ang0:.0f} deg, expected 270)")
+check(abs(((ang1 - 180) + 180) % 360 - 180) < 8,
+      f"a quarter circle's end tangent follows the curve THERE, not the whole arc "
+      f"({ang1:.0f} deg, expected 180)")
+
+# standing off from the end must not change a straight piece's direction
+C = np.stack([np.arange(0, 60, 0.5), np.zeros(120)], 1)
+check(all(np.allclose(_tangent(C, False, standoff=s), [1, 0], atol=1e-6)
+          for s in (0.0, 4.0, 12.0)),
+      "standing off from the end leaves a straight piece's direction alone")
+short = np.stack([np.arange(0, 3, 0.5), np.zeros(6)], 1)
+check(np.allclose(_tangent(short, False, standoff=8.0), [1, 0], atol=1e-6),
+      "a piece shorter than the standoff still gives a usable direction")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)

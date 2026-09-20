@@ -73,6 +73,9 @@ class NetConfig:
                                # direction per pixel, or a plane per direction. At a
                                # right-angle crossing the Hessian falls to 0.12 of the
                                # vessel's own strength and the orientation stack to 1.00.
+    tangent_standoff: float = 0.0  # px skipped back from a piece's end before its
+                               # direction is read, so a crowded junction's own bend does
+                               # not become the vessel's direction
     high_degree: bool = False  # pair the ends at a meeting point of degree >= 5 rather
                                # than leaving all of them unpaired. Off: it fuses a trunk
                                # with its own branches (0.23 -> 0.14 resolved, 0.02 -> 0.59
@@ -154,7 +157,8 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
     long-gap joins as further pairings, then walk the chains."""
     gcfg = gr.GraphConfig(node_tol=cfg.node_tol, touch_tol=cfg.touch_tol,
                           trim_split_fits=cfg.trim_split_fits, cluster=cfg.cluster,
-                          high_degree=cfg.high_degree)
+                          high_degree=cfg.high_degree,
+                          tangent_standoff=cfg.tangent_standoff)
     segs = list(pieces)
     n_dup = 0
     if cfg.consolidate:             # the same vessel found by both passes
