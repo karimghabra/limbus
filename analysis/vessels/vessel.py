@@ -298,18 +298,22 @@ def _step_score(A, v, q, h, cfg, occupied, occ_heading):
     H, W = A.shape
     if not (2 <= q[0] < W - 2 and 2 <= q[1] < H - 2):
         return False, 0.0, "edge"
-    ang, rel = orientations(A, q, size=cfg.spec_size)
-    if len(ang) == 0:
-        return False, 0.0, "no local orientation"
     h_ang = np.arctan2(h[1], h[0]) % np.pi
-    agree = [i for i in range(len(ang))
-             if _angdiff(ang[i], h_ang) <= np.radians(cfg.orient_tol_deg)
-             and rel[i] >= cfg.orient_min]
-    if not agree:
-        return False, 0.0, "spectrum does not run this way"
-
     xi, yi = int(round(q[0])), int(round(q[1]))
+    # The local spectrum is consulted only where it is needed - to decide
+    # whether ground already held by another vessel holds TWO separable
+    # signals. Requiring it of every step as well was far stricter than the
+    # question warranted: measured, 30 of 50 ends stopped on that gate rather
+    # than on the vessel ending, because a 40 px window over a faint vessel
+    # gives a weak angular peak. On free ground the profile match is the
+    # evidence, and it is a more direct one.
     if occupied is not None and occupied[yi, xi]:
+        ang, rel = orientations(A, q, size=cfg.spec_size)
+        if len(ang) == 0:
+            return False, 0.0, "occupied, no local orientation"
+        if not any(_angdiff(ang[i], h_ang) <= np.radians(cfg.orient_tol_deg)
+                   for i in range(len(ang))):
+            return False, 0.0, "occupied and the spectrum does not run this way"
         # Overlap is only allowed where the two signals are actually separable:
         # the window must show a second orientation, belonging to whoever is
         # already here, distinct from this vessel's own.
@@ -453,6 +457,58 @@ def build(A, valid, cfg=None, rounds=6, min_keep=40.0, spectral=True, log=None):
     if log:
         log(f"  instantiated {len(vessels)} vessels, "
             f"{sum(v.length for v in vessels):.0f} px of nucleus")
+    def _try_merge(vessels, log=None):
+        """Two vessels whose ends meet, agree in heading and look alike are one.
+
+        Growth stops when it reaches ground another vessel holds, which is the
+        no-overlap rule doing its job - but where what it reached is the other
+        vessel's END, and the two run the same way with the same profile, they
+        are not two vessels meeting, they are one vessel that was nucleated
+        twice. Merging them is the only way the gap between two nuclei of the
+        same vessel is ever closed, and it closes it with measured centreline
+        from both sides rather than with an invented connector.
+        """
+        merged = True
+        n = 0
+        while merged:
+            merged = False
+            for i, a in enumerate(vessels):
+                for j, b in enumerate(vessels):
+                    if j <= i or a is None or b is None:
+                        continue
+                    for ea, eb in ((a.tail, b.mouth), (a.tail, b.tail),
+                                   (a.mouth, b.mouth), (a.mouth, b.tail)):
+                        d = float(np.hypot(*(ea.p - eb.p)))
+                        if d > 2.5 * cfg.step:
+                            continue
+                        if _angdiff(np.arctan2(ea.heading[1], ea.heading[0]),
+                                    np.arctan2(-eb.heading[1], -eb.heading[0])) > np.radians(35):
+                            continue
+                        if a.profile is None or b.profile is None:
+                            continue
+                        corr, amp = match(a.profile, b.profile)
+                        if corr < 0.8 or not (0.5 <= amp <= 2.0):
+                            continue
+                        P, Q = np.asarray(a.points, float), np.asarray(b.points, float)
+                        if np.allclose(ea.p, P[0]):
+                            P = P[::-1]
+                        if np.allclose(eb.p, Q[-1]):
+                            Q = Q[::-1]
+                        a.points = np.vstack([P, Q])
+                        a.measure(A)
+                        vessels[j] = None
+                        merged = True
+                        n += 1
+                        break
+                    if merged:
+                        break
+                if merged:
+                    break
+            vessels[:] = [v for v in vessels if v is not None]
+        if log and n:
+            log(f"  merged {n} pairs of vessels that met end to end")
+        return vessels
+
     for rnd in range(rounds):
         added = 0.0
         for v in vessels:
@@ -468,8 +524,13 @@ def build(A, valid, cfg=None, rounds=6, min_keep=40.0, spectral=True, log=None):
                     v.grown.append(np.asarray(grow, float))
                     _mark(occupied, occ_heading, v)
                     added += v.length - before
+        vessels = _try_merge(vessels, log if rnd == 0 else None)
+        occupied[:] = False
+        occ_heading[:] = np.nan
+        for v in vessels:
+            _mark(occupied, occ_heading, v)
         if log:
-            log(f"  round {rnd + 1}: +{added:.0f} px")
+            log(f"  round {rnd + 1}: +{added:.0f} px, {len(vessels)} vessels")
         if added < 20:
             break
     out = [v for v in vessels if v.length >= min_keep]

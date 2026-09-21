@@ -258,7 +258,7 @@ def drop_duplicates(segments, cfg=None):
 
 
 def merge_gaps(segments, z, join_ends_fn, max_gap=50.0, turn=np.radians(40), min_z=1.0,
-               cfg=None, A=None):
+               cfg=None, A=None, splice=False):
     """Repair a piece broken by a gap BEFORE any junction is interpreted.
 
     A vessel often breaks where a branch leaves it or where contrast dips, and
