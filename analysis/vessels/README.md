@@ -114,11 +114,28 @@ The wide vessels are in that table because leaving them out hid a real defect:
 while nothing planted was wider than 2.5 px radius, the detector was tracing
 wide vessels along their walls, and the benchmark said everything was fine.
 
-False alarms on a phase-randomised texture surrogate — same power spectrum, no
-vessels — are 5.0 % and 5.6 % of detected length. Lowering the seed length from
-40 px to 25 px raises thin-vessel recall on 1522L to 100 / 98 / 90 % but roughly
-doubles the surrogate rate on the sparse crop (5.6 % → 12.1 %), so it is
-available (`--L-hi 25`) rather than default.
+False alarms are measured on a phase-randomised texture surrogate — same power
+spectrum, no vessels — and it matters which stage is being asked. **The ridge
+stage alone** produces 5.0 % and 5.6 % of its detected length there. **The
+whole pipeline**, which then joins fragments across gaps, produces **9.6 % and
+8.5 %**: joining is where most of the invention enters, and an earlier version
+of this section quoted the ridge-stage figures without saying so, which read as
+though the shipped detector were twice as clean as it is.
+
+Lowering the seed length from 40 px to 25 px raises thin-vessel recall on 1522L
+to 100 / 98 / 90 % but roughly doubles the ridge stage's surrogate rate on the
+sparse crop (5.6 % → 12.1 %), so it is available (`--L-hi 25`) rather than
+default.
+
+How far a gap may be joined (`--join-gap`, default **160 px**) was swept against
+that surrogate rather than chosen. Between 50 and 110 px the extra centreline is
+free — more real length, no more surrogate, and the false-alarm rate falls — and
+past 200 px it inverts: at 260 px both crops gain no real length at all and
+590–615 px/MP of invention. The rule is that a step must add vessel faster than
+it adds invention, and 130 → 160 is the last step that passes on both crops.
+Going from 50 to 160 leaves planted recall unchanged, leaves the merge rate
+unchanged at crossings and close pairs (0 disagreements over 150 paired scenes),
+and takes the longest vessel on the sparse crop from 972 to 1898 px.
 
 Radius and depth: the optical blur trades them off for thin vessels. Against
 known planted vessels the fitted radius comes out a few tenths of a pixel high
