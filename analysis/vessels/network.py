@@ -54,7 +54,18 @@ class NetConfig:
     min_len: float = 25.0      # shortest centreline kept
     reach: int = 60            # how far a faint ridge may extend from a strong one (px)
     join: bool = True
-    join_gap: float = 50.0     # longest gap joined (px)
+    join_gap: float = 160.0    # longest gap joined (px). Swept against the controls
+                               # rather than chosen: from 50 to 160 the detected
+                               # centreline rises 12-15% while the phase-randomised
+                               # surrogate gains nothing on either crop, and the longest
+                               # vessel on the sparse crop goes 972 -> 1898 px. Past 200
+                               # it inverts - at 260 both crops gain NO real length and
+                               # 590-615 px/MP of surrogate - so the stopping rule is
+                               # that a step must add vessel faster than it adds
+                               # invention, and 130->160 is the last step that does on
+                               # both. Safe at crossings: against gap 50 the merge rate
+                               # is unchanged at 40 and 90 degrees, over 56 planted
+                               # scenes, with 0 disagreements.
     join_turn: float = 40.0    # how far an end may point off the gap (degrees)
     join_min_z: float = 1.0    # mean evidence required along the connector
     graph: bool = True         # resolve crossings and bifurcations, thread pieces into vessels
