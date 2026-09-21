@@ -161,15 +161,33 @@ by accident — a feature flag that should have been a no-op was not — which i
 an argument for making new options exactly inert by default and checking that
 they are.
 
-**The planted scenarios do not see it**, and that is worth recording as a
-limitation of the benchmark rather than of the fix. Across every parallel
-separation the means are 0.405 against 0.398, and the crossings read
-0.00/0.00, 0.26/0.26, 0.47/0.47 and 0.79/0.75 — unchanged, with merges at 60°
-halved (0.12 against 0.25). The scenarios plant vessels that are straight or
-gently curving, and on a straight piece the old whole-piece chord happened to
-give nearly the right direction. The bug only bites on curvature, which the
-real networks have and the harness does not. Adding a high-curvature family is
-the obvious repair, and is not done.
+**The planted scenarios barely see it**, and that is a limitation of the
+benchmark rather than of the fix. Family means, fixed against old: parallel
+0.405/0.398, crossings 0.470/0.452, ladder 0.615/0.608 — all unchanged, though
+merges at a 60° crossing halve (0.12 against 0.25). The scenarios plant
+vessels that are straight or gently curving, and on a straight piece the old
+whole-piece chord gave nearly the right direction; the bug bites on curvature,
+which the real networks have and the harness did not.
+
+A `curved_cross` family was added for that, and it sees the bug in the pattern
+the mechanism predicts — nothing on a straight crossing, growing with
+curvature: 0.925/0.925 at radius 1000, 0.887/0.906 at 150, 0.792/0.841 at 80
+(n = 52–70). No cell is individually significant; the zero at the control and
+the monotone growth are the evidence. A `curved` family of *isolated* curved
+vessels was also added and does **not** see it — an isolated vessel comes back
+in one piece, so no end tangent is ever consulted.
+
+**Two things not to over-read**, both of which I did before the full sweep
+landed. The crowded ladder cell moved 0.24 → 0.39, which looked like a fix for
+the very failure this report is about, until the fourth cell (0.87 → 0.79)
+made the family a wash. And bifurcation at 20° read 0.08 against 0.21, which
+looked like a regression, until the same cell read 0.14 in a third run and an
+arc-length sweep returned 0.14 at every arc from 10 to 32 px — it is an
+unstable cell, not a regression, and the arc parameter it made me suspect is
+not sensitive at all.
+
+So the fix rests on being correct and on the real-crop continuity, not on the
+scenarios.
 
 The rest of what was tried failed, and the failures are the useful part:
 
