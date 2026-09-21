@@ -47,9 +47,9 @@ def draw(ves, number=True):
                             cv2.FONT_HERSHEY_SIMPLEX,0.45,cc,th,cv2.LINE_AA)
     return img
 
-RUNS = [("before this week: end tangent read over the whole piece", legacy, dict()),
-        ("shipped now: end tangent read over its last 10 px", GOOD, dict()),
-        ("not shipped - complete-linkage junction clustering", GOOD, dict(cluster='complete'))]
+RUNS = [("what shipped a week ago: 50 px gap joins", legacy, dict(join_gap=50.0)),
+        ("shipped now: 160 px gap joins, end tangent read at the end", GOOD, dict()),
+        ("too far: 260 px gap joins - no new vessel, only invention", GOOD, dict(join_gap=260.0))]
 panels=[panel(plain, f"{key}: averaged stabilized frame, no annotation")]
 for title, fn, kw in RUNS:
     gr._tangent = fn
