@@ -161,6 +161,16 @@ by accident — a feature flag that should have been a no-op was not — which i
 an argument for making new options exactly inert by default and checking that
 they are.
 
+**The planted scenarios do not see it**, and that is worth recording as a
+limitation of the benchmark rather than of the fix. Across every parallel
+separation the means are 0.405 against 0.398, and the crossings read
+0.00/0.00, 0.26/0.26, 0.47/0.47 and 0.79/0.75 — unchanged, with merges at 60°
+halved (0.12 against 0.25). The scenarios plant vessels that are straight or
+gently curving, and on a straight piece the old whole-piece chord happened to
+give nearly the right direction. The bug only bites on curvature, which the
+real networks have and the harness does not. Adding a high-curvature family is
+the obvious repair, and is not done.
+
 The rest of what was tried failed, and the failures are the useful part:
 
 | built | result |
