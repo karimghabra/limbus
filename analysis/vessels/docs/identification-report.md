@@ -177,14 +177,37 @@ the monotone growth are the evidence. A `curved` family of *isolated* curved
 vessels was also added and does **not** see it — an isolated vessel comes back
 in one piece, so no end tangent is ever consulted.
 
-**Two things not to over-read**, both of which I did before the full sweep
-landed. The crowded ladder cell moved 0.24 → 0.39, which looked like a fix for
-the very failure this report is about, until the fourth cell (0.87 → 0.79)
-made the family a wash. And bifurcation at 20° read 0.08 against 0.21, which
-looked like a regression, until the same cell read 0.14 in a third run and an
-arc-length sweep returned 0.14 at every arc from 10 to 32 px — it is an
-unstable cell, not a regression, and the arc parameter it made me suspect is
-not sensitive at all.
+**And the comparison method was wrong**, which is the most important thing
+in this section. Bifurcation at 20° read 0.08 against 0.21 across two sweeps,
+which looked like a regression, and I had a tidy mechanism for it — the
+corrected tangent is local and therefore noisier, and at 20° the parent's
+choice of child turns on a few degrees. An arc-length sweep testing exactly
+that returned **0.14 at every arc from 10 to 32 px**: no sensitivity at all.
+So the mechanism was invented.
+
+Planting the scenes **once** and running both tangents on the identical
+images settles it: **0.183 against 0.183, disagreeing on 0 of 60 scenes.**
+There is no difference whatever. The entire 0.21-versus-0.08 was where the
+scenarios happened to land.
+
+The cause is a flaw in the harness: scenarios are planted on ground the
+detector finds empty, so the free mask is derived from the variant's own
+baseline output, and changing the variant moves the scenes. **Every A/B
+comparison in this report made by running the sweep twice is confounded that
+way** — single against complete linkage, and `high_degree` on against off,
+both of which I reverted. The conclusions there were the conservative call and
+they stand, but the evidence behind them is weaker than it reads, and the
+`high_degree` merge rate (0.02 → 0.59) is the only part of it that is too
+large to be planting.
+
+`vessels/scenarios/paired.py` now builds the scenes once from one fixed free
+mask and evaluates every variant on the same images, with the difference
+bootstrapped over scenes. Any future comparison should use it.
+
+One more not to over-read: the crowded ladder cell moved 0.24 → 0.39, which
+looked like a fix for the very failure this report is about, until the fourth
+cell (0.87 → 0.79) made the family a wash — and in any case it was measured
+the confounded way.
 
 So the fix rests on being correct and on the real-crop continuity, not on the
 scenarios.

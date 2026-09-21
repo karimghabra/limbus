@@ -10,6 +10,13 @@ vessels run close together or junctions crowd.
     score      span / cover / parts / merges, with a tolerance that scales
                with how close the truth lines actually are
 
+Comparing two variants needs `paired`, not two runs of the sweep: scenarios
+are planted on ground the detector finds empty, so the free mask depends on
+the variant and the scenes move when the variant changes. Two separate sweeps
+once read 0.21 and 0.08 on shallow bifurcations and looked like a clear
+regression; the same variants on the same scenes give 0.183 and 0.183, and
+disagree on none of 60.
+
 The scorer is validated against known configurations in analysis/tests - a
 resolved pair, a merged midline, one vessel of two found, a shattered vessel -
 and that validation is not optional. The first version of this metric gave
@@ -20,4 +27,5 @@ artefact of where the tolerance fell. It was blind in the same way as the
 metric it was built to replace.
 """
 from .geometry import MAKERS, SCENARIOS, paint, place, render_tube  # noqa: F401
+from .paired import build_scenes, compare, free_ground, resolved  # noqa: F401
 from .score import exempt_pairs, score, transverse  # noqa: F401
