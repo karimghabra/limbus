@@ -156,6 +156,13 @@ with the surrogate false-alarm rate unchanged at 3.3 % on 1522R:
 | 1522R | 31 → 30 | 17 728 → 17 726 | **681 → 972** | 151 → 141 |
 | 1522L | 52 → 51 | 20 588 → 20 308 | 941 → 942 | **108 → 128** |
 
+![the end-tangent fix](figures/fig_tangent2.png)
+
+*The same 7176 px of centreline in both panes; the longest vessel goes
+681 → 972 px. The recovered vessel is strongly curved, which is where the bug
+bit: an end's direction was read over the whole piece, so on a curved vessel
+it pointed where the vessel had not been for a hundred pixels.*
+
 The same evidence and the same detected length, threaded better. It was found
 by accident — a feature flag that should have been a no-op was not — which is
 an argument for making new options exactly inert by default and checking that
@@ -770,6 +777,12 @@ now.
    in the cluster unpaired). Measured, the same three branches resolve 0.64 in
    a 60 px window and **0.25** in a 30 px one — crowding, not the number of
    branches, is what breaks it.
+
+   ![a crowded junction](figures/fig_crowded.png)
+
+   *Truth in grey: one trunk with three branches inside 30 px. Shipped
+   (left) severs the trunk at the junction cluster — two vessels where there
+   is one. Complete linkage (right) threads it through.*
 
    Complete linkage keeps a node's own diameter bounded. On the **real**
    networks it is a clear gain in continuity, which §1 ranks first:
