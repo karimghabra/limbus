@@ -133,7 +133,66 @@ def sc_braid(rng, W, H, n, sep, r=2.0, L=140.0):
     return out
 
 
+def sc_curved(rng, W, H, radius, L=170.0, r=2.5):
+    """One vessel of constant curvature - an arc of the given radius.
+
+    Every other family here plants vessels that are straight or nearly so,
+    which turned out to be a blind spot: an end-tangent bug that measured a
+    piece's direction over its whole length instead of its last few pixels
+    was invisible to all of them, because on a straight piece the two agree.
+    It cost 43 % of the longest vessel on a real crop. Curvature is the axis
+    that separates a direction read at the end from one read over the whole
+    piece, so it needs a family of its own.
+
+    `radius` is the arc's radius of curvature in pixels; 1000 is effectively
+    straight, 40 turns through 117 degrees over 170 px.
+
+    On its own it does NOT see that bug, and it is kept as a completeness
+    check rather than as a regression test: an isolated vessel, however
+    curved, comes back as one piece (span 0.945-1.000 at every curvature,
+    with and without the fix), so no end tangent is ever consulted. The
+    tangent only matters where pieces MEET, which is curved_cross.
+    """
+    a0 = rng.uniform(0, 2 * np.pi)
+    sweep = L / radius
+    t = np.linspace(0, sweep, max(8, int(L / 0.5)))
+    c = np.array([W / 2, H / 2])
+    C = c + radius * np.stack([np.cos(a0 + t) - np.cos(a0), np.sin(a0 + t) - np.sin(a0)], 1)
+    return [{"C": C, "r": r, "role": "A"}]
+
+
+def sc_curved_cross(rng, W, H, radius, theta=70.0, L=150.0, r=2.5):
+    """Two curved vessels crossing - curvature and a junction at once, which
+    is where an end tangent actually gets used.
+
+    This is the only family in the benchmark that sees the end-tangent bug,
+    and it sees it in the pattern the mechanism predicts - nothing on a
+    straight crossing, growing with curvature (mean span, legacy vs fixed):
+
+        radius 1000   0.925 [0.87, 0.97]   0.925 [0.87, 0.97]    n = 52
+        radius  150   0.887 [0.83, 0.94]   0.906 [0.85, 0.96]    n = 52
+        radius   80   0.792 [0.73, 0.85]   0.841 [0.78, 0.89]    n = 70
+
+    No single cell is significant on its own; the zero at the control and the
+    monotone growth with curvature are the evidence, and they are weaker than
+    the real crops, where the same fix moved the longest vessel 681 -> 972 px.
+    """
+    out = []
+    c = np.array([W / 2, H / 2])
+    for k, extra in enumerate((0.0, np.radians(theta))):
+        a0 = rng.uniform(0, 2 * np.pi) if k == 0 else out[0]["a0"] + extra
+        sweep = L / radius
+        t = np.linspace(-sweep / 2, sweep / 2, max(8, int(L / 0.5)))
+        C = c + radius * np.stack([np.cos(a0 + t) - np.cos(a0), np.sin(a0 + t) - np.sin(a0)], 1)
+        out.append({"C": C, "r": r, "role": "AB"[k], "a0": a0})
+    for o in out:
+        o.pop("a0", None)
+    return out
+
+
 SCENARIOS = {
+    "curved": [dict(radius=rr) for rr in (1000, 200, 100, 60, 40)],
+    "curved_cross": [dict(radius=rr) for rr in (1000, 150, 80)],
     "parallel": [dict(sep=s) for s in (3, 4, 5, 6, 8, 10, 14, 20)],
     "parallel_thick": [dict(sep=s, r=4.0) for s in (6, 8, 10, 12, 16, 24)],
     "cross": [dict(theta=t) for t in (15, 25, 40, 60, 90)],
@@ -142,7 +201,7 @@ SCENARIOS = {
     "ladder": [dict(n_j=n, window=w) for n, w in ((2, 60), (3, 60), (3, 30), (4, 40))],
     "braid": [dict(n=n, sep=s) for n, s in ((3, 6), (3, 10), (4, 8), (5, 6))],
 }
-MAKERS = {"parallel": sc_parallel, "parallel_thick": sc_parallel, "cross": sc_cross,
+MAKERS = {"curved": sc_curved, "curved_cross": sc_curved_cross, "parallel": sc_parallel, "parallel_thick": sc_parallel, "cross": sc_cross,
           "cross_uneven": sc_cross, "bifurcation": sc_bifurcation,
           "ladder": sc_ladder, "braid": sc_braid}
 
