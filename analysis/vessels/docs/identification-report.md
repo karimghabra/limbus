@@ -204,10 +204,36 @@ large to be planting.
 mask and evaluates every variant on the same images, with the difference
 bootstrapped over scenes. Any future comparison should use it.
 
+**Re-run that way, both reverted changes are vindicated** — and for the first
+time the evidence is controlled rather than confounded:
+
+| crowded scenario | shipped | complete linkage | high_degree |
+|---|---|---|---|
+| 3 branches in 30 px (n = 55) | 0.382 | **0.655** [+0.145, +0.418] | 0.127 [−0.382, −0.145] |
+| 4 branches in 40 px (n = 46) | 0.630 | **0.413** [−0.370, −0.087] | 0.065 [−0.717, −0.435] |
+
+Complete linkage is now *significantly* better in one crowded case and
+*significantly* worse in the other, both intervals excluding zero — which is
+exactly the wash the unpaired sweep suggested, established properly. And
+`high_degree` is significantly harmful in both, by a wide margin. Leaving the
+shipped defaults alone was right in both cases; what changed is that it is now
+known rather than guessed.
+
+The paired harness also reports how many scenes two variants actually
+disagreed on — 19 and 12 for complete linkage, 14 and 26 for `high_degree`,
+and **0 of 60** for the two tangents. That last number is the one that would
+have saved a day.
+
 One more not to over-read: the crowded ladder cell moved 0.24 → 0.39, which
 looked like a fix for the very failure this report is about, until the fourth
 cell (0.87 → 0.79) made the family a wash — and in any case it was measured
-the confounded way.
+the confounded way, and paired the two tangents differ on no scene at all.
+
+A related knob turns out not to be one. Suspecting the corrected tangent was
+too local, I swept its arc over 10, 16, 24 and 32 px across five scenario
+families: 0.14 / 1.00 / 0.24 / 0.68 flat at every arc, with a single 0.42 →
+0.46 wobble on one crossing cell. The tangent's length does not matter; only
+which end it is measured at.
 
 So the fix rests on being correct and on the real-crop continuity, not on the
 scenarios.
