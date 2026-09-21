@@ -137,6 +137,30 @@ measured over an arc that provably excludes the junction, with a refusal to
 pair when no such arc exists. That is not built, and it is the single most
 specific thing this report can hand to whoever picks it up.
 
+**And one plain bug, found last and worth more than most of the above.**
+`graph._tangent` measured the direction a piece points at its ends. The start
+branch used the requested arc; the end branch indexed from the wrong side and
+took the chord from 10 px past the *start* to the end — 84 px of a 94 px arc
+on a curved piece, returning 140° where the vessel runs at 180°. That
+direction decides every pairing at every junction: continuation, crossing,
+which child a parent continues into, `join_ends`' 40° gate, and
+`attach_to_body`. It has been wrong in all of them since arc-length tangents
+were introduced.
+
+Corrected by interpolating the centreline at the two arc lengths the tangent
+spans, so there is no index arithmetic left to get wrong. On the real crops,
+with the surrogate false-alarm rate unchanged at 3.3 % on 1522R:
+
+| crop | vessels | px/MP | longest | median |
+|---|---|---|---|---|
+| 1522R | 31 → 30 | 17 728 → 17 726 | **681 → 972** | 151 → 141 |
+| 1522L | 52 → 51 | 20 588 → 20 308 | 941 → 942 | **108 → 128** |
+
+The same evidence and the same detected length, threaded better. It was found
+by accident — a feature flag that should have been a no-op was not — which is
+an argument for making new options exactly inert by default and checking that
+they are.
+
 The rest of what was tried failed, and the failures are the useful part:
 
 | built | result |
