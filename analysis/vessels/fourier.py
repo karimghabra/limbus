@@ -17,50 +17,52 @@ would be hopeless in image space; as one forward FFT of the frame and one
 multiply per template it costs a few seconds.
 
 Each template is mean-removed, whitened by the frame's own background power
-spectrum, and scaled to unit norm. Under that normalisation the correlation
-is maximised, over the bank, by the template whose SHAPE best matches the
-local absorbance, so the argmax estimates the vessel's width and the blur it
-is seen through rather than merely returning the biggest number. The
-whitening is not a refinement: without it sclera texture, which is strongly
-low-frequency, makes the widest and blurriest template in the bank win almost
-everywhere and the argmax measures nothing (see `noise_spectrum`). That is what makes "large" and
-"in focus" measured properties here rather than thresholds imposed from
-outside:
+spectrum, and scaled to unit norm, and the statistic within one (radius, blur)
+is the ORIENTATION CONTRAST - the best orientation's response minus the median
+over all orientations. Getting the largest vessels found at all took four
+corrections, each of which was needed and none of which was guessed:
+
+  background model   The annulus median is inflated by the vessels' own power,
+                     so whitening by it suppressed exactly the thick vessels
+                     this is meant to find first (z fell from 4.9 at r=4 to
+                     0.8 at r=13). A power-law fit that rejects positive
+                     residuals gives a background they cannot inflate.
+  per-radius scale   A whitened response is not comparable BETWEEN radii - a
+                     wide vessel's power sits at low k where the sclera has
+                     most of its own. Each radius is normalised by its own
+                     spread before the radii compete, as `evidence.py` does.
+  orientation        Whitening is isotropic and cannot separate a trunk's
+                     low-frequency power from a sclera blotch's. A blotch
+                     answers every orientation alike; a vessel answers one. The
+                     median over theta subtracts the blotch away, and this took
+                     the trunk response from z 8.5 to 18.8 against 0.7 on
+                     background.
+  aspect ratio       At the old 9 px axial length an r=13 template was 27 px
+                     wide and 9 long: a blob, and the sclera is full of blobs.
 
     radius   argmax over r      how wide the vessel is
     blur     argmax over sigma  how sharply it is imaged (small = in focus)
 
 Of these two, only the radius is calibrated. Against vessels planted at a
-known radius the bank returns the right one 96-100 % of the time, at every
-calibre from 4 to 13 px. The blur is monotone in the true blur but reads LOW
-by roughly a factor two - a vessel planted at psf 1.2 / 1.8 / 2.6 / 3.8 px
-comes back as 0.8 / 1.2 / 1.6 / 2.0 - and the cause is not yet known, so it
-ranks how sharply two vessels in a frame are imaged but its number is not a
-PSF. `max_blur` is a threshold on that uncalibrated scale.
+known radius the bank returns the right one 96-100 % of the time from 4 to
+13 px. The blur is monotone in the true blur but reads LOW by roughly a factor
+two - planted at 1.2 / 1.8 / 2.6 / 3.8 px it comes back as 0.8 / 1.2 / 1.6 /
+2.0 - and the cause is not known, so it ranks how sharply two vessels in one
+frame are imaged but its number is not a PSF.
 
-Darkness is then measured on the absorbance image itself where the bank
-placed the vessel, not inferred from the response.
+Darkness is measured on the absorbance image where the bank placed the vessel,
+not inferred from the response, which is an SNR.
 
-Mean removal makes a flat background give exactly zero, so the response does
-not reward bright regions; the L2 normalisation makes responses from
-different templates comparable, which is the whole point of taking an argmax
-across them.
+This module deliberately finds the large vessels first. They are the ones that
+are unambiguous, and the plan is to work down in calibre, removing each vessel
+from the SPECTRUM rather than from the image, so that a thin vessel crossing a
+thick one survives the removal of the thick one.
 
-This module deliberately finds only the large vessels. They are the ones that
-are unambiguous, and the plan is to work down in calibre, removing each
-vessel from the SPECTRUM rather than from the image, so that a thin vessel
-crossing a thick one survives the removal of the thick one.
-
-Known limit, and it bears on exactly that plan: the THICKEST vessels are not
-the best detected. On a sharp crop, pixels of absorbance >= 0.40 - the trunks
-- respond at z ~ 6, where a crisp mid-calibre vessel reaches 20 or more, and
-on a trunk the bank picks a radius of 4-9 px rather than 13, i.e. it is
-matching the trunk's steep flank rather than its full width. Extending the
-bank to r = 22 px and the blur to 5.6 px moved the pass rate from 39 % to
-60 % but did not change which radius won. The cylinder chord profile that
-works so well on planted vessels is evidently not what a real trunk looks
-like across its width, and that needs solving before "largest first" can mean
-what it says.
+Where it stands, measured on a sharp crop against every centreline the image
+plainly shows: 64 % of the trunk centreline (absorbance >= 0.45) is covered,
+60 % at >= 0.18, and 100 % of what it does report lies on absorbance >= 0.04
+against a background of 0.031. The missing third is real and visible - the
+thickest, softest trunk in the crop is still not traced.
 """
 import cv2
 import numpy as np
@@ -71,10 +73,19 @@ from . import ridges
 # The bank. Radii are half-widths in px; a "large" vessel here is r >= 4,
 # which at the working magnification is roughly the calibre at which a vessel
 # is unambiguous against sclera texture.
-RADII = (4.0, 6.0, 9.0, 13.0)
-SIGMAS = (1.2, 1.8, 2.6, 3.8)
+# A real trunk on a sharp crop measures r = 13.5 px with 4.8 px of blur, fitted
+# to its own cross-profile with a residual of 7 % of peak - the cylinder model
+# describes it well, but the bank used to stop at r = 13 and sigma = 3.8 and so
+# could not represent it at all.
+RADII = (3.0, 4.5, 6.5, 9.0, 13.0, 18.0)
+SIGMAS = (1.2, 1.8, 2.6, 3.8, 5.2)
 N_THETA = 16
-ALONG = 9.0          # axial taper of the template (px, Gaussian sd)
+ALONG = 20.0        # axial taper of the template (px, Gaussian sd). A template
+                    # only 9 px long is 27 px WIDE at r=13: a blob, and the
+                    # sclera is full of blobs. Lengthening it to 20 took the
+                    # trunk response from z 8.5 to 18.8. Past ~28 it falls
+                    # again, because real vessels curve away from a straight
+                    # template.
 
 
 def chord(d, r, sigma, step=0.05):
@@ -91,7 +102,9 @@ def chord(d, r, sigma, step=0.05):
 
 def template(theta, r, sigma, along=ALONG):
     """The mean-removed, unit-norm filter for one vessel shape."""
-    half = int(np.ceil(max(r + 4 * sigma, 3 * along)))
+    # 2.2 sigma of axial taper, not 3: the box is what sets `pad`, and `pad`
+    # is subtracted from the usable frame at every edge.
+    half = int(np.ceil(max(r + 4 * sigma, 2.2 * along)))
     y, x = np.mgrid[-half:half + 1, -half:half + 1].astype(np.float32)
     ct, st = np.cos(theta), np.sin(theta)
     d = -x * st + y * ct                 # across the vessel
@@ -205,7 +218,8 @@ def _bank(n_theta=N_THETA, radii=RADII, sigmas=SIGMAS, along=ALONG):
 
 
 def respond(A, valid, n_theta=N_THETA, radii=RADII, sigmas=SIGMAS, along=ALONG,
-            whiten=True, alpha=1.0, model="powerlaw", deg=1, roll=40.0, margin=1.5,
+            whiten=True, alpha=1.0, model="powerlaw", deg=1, contrast=True,
+            roll=40.0, margin=0.0,
             log=None):
     """Correlate the whole frame with the bank; keep the best answer per pixel.
 
@@ -262,10 +276,33 @@ def respond(A, valid, n_theta=N_THETA, radii=RADII, sigmas=SIGMAS, along=ALONG,
     # matched filter, 0 is none.
     Pa = P ** alpha if whiten else None
 
-    best = np.full((H, W), -np.inf, np.float32)
-    th_m = np.zeros((H, W), np.float32)
-    r_m = np.zeros((H, W), np.float32)
-    sg_m = np.zeros((H, W), np.float32)
+    # Kept PER RADIUS, not pooled. A whitened matched filter is the right
+    # detector for a given shape but it is not comparable BETWEEN shapes here:
+    # a wide vessel's power sits at low k, which is exactly where the sclera
+    # has most of its own, so the same vessel scores ~3x lower at r=13 than at
+    # r=4 (measured on planted vessels: z 43.6 -> 15.0). Pooling the bank and
+    # taking one argmax therefore lets a narrow template sitting on a trunk's
+    # steep flank outbid the correct wide one, and the trunks - the vessels
+    # this is supposed to find FIRST - come out weakest of all.
+    #
+    # So each radius is put in units of its own spread before the radii are
+    # compared, which is the same thing `evidence.py` does across its scales
+    # and for the same reason.
+    #
+    # Within one (radius, blur) the statistic is the ORIENTATION CONTRAST: the
+    # best orientation's response minus the median over all orientations, not
+    # the response itself. Whitening is isotropic, so on its own it cannot
+    # tell a trunk's low-frequency power from a sclera blotch's - and the
+    # sclera is full of blotches at exactly the scale of a thick vessel, which
+    # is why the trunks scored no better than z 4 while a crisp thin vessel
+    # scored 20. What actually separates them is that a vessel is oriented and
+    # a blotch is not: a blotch answers every orientation alike, so the median
+    # over theta subtracts it away, while a vessel answers one.
+    thetas = [np.pi * i / n_theta for i in range(n_theta)]
+    per = {r: [np.full((H, W), -np.inf, np.float32),
+               np.zeros((H, W), np.float32), np.zeros((H, W), np.float32)]
+           for r in radii}
+    byshape = {}
     for th, r, sg, z in bank:
         k = np.zeros((Ph, Pw), np.float32)
         n = z.shape[0]
@@ -282,12 +319,20 @@ def respond(A, valid, n_theta=N_THETA, radii=RADII, sigmas=SIGMAS, along=ALONG,
             num, nrm = F * np.conj(Z), 1.0
         # correlation, not convolution: conjugate the filter's transform
         c = np.fft.irfft2(num, s=(Ph, Pw))[pad:pad + H, pad:pad + W] / nrm
-        c = c.astype(np.float32)
-        hit = c > best
-        best = np.where(hit, c, best)
-        th_m = np.where(hit, np.float32(th), th_m)
-        r_m = np.where(hit, np.float32(r), r_m)
-        sg_m = np.where(hit, np.float32(sg), sg_m)
+        byshape.setdefault((r, sg), []).append(c.astype(np.float32))
+        if len(byshape[(r, sg)]) < n_theta:
+            continue
+        stack = np.stack(byshape.pop((r, sg)))
+        if contrast:
+            ang = stack.max(0) - np.median(stack, 0)
+        else:
+            ang = stack.max(0)
+        who = stack.argmax(0)
+        b = per[r]
+        hit = ang > b[0]
+        b[0] = np.where(hit, ang, b[0])
+        b[1] = np.where(hit, np.asarray(thetas, np.float32)[who], b[1])
+        b[2] = np.where(hit, np.float32(sg), b[2])
     # A matched filter has no answer within half a template of the edge of the
     # data: there the correlation is partly with the mirror fill. Say so by
     # shrinking the mask rather than reporting responses that mean nothing.
@@ -295,54 +340,81 @@ def respond(A, valid, n_theta=N_THETA, radii=RADII, sigmas=SIGMAS, along=ALONG,
     # without it the frame's own edge is never trimmed and `inner` comes back
     # essentially equal to `valid` - which is how a band of border responses
     # 76 px wide survived into the detections.
-    k = int(max(pad * margin, roll)) | 1
+    # The margin is `roll`, not the whole template. The old code eroded by a
+    # full template half-width, which on a 460-row crop threw away 58 % of the
+    # trunk centreline - and it was there to fight border responses that the
+    # taper has since removed at source: beyond the taper the data rolls to
+    # zero, so an edge response is attenuated, not invented.
+    k = int(max(roll, pad * margin)) | 1
     inner = cv2.erode(valid.astype(np.uint8), np.ones((k, k), np.uint8),
                       borderType=cv2.BORDER_CONSTANT, borderValue=0) > 0
+
+    best = np.full((H, W), -np.inf, np.float32)
+    z_m = np.full((H, W), -np.inf, np.float32)
+    th_m = np.zeros((H, W), np.float32)
+    r_m = np.zeros((H, W), np.float32)
+    sg_m = np.zeros((H, W), np.float32)
+    for r in radii:
+        c, th_r, sg_r = per[r]
+        v = c[inner]
+        med = float(np.median(v))
+        # Spread from the NEGATIVE half only. Vessels make the response
+        # positive, so a two-sided MAD is inflated by the very things being
+        # detected, and a vessel-rich frame raises its own threshold.
+        spread = 1.4826 * float(np.median(med - v[v < med])) if (v < med).any() else 1.0
+        zr = (c - med) / max(spread, 1e-9)
+        hit = zr > z_m
+        z_m = np.where(hit, zr, z_m)
+        best = np.where(hit, c, best)
+        th_m = np.where(hit, th_r, th_m)
+        sg_m = np.where(hit, sg_r, sg_m)
+        r_m = np.where(hit, np.float32(r), r_m)
+        if log:
+            log(f"[fourier]   r={r:<5g} median {med:+.4f} spread {spread:.4f}  "
+                f"z>=6 on {int(((zr >= 6) & inner).sum()):6d} px")
     best = np.where(inner, best, 0).astype(np.float32)
-
-    v = best[inner]
-    med = float(np.median(v))
-    mad = float(np.median(np.abs(v - med))) * 1.4826
-    z_m = ((best - med) / max(mad, 1e-9)).astype(np.float32)
+    z_m = np.where(inner, z_m, 0).astype(np.float32)
     if log:
-        log(f"[fourier] bank {len(bank)} templates, frame {W}x{H} padded to {Pw}x{Ph}; "
-            f"score median {med:.4f} spread {mad:.4f}")
+        log(f"[fourier] bank {len(bank)} templates, frame {W}x{H} padded to {Pw}x{Ph}")
     return {"score": best, "z": z_m, "theta": th_m, "radius": r_m,
-            "blur": sg_m, "inner": inner, "median": med, "mad": mad,
-            "whiten": whiten}
+            "blur": sg_m, "inner": inner, "whiten": whiten}
 
 
-def segments(A, valid, resp=None, t_z=6.0, min_radius=4.0, max_blur=2.6,
-             min_depth=0.10, min_len=40.0, log=None, **kw):
-    """Ridge points that are large, dark and in focus, linked into polylines.
+def segments(A, valid, resp=None, t_hi=8.0, t_lo=3.5, min_radius=0.0,
+             max_blur=99.0, min_depth=0.05, min_len=40.0, log=None, **kw):
+    """Ridge points that are large and dark, linked into polylines.
 
-    Each of the three words is one test on the winning template, so a
-    rejection can always be named:
-        large     radius  >= min_radius
-        in focus  blur    <= max_blur
+    Each word is one test on what the bank measured, so a rejection can always
+    be named:
+        large     radius >= min_radius   (0 keeps every calibre)
+        in focus  blur   <= max_blur     (on the uncalibrated blur scale)
         dark      absorbance A at the ridge >= min_depth
-    plus the response itself standing t_z robust spreads above the frame's own
-    background of responses.
 
-    Darkness is read off the absorbance image, smoothed across the ridge by
-    the blur the bank chose, rather than derived from the response: a whitened
-    correlation is an SNR and would call a shallow vessel in a quiet patch
-    "dark".
+    Darkness is read off the absorbance image rather than derived from the
+    response: a whitened correlation is an SNR and would call a shallow vessel
+    in a quiet patch "dark".
+
+    The response is taken with hysteresis, not a single threshold. A trunk's
+    response dips where another vessel crosses it and where it curves away
+    from a straight template, and a single cut at t_hi chopped the trunks into
+    dashes; a run of weaker ridge that is CONNECTED to a confident one is part
+    of the same vessel.
     """
     R = respond(A, valid, log=log, **kw) if resp is None else resp
     dark = cv2.GaussianBlur(A, (0, 0), 1.0)
     # across-ridge direction for the non-maximum suppression
-    keep = ev.nms(R["score"], R["theta"] + np.pi / 2)
-    tests = {"z": R["z"] >= t_z, "large": R["radius"] >= min_radius,
-             "focus": R["blur"] <= max_blur, "dark": dark >= min_depth}
-    m = keep & R["inner"]
+    ok = (ev.nms(R["score"], R["theta"] + np.pi / 2) & R["inner"]
+          & (R["radius"] >= min_radius) & (R["blur"] <= max_blur)
+          & (dark >= min_depth))
+    weak, strong = ok & (R["z"] >= t_lo), ok & (R["z"] >= t_hi)
+    n, lab = cv2.connectedComponents(weak.astype(np.uint8), connectivity=8)
+    alive = np.zeros(n, bool)
+    alive[lab[strong]] = True
+    alive[0] = False
+    m = alive[lab]
     if log:
-        log(f"[fourier] {int(m.sum())} ridge px after NMS")
-    for name, t in tests.items():
-        before = int(m.sum())
-        m = m & t
-        if log:
-            log(f"[fourier]   {name}: {before} -> {int(m.sum())}")
+        log(f"[fourier] ridge px: {int(ok.sum())} pass the tests, "
+            f"{int(strong.sum())} reach z {t_hi}, {int(m.sum())} kept after hysteresis")
     segs = ridges.trace(m, min_len=min_len)
     if log:
         tot = sum(np.hypot(*np.diff(c, axis=0).T).sum() for c in segs if len(c) > 1)
