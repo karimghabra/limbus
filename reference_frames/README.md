@@ -5,11 +5,11 @@ analysis pipeline against real data without needing the camera or the raw
 bursts. Recorded 16 Sep 2026; the imaged participant has consented to
 publication.
 
-| file | size | no-data | vessel wall rise (10-90 %) |
-|---|---|---|---|
-| `mean_2026-09-16_15-31-50.tif` | 1920 x 500 | 0.8 % | **12.00 px** — sharpest |
-| `mean_2026-09-16_15-31-37.tif` | 1920 x 500 | ~0 | 12.75 px |
-| `mean_2026-09-16_15-22-26.tif` | 1920 x 500 | 1.8 % | 13.88 px — most vessels |
+| file | size | frames averaged | stability | no-data | wall rise (10-90 %) |
+|---|---|---|---|---|---|
+| `mean_2026-09-16_15-31-50.tif` | 1920 x 500 | **377 of 377** | 0.904 | 0.8 % | **12.00 px** - sharpest |
+| `mean_2026-09-16_15-31-37.tif` | 1920 x 500 | **158 of 160** | 0.947 | ~0 | 12.75 px |
+| `mean_2026-09-16_15-22-26.tif` | 1920 x 500 | **626 of 1105** | 0.813 | 1.8 % | 13.88 px - most vessels |
 
 The last column is how sharp the frames actually are, measured rather than
 judged: the 10-90 % rise distance across the wall of a large vessel, median
@@ -28,7 +28,16 @@ the softest, and `12-57-20` is a ruled calibration target, not an eye.
   not zeros.
 - Each is the **mean of a burst** of ~74 fps frames after non-rigid
   stabilization. Averaging is what makes the vessels clean: a single frame is
-  noisy and flickers.
+  noisy and flickers. Nothing else has been done to them - no denoising, no
+  sharpening, no contrast stretch.
+- **How many frames went into each average differs a lot.** `15-31-50` used
+  every one of its 377. `15-22-26` used 626 of 1105: 117 frames failed the
+  blink/blur/brightness gate and 69 more would not register, which is why it
+  has the most no-data and the lowest stability index. It also has the most
+  vessels in view, so it is the richest and the least clean at the same time.
+- `stability` above is the overlap of the vessel mask across the burst after
+  stabilization - 1.0 would be a perfectly still eye. Before stabilization
+  these three sat at 0.32, 0.67 and 0.25.
 
 ## Getting to absorbance
 
