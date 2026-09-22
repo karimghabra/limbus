@@ -503,5 +503,35 @@ short = np.stack([np.arange(0, 3, 0.5), np.zeros(6)], 1)
 check(np.allclose(_tangent(short, False, standoff=8.0), [1, 0], atol=1e-6),
       "a piece shorter than the standoff still gives a usable direction")
 
+# --- intersection regions: the KIND, on geometry we constructed ---
+from vessels import regions as vreg  # noqa: E402
+from vessels.scenarios import geometry as vgeo  # noqa: E402
+
+_rng = np.random.default_rng(0)
+
+
+def _kind(lines):
+    V = [(np.asarray(d["C"], float), np.full(len(d["C"]), float(d["r"]))) for d in lines]
+    R = vreg.find(V)
+    return sorted(R, key=lambda q: -q.extent)[0].kind if R else None
+
+
+for _th in (20, 35, 50, 70, 90):
+    check(_kind(vgeo.sc_cross(_rng, 400, 400, _th, r=3.0)) == "crossing",
+          f"two vessels crossing at {_th} deg are called a crossing")
+for _th in (20, 35, 60, 90):
+    check(_kind(vgeo.sc_bifurcation(_rng, 400, 400, _th, r=4.0)) == "bifurcation",
+          f"a parent splitting at {_th} deg is called a bifurcation")
+# a shallow crossing and a parallel pair have the SAME elongated shape; only
+# the order of the arms around the region tells them apart
+check(_kind(vgeo.sc_parallel(_rng, 400, 400, 2, r=2.0)) == "overlap",
+      "vessels running side by side with touching lumens are called an overlap")
+check(_kind(vgeo.sc_parallel(_rng, 400, 400, 20, r=2.0)) is None,
+      "vessels 20 px apart with 4 px lumens do not touch, so there is no region")
+_r = vreg.find([(np.asarray(d["C"], float), np.full(len(d["C"]), float(d["r"])))
+                for d in vgeo.sc_bifurcation(_rng, 400, 400, 60, r=4.0)])
+check(abs(sorted(_r, key=lambda q: -q.extent)[0].murray_residual) < 0.05,
+      "a Murray-law bifurcation comes back with a residual near zero")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
