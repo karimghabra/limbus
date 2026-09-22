@@ -4,9 +4,10 @@ unannotated, then each variant drawn over it at full width.
 usage: python fig_network.py <crop key>
 """
 import sys, numpy as np, cv2
-sys.path[:0]=['.', r'E:\Conjunctiva Code\limbus\analysis',
-              r'C:\Users\PETERC~1\AppData\Local\Temp\claude\E--\e4e3ef18-f4c7-497a-8ee6-40091257ed39\scratchpad\velocity\week']
-import bench
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))))
+sys.path[:0]=['.',]
+from vessels import benchmark as bench
 from vessels import image as vimg, network as net, graph as gr
 
 GOOD = gr._tangent

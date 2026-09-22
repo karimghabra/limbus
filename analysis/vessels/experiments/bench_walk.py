@@ -1,4 +1,6 @@
 """Injection-recovery for the walker ensemble, beside the staged search.
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 
 The planted vessels are isolated by construction - they are put where nothing
 else is - so this is the hardest possible case for a method that only finds
@@ -8,9 +10,9 @@ to be measured.
 import os, sys
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, r"E:\Conjunctiva Code\limbus\analysis")
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import bench, bench2
+from vessels import benchmark as bench
+import bench2
 import walkers as wk
 from seeded import seeds_of
 from vessels import image as vimg, network as net, model, evidence as ev, ridges as rg

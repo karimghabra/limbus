@@ -27,8 +27,9 @@ import sys
 
 import cv2
 import numpy as np
-
-sys.path.insert(0, r"E:\Conjunctiva Code\limbus\analysis")
+import os as _os
+sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(
+    _os.path.abspath(__file__)))))
 sys.path[:0] = [".", ".."]
 from vessels import evidence as ev  # noqa: E402
 

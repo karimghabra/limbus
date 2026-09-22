@@ -14,12 +14,13 @@ not because a global threshold was lowered until it appeared.
 usage: python seeded.py <crop key> [seed z] [seed length]
 """
 import sys
+import os as _os, sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))))
 
 import numpy as np
 
-sys.path.insert(0, r"E:\Conjunctiva Code\limbus\analysis")
 sys.path[:0] = [".", ".."]
-import bench  # noqa: E402
+from vessels import benchmark as bench  # noqa: E402
 from vessels import crystal as cr  # noqa: E402
 from vessels import evidence as ev  # noqa: E402
 from vessels import fit as vfit  # noqa: E402
