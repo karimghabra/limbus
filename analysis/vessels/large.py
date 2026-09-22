@@ -139,7 +139,7 @@ def detect(A, valid, min_radius=4.0, min_len=40.0, min_aspect=4.0, weak=0.7,
 HWHM_TO_R = 0.83   # see measure()
 
 
-def measure(A, C, half=45.0, step=0.25):
+def measure(A, C, half=45.0, step=0.25, span=25):
     """Radius, peak absorbance and wall sharpness along a centreline, read off
     the INTENSITY rather than off a binary mask.
 
@@ -170,6 +170,7 @@ def measure(A, C, half=45.0, step=0.25):
     base = np.median(np.concatenate([P[:, :edge], P[:, -edge:]], 1), axis=1)
     P = P - base[:, None]
     mid = int(np.argmin(np.abs(offs)))
+    cross = np.zeros(len(C), bool)
     rad = np.full(len(C), np.nan)
     rise = np.full(len(C), np.nan)
     peak = np.full(len(C), np.nan)
@@ -183,11 +184,39 @@ def measure(A, C, half=45.0, step=0.25):
         if pk <= 0:
             continue
         peak[i] = pk
-        left = np.flatnonzero(p[:j + 1] < pk / 2)
-        right = np.flatnonzero(p[j:] < pk / 2)
-        lo = left[-1] + 1 if len(left) else 0
-        hi = j + right[0] - 1 if len(right) else len(p) - 1
-        rad[i] = (offs[hi] - offs[lo]) / 2 / HWHM_TO_R
+        # Walk out from the peak and stop at the vessel's OWN edge, which is
+        # whichever comes first: the half-maximum, or the point where the
+        # profile stops falling and turns back up. A turn upward is a
+        # neighbouring vessel, and taking the half-maximum crossing regardless
+        # walks straight through it - on a real crossing the profile fell from
+        # 0.089 to 0.052, rose again to 0.066, fell to 0.046 and rose to 0.054,
+        # and the half-max run spanned all of it, calling a 1.1 px vessel
+        # 16.6 px wide. That is the measurement aggregating several vessels,
+        # and smoothing it afterwards hides it rather than fixing it.
+        ps = np.convolve(p, _gauss(1.0 / step), mode="same")
+        half = []
+        clean = []
+        for s in (ps[j::-1], ps[j:]):
+            hit = np.flatnonzero(s < pk / 2)
+            turn = _turn(s, pk)
+            if len(hit) and (turn is None or hit[0] <= turn):
+                half.append(hit[0] * step)
+                clean.append(True)
+            else:
+                half.append((turn if turn is not None else len(s) - 1) * step)
+                clean.append(False)
+        cross[i] = not all(clean)
+        good = [h for h, c in zip(half, clean) if c]
+        # A turn immediately beside the centreline means the profile is not
+        # peaked on this vessel at all - the centreline is on the flank of
+        # something else. That is unmeasurable, not a zero-radius vessel.
+        if max(half) < step * 2:
+            cross[i] = True
+            continue
+        # A contaminated side gives a distance to the neighbour, not to the
+        # edge, so use the clean side and assume symmetry rather than average
+        # a number that is not a half-width at all.
+        rad[i] = (float(np.mean(good)) if good else float(min(half))) / HWHM_TO_R
         ends = []
         for s in (p[j::-1], p[j:]):
             a = np.flatnonzero(s <= 0.9 * pk)
@@ -196,15 +225,100 @@ def measure(A, C, half=45.0, step=0.25):
                 ends.append((b[0] - a[0]) * step)
         if ends:
             rise[i] = float(np.mean(ends))
-    return {"radius": rad, "depth": peak, "rise": rise,
+    # A vessel's calibre varies smoothly along its length, so a spike over a
+    # few px is another vessel crossing, not a change in calibre: where one
+    # crosses, the run above half maximum spans both of them. Measured on the
+    # staged network, 80 % of vessels had some point reading more than twice
+    # their own median, the median worst case being 5.4x, and painting the
+    # lumen from those raw values covered the junctions in blobs. A running
+    # median along the centreline removes the crossing without touching a real
+    # taper, which no crossing is short enough to imitate.
+    # Where a vessel crosses another, its width is NOT MEASURABLE from an
+    # averaged frame, and the honest thing is to say so rather than report a
+    # number. Two cases, and the second is the one that matters:
+    #
+    #   comparable calibres - the profile dips between them and `_turn` finds
+    #       the edge;
+    #   a thin vessel over a thick one - there is no dip at all. The profile
+    #       taken across the thin vessel runs ALONG the thick one, so it
+    #       measures the thick vessel. This is how a 1.1 px vessel came back
+    #       as 16.6 px, and no amount of edge-finding can fix it, because the
+    #       thin vessel is not visible in that direction.
+    #
+    # So a point whose width is far from the vessel's own robust calibre is
+    # marked unmeasurable and its radius interpolated from the neighbours that
+    # were measurable. The vessel keeps a continuous width, the crossings are
+    # named, and nothing is invented quietly.
+    rad = _runmed(rad, span)
+    rise = _runmed(rise, span)
+    good = np.isfinite(rad)
+    if good.any():
+        base_r = float(np.median(rad[good]))
+        for _ in range(3):
+            keep = good & (rad < 1.8 * base_r) & (rad > base_r / 1.8)
+            if keep.sum() < 3:
+                break
+            base_r = float(np.median(rad[keep]))
+        bad = ~good | (rad > 1.8 * base_r) | cross
+        if bad.any() and (~bad).sum() >= 2:
+            idx = np.arange(len(rad))
+            rad = np.interp(idx, idx[~bad], rad[~bad])
+        cross = cross | bad
+    return {"radius": rad, "depth": peak, "rise": rise, "crossing": cross,
             "radius_at_limit": rad < 4.0}
 
 
-def lumen(vessels, shape, pad=0.0):
+def _gauss(sd):
+    n = max(int(round(3 * sd)), 1)
+    k = np.exp(-0.5 * (np.arange(-n, n + 1) / sd) ** 2)
+    return k / k.sum()
+
+
+def _turn(s, pk, eps=0.04):
+    """Index where a profile walking away from the peak stops falling.
+
+    Returns None if it falls all the way. `eps` is in units of the peak: a
+    rise smaller than that is noise on the flank, not another vessel.
+    """
+    run = s[0]
+    for i in range(1, len(s)):
+        if s[i] < run:
+            run = s[i]
+        elif s[i] > run + eps * pk:
+            return int(np.argmin(s[:i + 1]))
+    return None
+
+
+def _runmed(v, span):
+    """Running median that leaves NaNs alone and copes with short vessels."""
+    n = len(v)
+    if span < 3 or n < 3:
+        return v
+    k = min(span | 1, (n // 2) * 2 - 1)
+    if k < 3:
+        return v
+    pad = k // 2
+    w = np.lib.stride_tricks.sliding_window_view(
+        np.pad(v, pad, mode="edge"), k)
+    with np.errstate(all="ignore"):
+        out = np.nanmedian(w, axis=1)
+    return np.where(np.isfinite(out), out, v)
+
+
+def lumen(vessels, shape, pad=0.0, cap=0.0):
     """Label image: each vessel's own width filled in, largest drawn first so
-    a thin vessel crossing a thick one does not erase it."""
+    a thin vessel crossing a thick one does not erase it.
+
+    Each point's radius is capped at `cap` times the vessel's own median. The
+    running median in `measure` reduces the crossing spikes but does not remove
+    them - after it, the worst point on a vessel still reads 3.9x its median,
+    against 5.4x before - and painting a lumen from the raw values buries every
+    junction under a disc the size of the crossing vessel.
+    """
     lab = np.zeros(shape, np.int32)
     for i, (C, r, *_) in enumerate(vessels, 1):
+        if cap:
+            r = np.minimum(r, cap * float(np.nanmedian(r)))
         for (x, y), rr in zip(C, r):
             cv2.circle(lab, (int(round(x)), int(round(y))), int(round(rr + pad)), i, -1)
     return lab
