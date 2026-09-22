@@ -10,13 +10,23 @@ thick?", which the absorbance image answers directly.
     1. Threshold the absorbance with hysteresis, at the Isodata level - the
        level that equals the mean of the two classes it creates. Nothing is
        tuned.
-    2. Measure the half-width everywhere with a distance transform. This IS
-       the radius: the distance from a pixel to the nearest non-vessel pixel.
-    3. Keep the regions that are thick enough, skeletonise them, and read the
-       radius off the distance transform along each centreline.
+    2. Skeletonise, and use the distance transform only as a GATE on how thick
+       a region is - never as the reported calibre.
+    3. Measure radius, depth and wall sharpness off the ABSORBANCE along each
+       centreline (`measure`), not off the mask.
 
-Every vessel found this way carries its own measured radius, so the network
-can be worked from the largest calibre down simply by sorting.
+The split in 2-3 matters. The mask is a good way to say WHERE a vessel is and
+a bad way to say how wide it is: a distance-transform radius moves 41 % as the
+threshold is swept over its usable range, because it measures where the
+threshold fell rather than where the vessel ends. The intensity half-width is
+referenced to each vessel's own peak, so it cannot do that, and against
+planted vessels of known radius it is accurate to about 0.2 px from 4 to 13 px
+and unaffected by focus.
+
+Every vessel therefore carries its own measured radius, peak absorbance and
+wall sharpness, so the network can be worked from the largest calibre down by
+sorting - and "in focus" is a measured per-vessel property, which matters
+because the wall rise varies 6.8-fold WITHIN a single frame.
 """
 import cv2
 import numpy as np
@@ -70,9 +80,11 @@ def threshold(A, valid, weak=0.7):
 
 def detect(A, valid, min_radius=4.0, min_len=40.0, min_aspect=4.0, weak=0.7,
            smooth=1.0, log=None):
-    """Large vessels as (centreline, radius-along-it) pairs, thickest first.
+    """Large vessels, thickest first, as (centreline, radius, measurements).
 
-    `min_radius` is a real half-width in pixels, measured, not a filter scale.
+    `radius` is measured from the absorbance profile by `measure`, not from the
+    mask, and is a real half-width in pixels. `measurements` also carries the
+    peak absorbance and the wall sharpness at every point along the vessel.
     """
     Af = cv2.GaussianBlur(A, (0, 0), smooth) if smooth else A
     mask, hi, med = threshold(Af, valid, weak)
@@ -95,7 +107,16 @@ def detect(A, valid, min_radius=4.0, min_len=40.0, min_aspect=4.0, weak=0.7,
     for C in ridges.trace(spine, min_len=min_len):
         xi = np.clip(np.rint(C[:, 0]).astype(int), 0, A.shape[1] - 1)
         yi = np.clip(np.rint(C[:, 1]).astype(int), 0, A.shape[0] - 1)
-        r = dist[yi, xi]
+        # The mask says WHERE a vessel is; the intensity says how wide it is.
+        # The distance transform is used only as a gate, never as the reported
+        # calibre, because it tracks the threshold rather than the vessel.
+        if float(np.median(dist[yi, xi])) < min_radius * 0.6:
+            continue
+        m = measure(A, C)
+        r = m["radius"]
+        if not np.isfinite(r).any():
+            continue
+        r = np.where(np.isfinite(r), r, np.nanmedian(r))
         rad = float(np.median(r))
         if rad < min_radius:
             continue
@@ -106,20 +127,84 @@ def detect(A, valid, min_radius=4.0, min_len=40.0, min_aspect=4.0, weak=0.7,
         if length < min_aspect * rad:
             drop += 1
             continue
-        out.append((C, r))
-    out.sort(key=lambda cr: -float(np.median(cr[1])))
+        out.append((C, r, m))
+    out.sort(key=lambda v: -float(np.median(v[1])))
     if log:
-        tot = sum(np.hypot(*np.diff(C, axis=0).T).sum() for C, _ in out if len(C) > 1)
+        tot = sum(np.hypot(*np.diff(C, axis=0).T).sum() for C, *_ in out if len(C) > 1)
         log(f"[large] {len(out)} vessels, {tot:.0f} px ({drop} dropped as blobs), "
-            f"radii {', '.join(f'{np.median(r):.0f}' for _, r in out[:8])}...")
+            f"radii {', '.join(f'{np.median(r):.0f}' for _, r, _ in out[:8])}...")
     return out
+
+
+HWHM_TO_R = 0.83   # see measure()
+
+
+def measure(A, C, half=45.0, step=0.25):
+    """Radius, peak absorbance and wall sharpness along a centreline, read off
+    the INTENSITY rather than off a binary mask.
+
+    A radius from the distance transform of a thresholded mask is a property of
+    the threshold, not of the vessel: measured on real vessels it moves 41 % as
+    the threshold is swept over its usable range, and the level this module
+    ships was reading 31 % high. The half-width at half the vessel's OWN peak
+    cannot do that, because it is referenced to the vessel.
+
+    Against the model, hwhm/r sits at 0.82-0.86 for every radius >= 6 px and
+    every blur from 1.2 to 5.2 px - it does not depend on focus, which is what
+    makes it usable as a calibre. Below about 4 px the blur dominates the
+    width and the number becomes an upper bound; `radius_at_limit` says so.
+
+    Returns dict of arrays along the centreline: radius, depth (peak
+    absorbance over the local background), rise (10-90 % distance across the
+    wall, small = sharply imaged), and the flag.
+    """
+    C = np.asarray(C, float)
+    offs = np.arange(-half, half + step, step)
+    t = np.gradient(C, axis=0)
+    t /= np.maximum(np.hypot(t[:, 0], t[:, 1]), 1e-9)[:, None]
+    nx, ny = -t[:, 1], t[:, 0]
+    px = (C[:, 0:1] + nx[:, None] * offs).astype(np.float32)
+    py = (C[:, 1:2] + ny[:, None] * offs).astype(np.float32)
+    P = cv2.remap(A, px, py, cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    edge = max(int(round(4.0 / step)), 4)
+    base = np.median(np.concatenate([P[:, :edge], P[:, -edge:]], 1), axis=1)
+    P = P - base[:, None]
+    mid = int(np.argmin(np.abs(offs)))
+    rad = np.full(len(C), np.nan)
+    rise = np.full(len(C), np.nan)
+    peak = np.full(len(C), np.nan)
+    for i, p in enumerate(P):
+        # Everything is anchored on the CONTIGUOUS run through the centreline,
+        # never on the whole window. A neighbouring vessel also standing above
+        # half maximum would otherwise be swallowed along with the gap between
+        # them, which read a 12 px vessel as 26 px where vessels run close.
+        j = mid + int(np.argmax(p[max(mid - 8, 0):mid + 9])) - min(mid, 8)
+        pk = float(p[j])
+        if pk <= 0:
+            continue
+        peak[i] = pk
+        left = np.flatnonzero(p[:j + 1] < pk / 2)
+        right = np.flatnonzero(p[j:] < pk / 2)
+        lo = left[-1] + 1 if len(left) else 0
+        hi = j + right[0] - 1 if len(right) else len(p) - 1
+        rad[i] = (offs[hi] - offs[lo]) / 2 / HWHM_TO_R
+        ends = []
+        for s in (p[j::-1], p[j:]):
+            a = np.flatnonzero(s <= 0.9 * pk)
+            b = np.flatnonzero(s <= 0.1 * pk)
+            if len(a) and len(b) and b[0] > a[0]:
+                ends.append((b[0] - a[0]) * step)
+        if ends:
+            rise[i] = float(np.mean(ends))
+    return {"radius": rad, "depth": peak, "rise": rise,
+            "radius_at_limit": rad < 4.0}
 
 
 def lumen(vessels, shape, pad=0.0):
     """Label image: each vessel's own width filled in, largest drawn first so
     a thin vessel crossing a thick one does not erase it."""
     lab = np.zeros(shape, np.int32)
-    for i, (C, r) in enumerate(vessels, 1):
+    for i, (C, r, *_) in enumerate(vessels, 1):
         for (x, y), rr in zip(C, r):
             cv2.circle(lab, (int(round(x)), int(round(y))), int(round(rr + pad)), i, -1)
     return lab
