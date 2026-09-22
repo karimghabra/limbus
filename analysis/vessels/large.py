@@ -138,6 +138,84 @@ def detect(A, valid, min_radius=4.0, min_len=40.0, min_aspect=4.0, weak=0.7,
 
 HWHM_TO_R = 0.83   # see measure()
 
+_BLUR_R = np.array([1.5, 2., 3., 4., 6., 9., 13., 18., 25.])
+_BLUR_S = np.array([0.6, 0.8, 1.2, 1.8, 2.6, 3.8, 5.2, 7.0, 9.5])
+_BLUR_TAB = None
+
+
+def _blur_table():
+    """Model 10-90 % wall rise for every (radius, blur) on the grid."""
+    global _BLUR_TAB
+    if _BLUR_TAB is None:
+        from . import fourier as Fo
+        o = np.arange(-120, 120.01, 0.05)
+        T = np.empty((len(_BLUR_R), len(_BLUR_S)))
+        for i, r in enumerate(_BLUR_R):
+            for j, sg in enumerate(_BLUR_S):
+                p = Fo.chord(o, r, sg)
+                pk = p.max()
+                k = int(np.argmax(p))
+                ends = []
+                for side in (p[k::-1], p[k:]):
+                    a = np.flatnonzero(side <= 0.9 * pk)
+                    b = np.flatnonzero(side <= 0.1 * pk)
+                    if len(a) and len(b) and b[0] > a[0]:
+                        ends.append((b[0] - a[0]) * 0.05)
+                T[i, j] = np.mean(ends) if ends else np.nan
+        _BLUR_TAB = T
+    return _BLUR_TAB
+
+
+def blur(radius, rise):
+    """Optical blur sigma in px, from the measured radius and wall rise.
+
+    The raw 10-90 % rise is NOT a measure of focus: it depends on the vessel's
+    calibre at least as strongly as on the blur. At sigma 0.8 px the model
+    gives a rise of 2.05 px for a 2 px vessel and 10.30 px for an 18 px one, so
+    on real vessels the raw rise came out correlated +0.60 with radius and was
+    mostly restating calibre.
+
+    For a FIXED radius the rise is monotone in sigma, so inverting the model at
+    the measured radius separates the two. What comes back is a property of the
+    optics at that point rather than of the vessel.
+
+    DO NOT use this to decide identity, and do not use the raw rise either.
+    Both were tested as a fourth agreement test across a gap, beside the
+    diameter, darkness and direction that `graph.py` already checks, and both
+    lose. Across 15219 true continuations and 74537 false pairs on a sharp
+    crop:
+
+        radius          AUC 0.969
+        depth           AUC 0.902
+        raw wall rise   AUC 0.859
+        blur sigma      AUC 0.778   (inverting the model made it WORSE)
+
+    and more to the point, at every matched true-kept rate simply tightening
+    the existing radius and depth tests let through about half as many false
+    pairs as adding a wall-rise test did - 17.6 % against 22.0 % at 80 % kept,
+    7.8 % against 13.8 % at 60 %. Sharpness correlates +0.60 with radius and
+    +0.50 with depth, so as a linking cue it is mostly restating them.
+
+    It remains worth measuring and reporting: it says how well a given vessel
+    is imaged, and it varies enormously within one frame. The untested use,
+    and the interesting one, is separating two vessels AT a crossing, where
+    they may be at different depths and so differently blurred - that is a
+    different question from linking across a gap and is not answered here.
+    """
+    T = _blur_table()
+    r = np.atleast_1d(np.asarray(radius, float))
+    v = np.atleast_1d(np.asarray(rise, float))
+    i = np.clip(np.searchsorted(_BLUR_R, r) - 1, 0, len(_BLUR_R) - 2)
+    f = np.clip((r - _BLUR_R[i]) / (_BLUR_R[i + 1] - _BLUR_R[i]), 0, 1)
+    out = np.full(len(r), np.nan)
+    for k in range(len(r)):
+        if not (np.isfinite(r[k]) and np.isfinite(v[k])):
+            continue
+        row = T[i[k]] * (1 - f[k]) + T[i[k] + 1] * f[k]
+        out[k] = np.interp(v[k], row, _BLUR_S)
+    return out if np.ndim(radius) else float(out[0])
+
+
 
 def measure(A, C, half=45.0, step=0.25, span=25):
     """Radius, peak absorbance and wall sharpness along a centreline, read off
@@ -265,7 +343,7 @@ def measure(A, C, half=45.0, step=0.25, span=25):
             rad = np.interp(idx, idx[~bad], rad[~bad])
         cross = cross | bad
     return {"radius": rad, "depth": peak, "rise": rise, "crossing": cross,
-            "radius_at_limit": rad < 4.0}
+            "blur": blur(rad, rise), "radius_at_limit": rad < 4.0}
 
 
 def _gauss(sd):
