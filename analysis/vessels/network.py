@@ -297,7 +297,55 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
             if v["id"] in touching:
                 v["junctions"].append(j)
     out.sort(key=lambda v: v["id"])
+    _add_geometric_junctions(out, log=log)
     return out
+
+
+def _add_geometric_junctions(out, log=None):
+    """Add the intersections that the end-clustering above cannot see.
+
+    `classify` reads junctions where piece ENDS meet, so a crossing exists for
+    it only if the ridge stage happened to break both vessels there. When
+    hysteresis traces cleanly through a crossing - which is what it is for -
+    no ends meet, nothing is recorded, and the junction is invisible to
+    everything downstream. Measured on a sharp crop the end-clustering logged
+    3 crossings where the geometry has 9, and 7 of the 8 intersections it
+    missed entirely were crossings.
+
+    These are added to the record ONLY. They do not change any threading
+    decision, because the evidence does not support that: of 25 vessel passes
+    through a crossing on that crop, exactly one turned by more than 35 deg,
+    so the pipeline is already tracing through them correctly - it simply was
+    not reporting them. Each carries `source: "geometry"` so the two kinds of
+    junction record stay distinguishable.
+    """
+    from . import regions as vreg
+    try:
+        found = vreg.find(out)
+    except Exception as exc:                       # geometry must never break a run
+        if log:
+            log(f"  geometric junctions skipped: {exc}")
+        return
+    known = [(j["x"], j["y"]) for v in out for j in (v.get("junctions") or [])]
+    added = 0
+    for r in found:
+        if r.kind not in ("crossing", "overlap"):
+            continue
+        if any(np.hypot(r.p[0] - x, r.p[1] - y) <= max(18.0, r.extent * 1.5)
+               for x, y in known):
+            continue
+        ids = sorted({out[i]["id"] for i in r.members if i < len(out)})
+        j = {"x": float(r.p[0]), "y": float(r.p[1]), "kind": r.kind,
+             "degree": len(r.arms), "angle_deg": round(float(r.angle_deg), 1),
+             "extent_px": round(float(r.extent), 1), "vessels": ids,
+             "source": "geometry"}
+        for v in out:
+            if v["id"] in ids:
+                v.setdefault("junctions", []).append(j)
+        added += 1
+    if log and added:
+        log(f"  {added} further intersections from geometry that end-clustering "
+            f"could not see (recorded, not acted on)")
 
 
 def group(pieces, raw=False):
