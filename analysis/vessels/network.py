@@ -297,11 +297,11 @@ def _thread(pieces, A, valid, z, occupied, cfg, log=None):
             if v["id"] in touching:
                 v["junctions"].append(j)
     out.sort(key=lambda v: v["id"])
-    _add_geometric_junctions(out, log=log)
+    _add_geometric_junctions(out, A, log=log)
     return out
 
 
-def _add_geometric_junctions(out, log=None):
+def _add_geometric_junctions(out, A, log=None):
     """Add the intersections that the end-clustering above cannot see.
 
     `classify` reads junctions where piece ENDS meet, so a crossing exists for
@@ -320,13 +320,36 @@ def _add_geometric_junctions(out, log=None):
     junction record stay distinguishable.
     """
     from . import regions as vreg
+    from . import resolve as vres
     try:
         found = vreg.find(out)
+        # the expensive per-junction analysis, on the few places that need it
+        vres.annotate(A, found)
     except Exception as exc:                       # geometry must never break a run
         if log:
             log(f"  geometric junctions skipped: {exc}")
         return
     known = [(j["x"], j["y"]) for v in out for j in (v.get("junctions") or [])]
+    # attach the per-junction resolution to the records end-clustering already
+    # made, above all to the ones it gave up on
+    by_pos = {}
+    for r in found:
+        res = getattr(r, "resolved", None)
+        if res and res["pairs"]:
+            by_pos[(round(float(r.p[0])), round(float(r.p[1])))] = (r, res)
+    matched = 0
+    for v in out:
+        for j in (v.get("junctions") or []):
+            if "through" in j:
+                continue
+            for (x, y), (r, res) in by_pos.items():
+                if np.hypot(j["x"] - x, j["y"] - y) <= max(18.0, r.extent * 1.5):
+                    j["through"] = [{"arms": list(p), "turn_deg": round(sc["turn_deg"], 1),
+                                     "score": sc["score"]}
+                                    for p, sc in zip(res["pairs"], res["scores"])]
+                    j["loose_arms"] = len(res["unpaired"])
+                    matched += 1
+                    break
     added = 0
     for r in found:
         if r.kind not in ("crossing", "overlap"):
@@ -339,13 +362,27 @@ def _add_geometric_junctions(out, log=None):
              "degree": len(r.arms), "angle_deg": round(float(r.angle_deg), 1),
              "extent_px": round(float(r.extent), 1), "vessels": ids,
              "source": "geometry"}
+        res = getattr(r, "resolved", None)
+        if res:
+            # which arm continues which, worked out on the image by resolve.py
+            j["through"] = [{"arms": list(p),
+                             "vessels": [out[r.members.index(r.arms[q]["vessel"])]["id"]
+                                         if r.arms[q]["vessel"] in r.members else None
+                                         for q in p],
+                             "turn_deg": round(sc["turn_deg"], 1),
+                             "score": sc["score"]}
+                            for p, sc in zip(res["pairs"], res["scores"])]
+            j["loose_arms"] = len(res["unpaired"])
         for v in out:
             if v["id"] in ids:
                 v.setdefault("junctions", []).append(j)
         added += 1
-    if log and added:
-        log(f"  {added} further intersections from geometry that end-clustering "
-            f"could not see (recorded, not acted on)")
+    if log:
+        if added:
+            log(f"  {added} further intersections from geometry that end-clustering "
+                f"could not see (recorded, not acted on)")
+        if matched:
+            log(f"  {matched} junctions given a through-vessel reading by resolve.py")
 
 
 def group(pieces, raw=False):

@@ -533,5 +533,73 @@ _r = vreg.find([(np.asarray(d["C"], float), np.full(len(d["C"]), float(d["r"])))
 check(abs(sorted(_r, key=lambda q: -q.extent)[0].murray_residual) < 0.05,
       "a Murray-law bifurcation comes back with a residual near zero")
 
+# --- resolving one intersection: which arm continues which -------------------
+from vessels import resolve as vres  # noqa: E402
+
+_C0 = np.array([180.0, 180.0])
+
+
+def _scene_A(lines, depth=0.30, tex=0.02, seed=0):
+    """(absorbance, vessels) for a list of (centreline, radius)."""
+    a = np.zeros((360, 360), np.float32)
+    for C, r in lines:
+        a += vgeo.render_tube((360, 360), C, r, depth)
+    a = a + texture((360, 360), seed, amp=tex)
+    A_, _ = vimg.prepare((1000 * np.exp(-a)).astype(np.float32), border_px=0)
+    return A_, [(C, np.full(len(C), r)) for C, r in lines]
+
+
+def _through(A_, V_):
+    """(pairs found, pairs that are two ends of the same input vessel)."""
+    R_ = vreg.find(V_)
+    if not R_:
+        return set(), set()
+    r_ = sorted(R_, key=lambda q: -q.extent)[0]
+    want = set()
+    for vi in range(len(V_)):
+        idx = [k for k, a in enumerate(r_.arms) if a["vessel"] == vi]
+        if len(idx) == 2:
+            want.add(tuple(sorted(idx)))
+    return set(vres.resolve(A_, r_)["pairs"]), want
+
+
+def _ray(deg, L, back=True):
+    d = np.array([np.cos(np.radians(deg)), np.sin(np.radians(deg))])
+    return vgeo._arc(_C0 - d * (L / 2 if back else 0), np.radians(deg), L)
+
+
+for _th in (70, 25):
+    _got, _want = _through(*_scene_A([(_ray(0, 160), 3.0), (_ray(_th, 160), 3.0)]))
+    check(_got == _want and len(_want) == 2,
+          f"both vessels are traced through a {_th} deg crossing")
+_got, _want = _through(*_scene_A([(_ray(a, 170), 3.0) for a in (0, 55, 115)]))
+check(_got == _want and len(_want) == 3,
+      "three vessels through one point are all traced through")
+
+
+def _kiss(gap, r1, r2, L=200.0, wide=26.0):
+    """Two vessels that approach, touch and separate WITHOUT crossing: the
+    separation is modulated about a straight base, so both keep their heading
+    and both candidate pairings are equally straight."""
+    base = vgeo._arc(_C0 - np.array([L / 2, 0]), 0.0, L)
+    s = np.arange(len(base)) * 0.5
+    s = s - s.mean()
+    half = gap / 2 + (wide / 2) * (1 - np.exp(-(s / 40.0) ** 2))
+    a1, a2 = base.copy(), base.copy()
+    a1[:, 1] -= half
+    a2[:, 1] += half
+    return [(a1, r1), (a2, r2)]
+
+
+_got, _want = _through(*_scene_A(_kiss(3.0, 4.0, 2.0)))
+check(_got == _want and len(_want) == 2,
+      "two vessels of unlike calibre that touch and separate are kept apart")
+# The known limit, asserted so that it is visible if it ever changes: with the
+# same calibre there is nothing left to tell the two pairings apart.
+_got, _want = _through(*_scene_A(_kiss(3.0, 3.0, 3.0)))
+check(_got != _want,
+      "two vessels of the SAME calibre that touch and separate are NOT resolved "
+      "(a known limit, not a passing detail)")
+
 print("\nRESULT:", "FAIL " + "; ".join(fail) if fail else "PASS")
 sys.exit(1 if fail else 0)
