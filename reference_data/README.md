@@ -1,6 +1,6 @@
 # LIMBUS reference data
 
-Five raw TIFF bursts from the LIMBUS camera (Basler acA1920-40um). They are a fixed, shared input set, so stabilization and analysis algorithms can be test-run on other computers and the results compared against the same bytes. The images are too large for the git repository. They are published as zip assets on the GitHub release `reference-data-v1`. `manifest.json` in this folder lists every zip and every file inside it, with sizes and SHA-256 hashes.
+Six raw TIFF bursts from the LIMBUS camera (Basler acA1920-40um). They are a fixed, shared input set, so stabilization and analysis algorithms can be test-run on other computers and the results compared against the same bytes. The images are too large for the git repository. They are published as zip assets on the GitHub release `reference-data-v1`. `manifest.json` in this folder lists every zip and every file inside it, with sizes and SHA-256 hashes.
 
 ## The bursts
 
@@ -11,8 +11,9 @@ Five raw TIFF bursts from the LIMBUS camera (Basler acA1920-40um). They are a fi
 | 3 | `burst_2026-09-16_15-40-55` | Hard case: low usable fraction (~37%) and non-converging translation registration. | 63 | 1920x1200 Mono12 @ 32.3 fps | 187.3 / 290.3 MB |
 | 4 | `burst_2026-09-16_15-31-37` | Short-ROI geometry, clean. | 160 | 1920x500 Mono12 @ 73.7 fps | 208.5 / 307.3 MB |
 | 5 | `burst_2026-09-16_12-57-20` | Thin strip geometry (little vertical capture range). | 296 | 1920x100 Mono12p @ 148.7 fps | 78.8 / 113.8 MB |
+| 6 | `burst_2026-09-16_15-22-26` | Long short-ROI burst (~15 s at 74 fps, no frames dropped): the source of the 1522L/1522R vessel benchmark crops, and long enough for temporal analysis (red-cell flicker, flow). | 1105 | 1920x500 Mono12 @ 74.0 fps | 1512.2 / 2122.2 MB |
 
-Total: 1215.6 MB to download and 1743.8 MB on disk once extracted (MB = 10^6 bytes). The frame rate is the rate the camera actually delivered. Full-frame bursts 2 and 3 requested 74 fps, and burst 1 requested 30 fps. At 1920x1200 the sensor readout limits all three to about 32 fps.
+Total: 2727.9 MB to download and 3866.0 MB on disk once extracted (MB = 10^6 bytes). Burst 6 alone is 1512.2 MB; `--only` fetches a subset. The frame rate is the rate the camera actually delivered. Full-frame bursts 2 and 3 requested 74 fps, and burst 1 requested 30 fps. At 1920x1200 the sensor readout limits all three to about 32 fps.
 
 ## Fetching
 
@@ -52,7 +53,9 @@ With the default `--dest`, each burst is extracted to `reference_data/<burst>/`,
 
 ## Rebuilding the release (maintainers)
 
-`python tools/make_reference_release.py` zips the five bursts from `recordings/` into `../release_assets/`. It checks every zipped file against its source and rewrites this folder's `manifest.json`. It also writes `RELEASE_NOTES.md` next to the zips. Upload the five zips to the `reference-data-v1` release under exactly the names in the manifest.
+`python tools/make_reference_release.py` zips the bursts listed in its `BURSTS` table from `recordings/` into `../release_assets/`. It checks every zipped file against its source and rewrites this folder's `manifest.json`. It also writes `RELEASE_NOTES.md` next to the zips. Upload the zips to the `reference-data-v1` release under exactly the names in the manifest.
+
+The zips are reproducible: rebuilding them gives byte-identical files with the same SHA-256, so adding a burst means uploading only its own zip - the ones already on the release still match the manifest. (Checked when burst 6 was added: all five earlier zips rebuilt identical.)
 
 ## Consent, licence and caveat
 
