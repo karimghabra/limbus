@@ -351,8 +351,10 @@ class VesselNetwork:
         if n_far1 == n_far2 and e1 != e2:
             # joining would create a loop from a node to itself; keep it
             pass
-        eid = self.add_edge_dense(parts["xy"], parts["r"], parts["s"], parts["a"],
-                                  u=n_far1, v=n_far2, spacing=spacing, info=info)
+        # the bridge may create a hook: despike explicitly, then fit faithfully
+        xy_j, r_j, s_j, a_j = despike(parts["xy"], parts["r"], parts["s"], parts["a"])
+        eid = self.add_edge_dense(xy_j, r_j, s_j, a_j, u=n_far1, v=n_far2, spacing=spacing,
+                                  info=info, faithful=True)
         for n in join_nodes:
             if n in self.nodes and not self.incident(n):
                 del self.nodes[n]
