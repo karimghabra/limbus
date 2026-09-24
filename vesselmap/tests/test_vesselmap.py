@@ -127,3 +127,31 @@ def test_chained_start_carries_local_deformation_only():
     net = _carry_deformation(ref, base, init)
     d = net.edges[k].ctrl - base.edges[k].ctrl
     assert np.allclose(d[1:-1, 1], 2.0) and np.allclose(d[:, 0], 0.0)
+
+
+def test_parallel_split_detects_two_close_vessels():
+    """A single edge fitted over two parallel vessels 7 px apart is split."""
+    from vesselmap.image import prepare
+    from vesselmap.refine import RefineConfig, apply_split, parallel_candidates
+    from vesselmap.synthetic import render
+    rng = np.random.default_rng(0)
+    H, W = 120, 200
+    ys = np.full(200, 60.0)
+    xs = np.linspace(-10, 210, 200)
+    vessels = [dict(xy=np.stack([xs, ys - 3.5], 1), r=np.full(200, 1.3), blur=0.9, amp=0.35),
+               dict(xy=np.stack([xs, ys + 3.5], 1), r=np.full(200, 1.3), blur=0.9, amp=0.35)]
+    I, _ = render(vessels, (H, W), rng)
+    P = prepare(I)
+    net = VesselNetwork((H, W))
+    _line(net, (0, 60), (199, 60), r=4.0, s=2.0, a=0.3, n=100)
+    # residual of a model that explains nothing but a flat background
+    R = P.logI - np.median(P.logI) - np.zeros_like(P.logI)
+    cands = parallel_candidates(net, P, R, RefineConfig())
+    assert cands, "no parallel stretch found"
+    c = max(cands, key=lambda c: c["s1"] - c["s0"])
+    sep = np.median(np.abs(c["u2"] - c["u1"]))
+    assert 5.5 < sep < 8.5, sep
+    e1, e2 = apply_split(net, c)
+    y1 = np.median(net.sample(e1, 1.0)["xy"][:, 1])
+    y2 = np.median(net.sample(e2, 1.0)["xy"][:, 1])
+    assert abs(abs(y1 - y2) - 7.0) < 1.5

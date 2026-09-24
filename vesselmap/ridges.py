@@ -9,6 +9,7 @@ side.
 from __future__ import annotations
 
 import functools
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -130,6 +131,70 @@ def ridge_maps(V: np.ndarray, noise: np.ndarray, scales, valid=None, aniso=1.0,
     return best_rho, best_z, best_s, nx, ny
 
 
+@functools.lru_cache(maxsize=256)
+def oriented_kernel(sigma: float, theta: float, elong: float):
+    """Negative second derivative ACROSS direction theta of an anisotropic
+    Gaussian (std sigma across, elong*sigma along), scale-normalised by
+    sigma^2 and zero-mean.  theta is the direction of the line (along)."""
+    sa = elong * sigma
+    rad = int(math.ceil(3.0 * max(sigma, sa)))
+    y, x = np.mgrid[-rad:rad + 1, -rad:rad + 1].astype(np.float64)
+    c, s_ = math.cos(theta), math.sin(theta)
+    u = -s_ * x + c * y          # across
+    v = c * x + s_ * y           # along
+    g = np.exp(-0.5 * (u / sigma) ** 2 - 0.5 * (v / sa) ** 2)
+    g /= g.sum()
+    k = -(u ** 2 / sigma ** 4 - 1.0 / sigma ** 2) * g * sigma ** 2
+    k -= k.mean()
+    return k.astype(np.float32)
+
+
+def oriented_ridge_maps(V: np.ndarray, noise: np.ndarray, scales, valid=None,
+                        n_orient=12, elong=3.0, aniso=1.0, texture_null=True):
+    """Like ridge_maps but with elongated oriented filters, which integrate
+    along the vessel: a thin line gains ~sqrt(elong) in SNR over isotropic
+    filters, while noise speckle and blobs do not.  Used for the fine bands
+    where faint capillaries sit near the noise floor."""
+    import cv2
+    vv = V if valid is None else np.where(valid, V, ndi.median_filter(V, 5))
+    vv = vv.astype(np.float32)
+    best_z = np.zeros(V.shape, np.float32)
+    best_rho = np.zeros(V.shape, np.float32)
+    best_s = np.zeros(V.shape, np.float32)
+    nx = np.zeros(V.shape, np.float32)
+    ny = np.zeros(V.shape, np.float32)
+    thetas = np.arange(n_orient) * math.pi / n_orient
+    for s in scales:
+        R = np.stack([cv2.filter2D(vv, cv2.CV_32F, oriented_kernel(float(s), float(t), elong),
+                                   borderType=cv2.BORDER_REFLECT) for t in thetas])
+        i = np.argmax(R, axis=0)
+        Rmax = np.take_along_axis(R, i[None], 0)[0]
+        Rperp = np.take_along_axis(R, ((i + n_orient // 2) % n_orient)[None], 0)[0]
+        rho = np.maximum(Rmax - aniso * np.maximum(Rperp, 0.0), 0.0)
+        knorm = float(np.sqrt((oriented_kernel(float(s), 0.0, elong) ** 2).sum()))
+        null = knorm * noise
+        if texture_null:
+            j = np.argmin(R, axis=0)
+            Vmin = -np.take_along_axis(R, j[None], 0)[0]
+            Vperp = -np.take_along_axis(R, ((j + n_orient // 2) % n_orient)[None], 0)[0]
+            val = np.maximum(Vmin - aniso * np.maximum(Vperp, 0.0), 0.0)
+            tile = int(max(64, 10 * s))
+            null = np.maximum(null, _tile_rms(val, tile))
+        z = rho / null
+        upd = rho > best_rho
+        best_z[upd] = z[upd]
+        best_rho[upd] = rho[upd]
+        best_s[upd] = s
+        th = thetas[i]
+        # normal (across) direction of the best orientation
+        nx[upd] = (-np.sin(th))[upd]
+        ny[upd] = (np.cos(th))[upd]
+    if valid is not None:
+        best_z[~valid] = 0
+        best_rho[~valid] = 0
+    return best_rho, best_z, best_s, nx, ny
+
+
 def nms(z: np.ndarray, nx: np.ndarray, ny: np.ndarray, step=None) -> np.ndarray:
     """Keep pixels whose z is a maximum across the ridge (along the normal)."""
     h, w = z.shape
@@ -212,12 +277,17 @@ def trace_skeleton(skel: np.ndarray):
 
 def detect(V: np.ndarray, noise: np.ndarray, scales, z_hi=5.0, z_lo=2.5,
            min_len=8.0, valid=None, exclude=None, long_len=40,
-           long_frac=0.6) -> list[Seed]:
+           long_frac=0.6, oriented=False, elong=3.0) -> list[Seed]:
     """Propose centrelines of bright ridges in V (vessels made bright).
 
     exclude: optional bool mask of pixels where proposals are not wanted.
+    oriented: use elongated oriented filters (fine bands).
     """
-    rho, z, sc, nx, ny = ridge_maps(V, noise, scales, valid)
+    if oriented:
+        rho, z, sc, nx, ny = oriented_ridge_maps(V, noise, scales, valid, elong=elong)
+        rho = rho / GAUSS_LINE_PEAK * GAUSS_LINE_PEAK   # same scale convention
+    else:
+        rho, z, sc, nx, ny = ridge_maps(V, noise, scales, valid)
     keep = nms(z, nx, ny)
     cand = keep & (z > z_lo)
     if exclude is not None:

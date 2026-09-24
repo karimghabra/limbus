@@ -84,3 +84,31 @@ def n_ctrl_for_length(length: float, spacing: float, minimum: int = 4) -> int:
 
 def n_samples_for_length(length: float, spacing: float = 0.7) -> int:
     return int(max(4, int(np.ceil(length / spacing)) + 1))
+
+
+def design_at(n_ctrl: int, u: np.ndarray, deriv: int = 0) -> np.ndarray:
+    """(len(u) x n_ctrl) design matrix at arbitrary parameters u in [0, 1]."""
+    k = degree_for(n_ctrl)
+    t = _knots(n_ctrl, k)
+    spl = BSpline(t, np.eye(n_ctrl), k, extrapolate=False)
+    if deriv:
+        spl = spl.derivative(deriv)
+    u = np.clip(np.asarray(u, float), 0.0, 1.0)
+    return np.nan_to_num(spl(u)).astype(np.float32)
+
+
+def arclength_params(ctrl: np.ndarray, spacing: float, oversample: int = 8):
+    """Parameters u in [0, 1] of points spaced (about) `spacing` apart along
+    the curve, and the curve length.  Rendering and sampling at these u keeps
+    samples evenly spread even where the parameterisation is uneven (control
+    points bunched up near a sharp turn)."""
+    n = len(ctrl)
+    m0 = max(64, oversample * n)
+    xy = design(n, m0) @ ctrl
+    s = arclength(xy)
+    L = float(s[-1])
+    m = n_samples_for_length(L, spacing)
+    if L <= 0:
+        return np.linspace(0.0, 1.0, m), 0.0
+    u0 = np.linspace(0.0, 1.0, m0)
+    return np.interp(np.linspace(0.0, L, m), s, u0), L

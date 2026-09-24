@@ -66,6 +66,7 @@ class MapConfig:
     log: list = field(default_factory=list)
     callback: object = None         # callback(net, stage_name) for debugging
     prune_stats: dict = field(default_factory=dict)   # why edges were removed (count, px)
+    keep_pruned: list = None        # debugging: set to [] to collect pruned edges
 
     bg_free_below: float = 5.0      # background frozen for bands starting at >= this
     anchor_px: float = 5.0          # positional prior per optimisation round
@@ -486,6 +487,10 @@ def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
             r_ = cfg.prune_stats.setdefault(why, [0, 0.0])
             r_[0] += 1
             r_[1] += L
+            if cfg.keep_pruned is not None:
+                cfg.keep_pruned.append(dict(xy=net.sample(eid, 1.0)["xy"], why=why,
+                                            gain=float(gains[k]), pen=float(pen), L=L,
+                                            w=st_w, a=float(np.mean(net.edges[eid].a))))
     for eid in removed:
         if eid in net.edges:
             net.remove_edge(eid)
@@ -577,7 +582,8 @@ def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
         net.edges[eid].info["gain"] = float(gains[k])
     net.orient_structural()
     net.meta.update(builder="vesselmap.build_map", seconds=round(time.time() - t0, 1),
-                    config={k: v for k, v in asdict(cfg).items() if k not in ("log", "callback", "prune_stats")},
+                    config={k: v for k, v in asdict(cfg).items()
+                            if k not in ("log", "callback", "prune_stats", "keep_pruned")},
                     final_nll=float(model.data_nll(model.predict()).detach()))
     _say(cfg, f"[{time.time()-t0:6.0f}s] done: {net.summary()}")
     return net

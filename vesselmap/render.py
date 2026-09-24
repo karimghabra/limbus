@@ -347,12 +347,13 @@ class NetworkModel(torch.nn.Module):
         for k, eid in enumerate(self.eids):
             n = self.edge_nctrl[k]
             c = ctrl[self.edge_ctrl_off[k]:self.edge_ctrl_off[k] + n]
-            xy = sp.design(n, 64) @ c
-            L = sp.arclength(xy)[-1]
-            m = sp.n_samples_for_length(L, self.sample_spacing)
-            Bs.append(sp.design(n, m))
-            Ds.append(sp.design(n, m, 1))
-            Ps.append(sp.design(self.edge_nprof[k], m))
+            # samples evenly spaced in arclength (not in the spline parameter),
+            # so rendering stays correct where control points bunch up
+            u, _ = sp.arclength_params(c, self.sample_spacing)
+            m = len(u)
+            Bs.append(sp.design_at(n, u))
+            Ds.append(sp.design_at(n, u, 1))
+            Ps.append(sp.design_at(self.edge_nprof[k], u))
             roff.append(n_s)
             coff.append(self.edge_ctrl_off[k])
             poff.append(self.edge_prof_off[k])

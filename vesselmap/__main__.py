@@ -1,6 +1,7 @@
 """Command line interface.
 
     python -m vesselmap map IMAGE -o OUT [--set key=value ...]
+    python -m vesselmap refine MAP.json IMAGE -o OUT
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
     python -m vesselmap synth-eval [--seeds 0 1 2] -o OUT
@@ -86,6 +87,26 @@ def cmd_map(a):
     print(f"map written to {a.out} in {time.time() - t:.0f}s: {net.summary()}")
 
 
+def cmd_refine(a):
+    from .fit import MapConfig
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    from .refine import RefineConfig, refine_map
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
+    rc = _apply_sets(RefineConfig(verbose=not a.quiet), a.refine_set)
+    t = time.time()
+    L0 = net.summary()["total_length_px"]
+    refine_map(I, net, cfg, rc, prepared=P)
+    write_outputs(net, I, P, a.out)
+    print(f"refined map written to {a.out} in {time.time() - t:.0f}s: "
+          f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline; {net.summary()}")
+
+
 def cmd_fit_frames(a):
     from .fit import FrameFitConfig, fit_frame
     from .image import load_image, prepare
@@ -160,6 +181,14 @@ def main(argv=None):
     m.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
     m.add_argument("--quiet", action="store_true")
     m.set_defaults(func=cmd_map)
+    r = sub.add_parser("refine", help="add fine detail (small and parallel vessels) to a map")
+    r.add_argument("map")
+    r.add_argument("image", help="the image the map was built from")
+    r.add_argument("-o", "--out", required=True)
+    r.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
+    r.add_argument("--refine-set", nargs="*", help="RefineConfig overrides key=value")
+    r.add_argument("--quiet", action="store_true")
+    r.set_defaults(func=cmd_refine)
     f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
     f.add_argument("map")
     f.add_argument("frames", nargs="+")

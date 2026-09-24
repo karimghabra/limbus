@@ -175,22 +175,19 @@ class VesselNetwork:
     # --------------------------------------------------------------- sampling
     def length(self, eid) -> float:
         e = self.edges[eid]
-        xy = sp.design(len(e.ctrl), 64) @ e.ctrl
-        L0 = sp.arclength(xy)[-1]
-        n = sp.n_samples_for_length(L0, 1.0)
-        xy = sp.design(len(e.ctrl), n) @ e.ctrl
-        return float(sp.arclength(xy)[-1])
+        return sp.arclength_params(e.ctrl, 1.0)[1]
 
     def sample(self, eid, spacing: float = 0.7) -> dict:
-        """Dense samples of an edge: xy, unit tangent, arclength, r, s, a."""
+        """Dense samples of an edge, evenly spaced in arclength: xy, unit
+        tangent, arclength, r, s, a."""
         self.sync_ends(eid)
         e = self.edges[eid]
-        n = sp.n_samples_for_length(self.length(eid), spacing)
-        xy = sp.design(len(e.ctrl), n) @ e.ctrl
-        d1 = sp.design(len(e.ctrl), n, 1) @ e.ctrl
+        u, _ = sp.arclength_params(e.ctrl, spacing)
+        xy = sp.design_at(len(e.ctrl), u) @ e.ctrl
+        d1 = sp.design_at(len(e.ctrl), u, 1) @ e.ctrl
         tan = d1 / (np.linalg.norm(d1, axis=1, keepdims=True) + 1e-9)
-        Bp = sp.design(len(e.r), n)
-        return dict(xy=xy.astype(float), tan=tan, s_arc=sp.arclength(xy),
+        Bp = sp.design_at(len(e.r), u)
+        return dict(xy=xy.astype(float), tan=tan, s_arc=sp.arclength(xy), u=u,
                     r=np.maximum(Bp @ e.r, R_MIN), s=np.maximum(Bp @ e.s, S_MIN),
                     a=np.maximum(Bp @ e.a, A_MIN))
 
@@ -214,7 +211,8 @@ class VesselNetwork:
                     gain=float(e.info.get("gain", np.nan)))
 
     # ------------------------------------------------------------ construction
-    def add_edge_dense(self, xy, r, s, a, u=None, v=None, spacing=None, info=None) -> int:
+    def add_edge_dense(self, xy, r, s, a, u=None, v=None, spacing=None, info=None,
+                       faithful=False) -> int:
         """Add an edge from a dense ordered polyline with per-point profile
         values.  New end nodes are created unless u / v are given (in which
         case the polyline ends are moved onto those nodes)."""
@@ -228,7 +226,7 @@ class VesselNetwork:
         xy[-1] = self.nodes[v].xy
         width = float(np.median(np.asarray(r)) + np.median(np.asarray(s)))
         spacing = spacing or spacing_for_path(xy, pos_spacing_for(width))
-        ctrl, pr, ps, pa = _fit_edge_params(xy, r, s, a, spacing)
+        ctrl, pr, ps, pa = _fit_edge_params(xy, r, s, a, spacing, faithful)
         eid = self._eid
         self._eid += 1
         info = dict(info or {})
@@ -237,13 +235,13 @@ class VesselNetwork:
         self._touch()
         return eid
 
-    def refit_edge(self, eid, xy, r, s, a, spacing=None):
+    def refit_edge(self, eid, xy, r, s, a, spacing=None, faithful=False):
         e = self.edges[eid]
         spacing = spacing or e.info.get("spacing") or pos_spacing_for(float(np.median(r) + np.median(s)))
         xy = np.asarray(xy, float).copy()
         xy[0] = self.nodes[e.u].xy
         xy[-1] = self.nodes[e.v].xy
-        e.ctrl, e.r, e.s, e.a = _fit_edge_params(xy, r, s, a, spacing)
+        e.ctrl, e.r, e.s, e.a = _fit_edge_params(xy, r, s, a, spacing, faithful)
         e.info["spacing"] = float(spacing)
 
     def remove_edge(self, eid, drop_orphans=True):
@@ -285,9 +283,9 @@ class VesselNetwork:
         spacing = e.info.get("spacing")
         self.remove_edge(eid, drop_orphans=False)
         self.add_edge_dense(smp["xy"][sl1], smp["r"][sl1], smp["s"][sl1], smp["a"][sl1],
-                            u=u, v=nid, spacing=spacing, info=info)
+                            u=u, v=nid, spacing=spacing, info=info, faithful=True)
         self.add_edge_dense(smp["xy"][sl2], smp["r"][sl2], smp["s"][sl2], smp["a"][sl2],
-                            u=nid, v=v, spacing=spacing, info=info)
+                            u=nid, v=v, spacing=spacing, info=info, faithful=True)
         return nid
 
     def merge_nodes(self, keep, drop):
@@ -730,10 +728,14 @@ def despike(xy, *vals, max_turn_deg=110.0):
     return out
 
 
-def _fit_edge_params(xy, r, s, a, spacing):
+def _fit_edge_params(xy, r, s, a, spacing, faithful=False):
+    """Spline parameters for a dense polyline with profile values.  With
+    faithful (the input is itself sampled from a fitted spline, e.g. when an
+    edge is split or joined) there is no despiking and far less smoothing,
+    so the geometry and profiles are reproduced as closely as possible."""
     xy = np.asarray(xy, float)
     r, s, a = (np.asarray(v, float).reshape(-1) for v in (r, s, a))
-    if len(r) == len(xy) and len(xy) > 3:
+    if not faithful and len(r) == len(xy) and len(xy) > 3:
         xy, r, s, a = despike(xy, r, s, a)
     arc = sp.arclength(xy)
     L = float(arc[-1])
@@ -744,13 +746,15 @@ def _fit_edge_params(xy, r, s, a, spacing):
         xyu = np.stack([np.interp(q, arc, xy[:, 0]), np.interp(q, arc, xy[:, 1])], 1)
     else:
         xyu = np.repeat(xy[:1], m, 0)
-    ctrl = sp.fit_ctrl(xyu, n_ctrl, smooth=2e-4, pin_ends=True)
-    n_p = sp.n_ctrl_for_length(L, PROFILE_SPACING, minimum=2)
+    ctrl = sp.fit_ctrl(xyu, n_ctrl, smooth=1e-6 if faithful else 2e-4, pin_ends=True)
+    # faithful fits get denser profile knots: shorter pieces cannot otherwise
+    # reproduce a profile that varied on the parent's knot grid
+    n_p = sp.n_ctrl_for_length(L, PROFILE_SPACING / (2.5 if faithful else 1.0), minimum=2)
     out = []
     for vals, lo in ((r, R_MIN), (s, S_MIN), (a, A_MIN)):
         if len(vals) != len(arc):
             vals = np.interp(np.linspace(0, 1, len(arc)), np.linspace(0, 1, len(vals)), vals)
         vu = np.interp(q, arc, vals) if L > 0 else np.full(m, vals.mean())
-        c = sp.fit_ctrl(vu, n_p, smooth=1e-2, pin_ends=False)[:, 0]
+        c = sp.fit_ctrl(vu, n_p, smooth=1e-4 if faithful else 1e-2, pin_ends=False)[:, 0]
         out.append(np.maximum(c, lo))
     return ctrl, out[0], out[1], out[2]
