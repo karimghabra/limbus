@@ -35,15 +35,21 @@ def overlay(net: VesselNetwork, intensity, color_by="diameter", scale=1.0,
     if scale != 1.0:
         base = cv2.resize(base, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     img = cv2.cvtColor((base * 0.75).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-    key = {"diameter": "r", "blur": "s", "contrast": "a"}[color_by]
-    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6)}[key]
+    key = {"diameter": "r", "blur": "s", "contrast": "a", "vessel": None}[color_by]
+    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6), None: None}[key]
     for eid in net.edges:
         smp = net.sample(eid, 1.0)
         xy = smp["xy"] * scale
-        val = smp[key] * (2 if key == "r" else 1)
-        cols = _colormap(np.log(val) if key != "a" else val,
-                         math.log(vr[0] * (2 if key == "r" else 1)) if key != "a" else vr[0],
-                         math.log(vr[1] * (2 if key == "r" else 1)) if key != "a" else vr[1])
+        if key is None:
+            # one colour per edge (after consolidation: per vessel)
+            hue = np.uint8((eid * 47) % 180)
+            c = cv2.cvtColor(np.array([[[hue, 220, 255]]], np.uint8), cv2.COLOR_HSV2BGR)[0, 0]
+            cols = np.repeat(c[None], len(xy), 0)
+        else:
+            val = smp[key] * (2 if key == "r" else 1)
+            cols = _colormap(np.log(val) if key != "a" else val,
+                             math.log(vr[0] * (2 if key == "r" else 1)) if key != "a" else vr[0],
+                             math.log(vr[1] * (2 if key == "r" else 1)) if key != "a" else vr[1])
         th = thickness or max(1, int(round(scale * 1.2)))
         pts = np.round(xy * 8).astype(np.int32)
         for i in range(0, len(pts) - 1):

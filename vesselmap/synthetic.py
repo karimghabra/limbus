@@ -166,3 +166,74 @@ def centreline_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1
     out["recall_by_blur"] = {f"{a}-{b}": float(hit[(tb >= a) & (tb < b)].mean())
                              for a, b in bb if ((tb >= a) & (tb < b)).any()}
     return out
+
+
+def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
+                   min_piece=10.0, min_frac=0.2):
+    """How completely single splines annotate single vessels.
+
+    Every detected centreline sample is assigned to the nearest true vessel
+    point within tolerance (as in centreline_metrics).  An edge *annotates*
+    a true vessel when at least max(min_piece, min_frac * its length) px of
+    it are assigned to that vessel.  Returns
+
+    * fragments         mean number of edges annotating each detected
+                        vessel (1 is ideal), and weighted by vessel length
+    * best_cover        fraction of each true vessel's length covered by its
+                        single best edge, length-weighted (at most recall)
+    * purity            fraction of each edge's assigned length that belongs
+                        to its main vessel, length-weighted (1 is ideal:
+                        no edge mixes two vessels)
+    * mixed_edges       edges that annotate two or more vessels
+
+    A vessel that forks keeps its identity through the fork in the ground
+    truth (the parent runs on, the branch is a separate vessel), which is
+    exactly what consolidation aims for."""
+    H, W = shape
+    tx, tv, tr = [], [], []
+    for k, v in enumerate(vessels):
+        xy = v["xy"]
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        s = np.r_[0, np.cumsum(seg)]
+        q = np.arange(0, s[-1], spacing)
+        p = np.stack([np.interp(q, s, xy[:, 0]), np.interp(q, s, xy[:, 1])], 1)
+        ok = (p[:, 0] >= 2) & (p[:, 0] < W - 2) & (p[:, 1] >= 2) & (p[:, 1] < H - 2)
+        tx.append(p[ok])
+        tv.append(np.full(ok.sum(), k))
+        tr.append(np.interp(q, s, v["r"])[ok])
+    tx, tv, tr = map(np.concatenate, (tx, tv, tr))
+    tol_t = np.maximum(tol_min, tol_frac * 2 * tr)
+    nv = len(vessels)
+    true_len = np.bincount(tv, minlength=nv).astype(float)
+    eids = list(net.edges)
+    if not eids:
+        return dict(fragments=0.0, fragments_weighted=0.0, best_cover=0.0, purity=0.0,
+                    mixed_edges=0, n_edges=0)
+    tree = cKDTree(tx)
+    counts = np.zeros((len(eids), nv))
+    cover = np.zeros((len(eids), nv))
+    elen = np.zeros(len(eids))
+    for i, eid in enumerate(eids):
+        xy = net.sample(eid, spacing)["xy"]
+        elen[i] = len(xy)
+        d, j = tree.query(xy)
+        ok = d <= tol_t[j]
+        counts[i] = np.bincount(tv[j[ok]], minlength=nv)
+        # true points of each vessel within tolerance of this edge
+        d2, _ = cKDTree(xy).query(tx, distance_upper_bound=float(tol_t.max()) + 1)
+        hit = d2 <= tol_t
+        cover[i] = np.bincount(tv[hit], minlength=nv)
+    annot = counts >= np.maximum(min_piece, min_frac * elen)[:, None]
+    n_frag = annot.sum(0)
+    seen = n_frag > 0
+    frag = float(n_frag[seen].mean()) if seen.any() else 0.0
+    frag_w = float((n_frag[seen] * true_len[seen]).sum() / true_len[seen].sum()) if seen.any() else 0.0
+    best = cover.max(0)
+    best_cover = float(best.sum() / true_len.sum())
+    assigned = counts.sum(1)
+    main = counts.max(1)
+    purity = float(main.sum() / max(assigned.sum(), 1))
+    return dict(fragments=round(frag, 3), fragments_weighted=round(frag_w, 3),
+                best_cover=round(best_cover, 4), purity=round(purity, 4),
+                mixed_edges=int((annot.sum(1) >= 2).sum()), n_edges=len(eids),
+                n_vessels_seen=int(seen.sum()))

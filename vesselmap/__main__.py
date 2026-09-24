@@ -2,6 +2,7 @@
 
     python -m vesselmap map IMAGE -o OUT [--set key=value ...]
     python -m vesselmap refine MAP.json IMAGE -o OUT
+    python -m vesselmap consolidate MAP.json IMAGE -o OUT
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
     python -m vesselmap synth-eval [--seeds 0 1 2] -o OUT
@@ -49,6 +50,9 @@ def write_outputs(net, intensity, prepared, out, stem="map"):
     export_graphml(G, os.path.join(out, f"{stem}.graphml"))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay.png"), overlay(net, intensity))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay_blur.png"), overlay(net, intensity, color_by="blur"))
+    if net.has_through() or "consolidation" in net.meta:
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_vessels.png"),
+                    overlay(net, intensity, color_by="vessel", arrows=False))
     draw_digraph(net, os.path.join(out, f"{stem}_digraph.png"))
     draw_digraph(net, os.path.join(out, f"{stem}_digraph_on_image.png"), intensity=intensity)
     if prepared is not None:
@@ -105,6 +109,27 @@ def cmd_refine(a):
     write_outputs(net, I, P, a.out)
     print(f"refined map written to {a.out} in {time.time() - t:.0f}s: "
           f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline; {net.summary()}")
+
+
+def cmd_consolidate(a):
+    from .consolidate import ConsolidateConfig, consolidate_map
+    from .fit import MapConfig
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
+    cc = _apply_sets(ConsolidateConfig(verbose=not a.quiet), a.consolidate_set)
+    t = time.time()
+    out = consolidate_map(I, net, cfg, cc, prepared=P)
+    out.meta["source_image"] = os.path.abspath(a.image)
+    write_outputs(out, I, P, a.out)
+    c = out.meta["consolidation"]
+    print(f"consolidated map written to {a.out} in {time.time() - t:.0f}s: "
+          f"{c['edges_before']} segments -> {c['edges_after']} vessels; {out.summary()}")
 
 
 def cmd_fit_frames(a):
@@ -189,6 +214,14 @@ def main(argv=None):
     r.add_argument("--refine-set", nargs="*", help="RefineConfig overrides key=value")
     r.add_argument("--quiet", action="store_true")
     r.set_defaults(func=cmd_refine)
+    c = sub.add_parser("consolidate", help="merge the segments of each vessel into one spline")
+    c.add_argument("map")
+    c.add_argument("image", help="the image the map was built from")
+    c.add_argument("-o", "--out", required=True)
+    c.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
+    c.add_argument("--consolidate-set", nargs="*", help="ConsolidateConfig overrides key=value")
+    c.add_argument("--quiet", action="store_true")
+    c.set_defaults(func=cmd_consolidate)
     f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
     f.add_argument("map")
     f.add_argument("frames", nargs="+")

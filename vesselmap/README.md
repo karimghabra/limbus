@@ -25,8 +25,11 @@ python -m vesselmap map reference_data/burst_2026-09-16_15-50-52/frame_000020.ti
 #    (about 40 min; can be repeated on its own output)
 python -m vesselmap refine out/map/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/refined
 
-# 3. adjust it to other (stabilised) frames: same ids, small moves
-python -m vesselmap fit-frames out/refined/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
+# 3. optional: one spline per vessel instead of one per segment
+python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/vessels
+
+# 4. adjust it to other (stabilised) frames: same ids, small moves
+python -m vesselmap fit-frames out/vessels/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
 
 # score the mapper on synthetic images with known ground truth
 python -m vesselmap synth-eval --seeds 0 1 2 -o out/synth
@@ -118,6 +121,55 @@ and adds fine detail:
   until a round adds less than 60 px of centreline.
 * A second split test, then a joint fit and pruning.
 
+**Consolidation** (`consolidate_map`, `python -m vesselmap consolidate`)
+turns the segment map into one spline per vessel. Discovery gives one edge
+per *segment*: every edge ends where it meets another edge. A vessel that
+gives off five branches is six edges. A vessel the detector lost for a
+stretch, or found twice, is several edges with free ends. Consolidation
+finds the edges that are one vessel and refits each group as a single edge:
+
+* *Switch cuts.* An edge whose blur or calibre steps by more than 1.6×
+  along it usually runs along one vessel and then switches to another at a
+  different depth, where two vessels cross or touch. It is cut at the step
+  (a two-segment change point in log blur and log width). Each piece can
+  then continue into its own vessel.
+* *Candidate continuations* between edge ends. Each end is described by the
+  direction of the edge's body, its calibre, blur and contrast. The last
+  few px next to a node are skipped, because fitted edges often hook into
+  the node. A *node* link continues straight through a node (turn ≤ 40°,
+  width within 1.8×, blur within 2.2×; blur is a depth cue). At a branch
+  point it must beat every other pairing by a margin, so a symmetric fork
+  is left alone. A *gap* link bridges a free end to an end ahead of it,
+  within a 30° cone and up to 30–60 px. It also joins two nodes a few px
+  apart (a junction found twice). An *overlap* link blends two free ends
+  that run past each other on the same course.
+* *Matching.* Each end continues into at most one other end, chosen by a
+  maximum-weight matching over all candidates. The matched ends form chains
+  of edges. Each chain is rebuilt as one path: junction hooks are replaced
+  by a cubic Hermite bridge between the edge bodies, and overlaps are
+  blended. The path is then refitted as one spline.
+* *Branches stay attached.* A node where a branch leaves a consolidated
+  vessel stays in the graph. The vessel passes *through* it
+  (`info["through"]`), the branch still ends there, and a penalty in the
+  renderer keeps the node on the vessel's centreline. Such a node counts as
+  a bifurcation. Nodes left with nothing attached disappear.
+* *Verification.* Segments and vessels are fitted jointly under the same
+  priors, and every link is tested in its own neighbourhood. A link is kept
+  if the single spline explains the image there no worse than the pieces,
+  allowing for the MDL cost of the pair of ends it removes. A bridge across
+  a gap must also pay for its own length from the NLL drop of the bridged
+  stretch alone, so two different vessels that happen to line up are not
+  joined across empty tissue. Failed links are dropped and the matching is
+  re-run, up to three rounds.
+
+The calibre prior of these fits compares each width with the mean over
+±4 profile knots (±120 px), not over the whole edge, so a long vessel
+may taper. `to_segments()` and `to_digraph()` still give the segment
+graph: every segment carries `vessel`, the id of the spline it belongs to.
+`map_overlay_vessels.png` colours each vessel differently. `refine` accepts
+a consolidated map and works on its segments; run `consolidate` again after
+it.
+
 **Per-frame fitting** (`fit_frame`) first aligns the map to the frame
 globally. Phase correlation between the rendered vessel image and the frame's
 high-passed image gives a translation with a large capture range: raw frames
@@ -142,7 +194,9 @@ vessels overlap and their densities add, and the crossings are listed in
 
 Edge attributes: `length`, `chord`, `tortuosity`, `diameter` (mean, min,
 max), `blur`, `contrast`, `mean_curvature`, `max_curvature`, `gain`
-(evidence), `orientation`. The full spline parameters are in `map.json`.
+(evidence), `orientation`, and `vessel` (the spline the segment belongs to;
+after consolidation several segments share it). The full spline parameters
+are in `map.json`.
 
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected
@@ -170,6 +224,26 @@ positives are mostly very blurred "vessels" fitted to dark lumps of the
 synthetic background texture. This is the one ambiguity that intensity alone
 cannot resolve completely. A wide edge must therefore also beat a smooth
 background explanation (see step 5), which removes most of them.
+
+**Consolidation on the same scenes.** `synthetic.vessel_metrics` measures
+how completely single splines annotate single vessels. In the ground truth a
+vessel keeps its identity through a fork: the parent runs on and the branch
+is a separate vessel. *Cover* is the fraction of each true vessel covered by
+its single best spline, length-weighted; recall is its upper bound.
+*Purity* is the fraction of each spline's length on its main vessel.
+Scenes are mapped with `build_map`, then `consolidate_map` is run with
+defaults:
+
+| scene | cover, segments → vessels | purity | recall | precision | links kept (node / gap) |
+|---|---|---|---|---|---|
+| seed 0 | 0.41 → 0.44 | 0.86 → 0.89 | 0.87 → 0.87 | 0.77 → 0.76 | 25 / 2 |
+| seed 1 | 0.57 → 0.62 | 0.86 → 0.90 | 0.93 → 0.94 | 0.75 → 0.74 | 32 / 3 |
+| seed 2 | 0.52 → 0.59 | 0.83 → 0.91 | 0.90 → 0.91 | 0.81 → 0.80 | 15 / 2 |
+
+Purity rises mostly because of the switch cuts. Cover rises because of the
+links. Most of the remaining fragmentation in these scenes comes from
+tangled traces of tortuous capillaries. Their pieces turn by more than 40°
+or change calibre where they meet, so no link joins them.
 
 **LIMBUS reference burst 1, frame 20** (1920x1200, 12-bit):
 
@@ -218,7 +292,8 @@ frame fits about as well as the frame the map was built from.
 
 `image.py` loading and the log domain · `ridges.py` proposals · `spline.py`
 B-splines · `network.py` graph and topology · `render.py` differentiable
-renderer and score · `fit.py` discovery and per-frame fitting · `draw.py`
+renderer and score · `fit.py` discovery and per-frame fitting ·
+`refine.py` fine detail · `consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the
 fast ones).
