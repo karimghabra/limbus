@@ -333,6 +333,11 @@ def refine_map(intensity: np.ndarray, net: VesselNetwork, cfg: MapConfig | None 
     rc = rc or RefineConfig()
     P = prepared or prepare(intensity)
     t0 = time.time()
+    if net.has_through():
+        # a consolidated map: refine works on segments (consolidate again after)
+        seg = net.to_segments()
+        net.nodes, net.edges = seg.nodes, seg.edges
+        net._nid, net._eid, net._adj = seg._nid, seg._eid, None
     log = lambda *a: _say(cfg, f"[{time.time() - t0:6.0f}s]", *a) if rc.verbose else None
     L_start = net.summary()["total_length_px"]
     split_test(net, P, cfg, rc, log)

@@ -155,3 +155,123 @@ def test_parallel_split_detects_two_close_vessels():
     y1 = np.median(net.sample(e1, 1.0)["xy"][:, 1])
     y2 = np.median(net.sample(e2, 1.0)["xy"][:, 1])
     assert abs(abs(y1 - y2) - 7.0) < 1.5
+
+
+# ------------------------------------------------------------ consolidation
+def _link_all(net):
+    from vesselmap.consolidate import ConsolidateConfig, build, candidates, chains, match
+    cc = ConsolidateConfig()
+    c = candidates(net, cc)
+    out, rec = build(net, chains(net, match(c)), cc)
+    return c, out, rec
+
+
+def test_consolidate_vessel_through_two_branch_points():
+    net = VesselNetwork((300, 400))
+    e = _line(net, (10, 150), (390, 160), r=4)
+    n1 = net.split_edge(e, (130, 153))
+    e2 = [k for k in net.edges if net.edges[k].u == n1][0]
+    n2 = net.split_edge(e2, (260, 157))
+    _line(net, (130, 153), (180, 60), r=2, u=n1)
+    _line(net, (260, 157), (300, 260), r=2, u=n2)
+    L = sum(net.length(k) for k in net.edges)
+    cands, out, _ = _link_all(net)
+    assert sorted(c["kind"] for c in cands) == ["node", "node"]
+    assert len(out.edges) == 3                       # the trunk and two branches
+    trunk = max(out.edges, key=out.length)
+    assert sorted(out.edges[trunk].through) == sorted([n1, n2])
+    assert out.summary()["node_kinds"] == {"endpoint": 4, "bifurcation": 2}
+    assert abs(sum(out.length(k) for k in out.edges) - L) < 2.0
+    assert out.crossings() == []                     # branches leave at shared nodes
+    # the segment view and the graph are unchanged, labelled by vessel
+    seg = out.to_segments()
+    assert len(seg.edges) == 5 and seg.summary()["node_kinds"] == out.summary()["node_kinds"]
+    G = out.to_digraph()
+    assert G.number_of_edges() == 5 and G.number_of_nodes() == 6
+    assert sorted(d["vessel"] for *_, d in G.edges(data=True)).count(trunk) == 3
+
+
+def test_consolidate_leaves_symmetric_fork_alone():
+    net = VesselNetwork((300, 300))
+    p = _line(net, (150, 290), (150, 150), r=3)
+    nid = net.edges[p].v
+    _line(net, (150, 150), (80, 30), r=2.5, u=nid)
+    _line(net, (150, 150), (220, 30), r=2.5, u=nid)
+    cands, out, _ = _link_all(net)
+    assert cands == [] and len(out.edges) == 3
+
+
+def test_consolidate_bridges_gap_and_blends_overlap():
+    net = VesselNetwork((200, 300))
+    _line(net, (10, 100), (120, 102))
+    _line(net, (145, 103), (290, 108))
+    cands, out, rec = _link_all(net)
+    assert [c["kind"] for c in cands] == ["gap"] and len(out.edges) == 1
+    assert len(out.nodes) == 2 and abs(out.length(next(iter(out.edges))) - 280.2) < 2.0
+    net = VesselNetwork((200, 300))
+    _line(net, (10, 100), (150, 101))
+    _line(net, (120, 101.5), (290, 104))
+    cands, out, _ = _link_all(net)
+    assert [c["kind"] for c in cands] == ["overlap"] and len(out.edges) == 1
+    xy = out.sample(next(iter(out.edges)), 1.0)["xy"]
+    assert abs(out.length(next(iter(out.edges))) - 280.0) < 2.0
+    assert np.abs(np.diff(xy[:, 0])).min() > 0.5          # no back-tracking in the blend
+
+
+def test_consolidate_rejects_bridge_without_evidence():
+    """Two collinear pieces: bridged where the vessel is visible in the gap,
+    left apart where the gap is empty (two different vessels)."""
+    from vesselmap.consolidate import ConsolidateConfig, consolidate_map
+    from vesselmap.fit import MapConfig
+    from vesselmap.synthetic import render
+    H, W = 100, 260
+    xs = np.linspace(-10, 270, 300)
+    out = {}
+    for name, keep in (("visible", lambda x: np.ones_like(x, bool)),
+                       ("empty", lambda x: (x < 112) | (x > 138))):
+        m = keep(xs)
+        pieces = [(xs[m & (xs < 130)]), (xs[m & (xs >= 130)])] if name == "empty" else [xs]
+        vessels = [dict(xy=np.stack([p, np.full(len(p), 50.0)], 1), r=np.full(len(p), 2.0),
+                        blur=1.0, amp=0.35) for p in pieces]
+        I, _ = render(vessels, (H, W), np.random.default_rng(1))
+        net = VesselNetwork((H, W))
+        _line(net, (0, 50), (110, 50), r=2.0, s=1.0, a=0.35)
+        _line(net, (140, 50), (259, 50), r=2.0, s=1.0, a=0.35)
+        res = consolidate_map(I, net, MapConfig(verbose=False),
+                              ConsolidateConfig(iters=60, verbose=False))
+        out[name] = res
+    assert len(out["visible"].edges) == 1
+    assert len(out["empty"].edges) == 2
+
+
+def test_consolidated_map_roundtrip_and_frame_fit(tmp_path):
+    """A vessel with a branch leaving mid-way survives save/load, and a
+    per-frame fit keeps the branch point on the vessel."""
+    from scipy import ndimage as ndi
+    from vesselmap.fit import FrameFitConfig, fit_frame
+    from vesselmap.synthetic import render
+    H, W = 160, 240
+    xs = np.linspace(-10, 250, 300)
+    trunk = np.stack([xs, 80 + 8 * np.sin(xs / 50)], 1)
+    b0 = trunk[140]
+    branch = b0 + np.stack([np.linspace(0, 60, 80), np.linspace(0, -70, 80)], 1)
+    I, _ = render([dict(xy=trunk, r=np.full(300, 3.0), blur=1.0, amp=0.4),
+                   dict(xy=branch, r=np.full(80, 1.8), blur=1.0, amp=0.4)], (H, W),
+                  np.random.default_rng(0))
+    net = VesselNetwork((H, W))
+    e = net.add_edge_dense(trunk[5:-5], np.full(290, 3.0), np.full(290, 1.0), np.full(290, 0.4))
+    n = net.split_edge(e, b0)
+    net.add_edge_dense(branch, np.full(80, 1.8), np.full(80, 1.0), np.full(80, 0.4), u=n)
+    _, out, _ = _link_all(net)
+    assert len(out.edges) == 2 and any(out.edges[k].through == [n] for k in out.edges)
+    p = tmp_path / "v.json"
+    out.save(p)
+    back = VesselNetwork.load(p)
+    assert back.summary()["node_kinds"] == out.summary()["node_kinds"]
+    assert [e.through for e in back.edges.values()] == [e.through for e in out.edges.values()]
+    shifted = ndi.shift(I, (1.0, -2.0), order=3, mode="nearest")
+    fitted, rep = fit_frame(shifted, back, FrameFitConfig(iters=20, iters_align=15))
+    trunk_id = next(k for k in fitted.edges if fitted.edges[k].through)
+    xy = fitted.sample(trunk_id, 0.25)["xy"]
+    assert np.linalg.norm(xy - fitted.nodes[n].xy, axis=1).min() < 0.2
+    assert fitted.summary()["node_kinds"] == out.summary()["node_kinds"]

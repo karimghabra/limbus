@@ -256,6 +256,13 @@ class NetworkModel(torch.nn.Module):
         self.aff_t = torch.nn.Parameter(torch.zeros(2), requires_grad=False)
         self._pix_mask = self._stride_mask()
         self._index_edges()
+        # nodes that edges pass through (consolidated vessels): (node, edge)
+        eidx = {eid: k for k, eid in enumerate(self.eids)}
+        att = [(nidx[n], eidx[eid]) for eid in self.eids for n in net.edges[eid].through
+               if n in nidx]
+        self._att_node = torch.tensor([a for a, _ in att], dtype=torch.long)
+        self._att_edge = [b for _, b in att]
+        self._att_samp = torch.zeros(len(att), dtype=torch.long)
         self.rebuild()
 
     def _pack_reference(self, ref: VesselNetwork) -> dict:
@@ -372,6 +379,28 @@ class NetworkModel(torch.nn.Module):
         self.samp_first_t = torch.tensor(self.samp_first, dtype=torch.long)
         self.samp_last_t = torch.tensor(self.samp_last, dtype=torch.long)
         self._associate()
+        self._associate_through()
+
+    @torch.no_grad()
+    def _associate_through(self):
+        """Nearest centreline sample of the edge each through node lies on."""
+        if not len(self._att_node):
+            return
+        C = self.samples()[0].numpy()
+        P = self.node_pos().numpy()
+        out = []
+        for n, k in zip(self._att_node.tolist(), self._att_edge):
+            a0, a1 = self.samp_first[k], self.samp_last[k] + 1
+            out.append(a0 + int(np.argmin(((C[a0:a1] - P[n]) ** 2).sum(1))))
+        self._att_samp = torch.tensor(out, dtype=torch.long)
+
+    def node_pos(self):
+        """Node positions, with the global affine applied."""
+        p = self.node_xy
+        if self.aff_A.requires_grad or self.aff_t.requires_grad:
+            c = torch.tensor([self.W / 2.0, self.H / 2.0])
+            p = (p - c) @ (torch.eye(2) + self.aff_A).T + c + self.aff_t
+        return p
 
     def samples(self):
         ctrl = self.ctrl_all()
@@ -474,7 +503,8 @@ class NetworkModel(torch.nn.Module):
         return 0.5 * (self.weight[m] * res[m] ** 2).sum() * self.stride ** 2
 
     def prior(self, lam_bend=300.0, lam_prof=20.0, lam_bg=2e4, track=None,
-              lam_cusp=2e3, lam_even=50.0, lam_calibre=300.0, calibre_tol=1.6):
+              lam_cusp=2e3, lam_even=50.0, lam_calibre=300.0, calibre_tol=1.6,
+              calibre_window=0, lam_attach=2e3):
         ctrl = self.ctrl_all()
         pen = torch.zeros(())
         # bending energy ~ sum |d2 P|^2 / h^3, per edge
@@ -496,18 +526,34 @@ class NetworkModel(torch.nn.Module):
             pen = pen + lam_even * (((lb - la) / h) ** 2)[ok].sum()
             r, s, a = self.profiles()
             # calibre consistency: a vessel may taper, but its width should
-            # not balloon locally (e.g. to soak up the darkness of a junction)
+            # not balloon locally (e.g. to soak up the darkness of a junction).
+            # The reference is the edge's mean log width, or with
+            # calibre_window = w the mean over the w profile knots on either
+            # side (a long consolidated vessel may taper a lot overall)
             lr = torch.log(r)
-            ne = len(self.eids)
-            cnt = torch.zeros(ne).index_add(0, self._prof_edge, torch.ones_like(lr))
-            mean = torch.zeros(ne).index_add(0, self._prof_edge, lr) / cnt.clamp(min=1)
-            dev = (lr - mean[self._prof_edge]).abs() - math.log(calibre_tol)
+            if calibre_window:
+                lo, hi = self._window_bounds(int(calibre_window))
+                cs = torch.cat([torch.zeros(1), torch.cumsum(lr, 0)])
+                ref_lr = (cs[hi] - cs[lo]) / (hi - lo).to(lr.dtype)
+            else:
+                ne = len(self.eids)
+                cnt = torch.zeros(ne).index_add(0, self._prof_edge, torch.ones_like(lr))
+                mean = torch.zeros(ne).index_add(0, self._prof_edge, lr) / cnt.clamp(min=1)
+                ref_lr = mean[self._prof_edge]
+            dev = (lr - ref_lr).abs() - math.log(calibre_tol)
             pen = pen + lam_calibre * (F.relu(dev) ** 2).sum()
             for q in (r, s, a):
                 lq = torch.log(q)
                 jj = torch.arange(len(lq) - 1)
                 same_p = self._prof_edge[jj] == self._prof_edge[jj + 1]
                 pen = pen + lam_prof * ((lq[jj + 1] - lq[jj]) ** 2)[same_p].sum()
+        # nodes an edge passes through stay on its centreline (normal offset)
+        if len(self._att_node) and lam_attach:
+            C, T = self.samples()[:2]
+            j = self._att_samp
+            dv = self.node_pos()[self._att_node] - C[j]
+            off = dv[:, 0] * T[j, 1] - dv[:, 1] * T[j, 0]
+            pen = pen + lam_attach * (off ** 2).sum()
         # background smoothness (second differences of the grid)
         g = self.bg
         pen = pen + lam_bg * (((g[2:] - 2 * g[1:-1] + g[:-2]) ** 2).sum()
@@ -523,6 +569,21 @@ class NetworkModel(torch.nn.Module):
         pe = [np.full(m, k) for k, m in enumerate(self.edge_nprof)]
         self._ctrl_edge = torch.tensor(np.concatenate(ce) if ce else np.zeros(1, int), dtype=torch.long)
         self._prof_edge = torch.tensor(np.concatenate(pe) if pe else np.zeros(1, int), dtype=torch.long)
+        self._win = {}
+
+    def _window_bounds(self, w):
+        """[lo, hi) profile-knot index bounds of a +-w window that stays
+        inside each knot's own edge."""
+        if w not in self._win:
+            lo, hi = [], []
+            for o, m in zip(self.edge_prof_off, self.edge_nprof):
+                i = np.arange(m)
+                lo.append(o + np.maximum(0, i - w))
+                hi.append(o + np.minimum(m, i + w + 1))
+            cat = lambda L: torch.tensor(np.concatenate(L) if L else np.zeros(0, int),
+                                         dtype=torch.long)
+            self._win[w] = (cat(lo), cat(hi))
+        return self._win[w]
 
     def loss(self, track=None, priors=None):
         entries = self.vessel_entries()
@@ -535,6 +596,24 @@ class NetworkModel(torch.nn.Module):
     def edge_gains(self, entries=None, pred=None):
         """Decrease of the data NLL that each edge is responsible for, with all
         other edges held fixed: 0.5 * sum w [(res - m)^2 - res^2]."""
+        g = self._entry_gains(entries, pred)
+        out = torch.zeros(len(self.eids)).index_add(0, self.e_edge, g)
+        cnt = torch.zeros(len(self.eids)).index_add(0, self.e_edge, torch.ones_like(g))
+        return out.numpy(), cnt.numpy() * self.stride ** 2
+
+    @torch.no_grad()
+    def sample_gains(self, entries=None, pred=None):
+        """edge_gains resolved along the edges: the gain of the pixels
+        associated with each centreline sample, and the samples' arclength
+        within their edge.  Summing over a stretch of samples gives the
+        evidence for that stretch alone."""
+        g = self._entry_gains(entries, pred)
+        out = torch.zeros(self.n_samp).index_add(0, self.e_samp, g)
+        arc = self.samples()[5]
+        return out.numpy(), arc.numpy()
+
+    @torch.no_grad()
+    def _entry_gains(self, entries=None, pred=None):
         if entries is None:
             entries = self.vessel_entries()
         if pred is None:
@@ -555,10 +634,7 @@ class NetworkModel(torch.nn.Module):
         wrh = Rg.view(-1)[self.e_pix]
         w = self.weight.view(-1)[self.e_pix]
         c = (1 - hw) * entries
-        g = (0.5 * w * c ** 2 - (1 - hw) * wr * entries - hw * wrh * entries) * st ** 2
-        out = torch.zeros(len(self.eids)).index_add(0, self.e_edge, g)
-        cnt = torch.zeros(len(self.eids)).index_add(0, self.e_edge, torch.ones_like(g))
-        return out.numpy(), cnt.numpy() * self.stride ** 2
+        return (0.5 * w * c ** 2 - (1 - hw) * wr * entries - hw * wrh * entries) * st ** 2
 
     @torch.no_grad()
     def edge_gains_bg_orthogonal(self, ks, entries=None, pred=None, sigma_bg=None):
@@ -637,6 +713,8 @@ class NetworkModel(torch.nn.Module):
             e.ctrl = ctrl[o:o + n].copy()
             po, m = self.edge_prof_off[k], self.edge_nprof[k]
             e.r, e.s, e.a = r[po:po + m].copy(), s[po:po + m].copy(), a[po:po + m].copy()
+        if len(self._att_node):
+            net.snap_through_nodes()
         net.background = self.bg.detach().numpy().copy()
         net.bg_spacing = self.bg_spacing
         hw, hs = self.halo()

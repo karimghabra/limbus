@@ -19,6 +19,12 @@ Each edge carries
 * ``r`` / ``s`` / ``a`` - control values of splines along the edge for the
   lumen half-width (px), the blur (Gaussian std, px; focus) and the peak
   optical density (contrast), so all three may vary along the vessel.
+* ``info["through"]`` (optional) - nodes the edge passes through without
+  ending there.  A consolidated map (consolidate.py) represents each vessel
+  as one edge, so a branch leaves it at a node in the middle of the edge.
+  Such a node counts two towards the degree for every edge passing through
+  it (a branch leaving a vessel is a bifurcation), and ``to_segments``
+  cuts the edges there to recover a map with one edge per segment.
 
 The graph is exported as a ``networkx.DiGraph``.  Without flow data the
 direction of flow is not observable from a still image; edges are oriented
@@ -65,8 +71,13 @@ class Edge:
     info: dict = field(default_factory=dict)
 
     def copy(self):
+        info = {k: list(v) if isinstance(v, list) else v for k, v in self.info.items()}
         return Edge(self.u, self.v, self.ctrl.copy(), self.r.copy(), self.s.copy(),
-                    self.a.copy(), dict(self.info))
+                    self.a.copy(), info)
+
+    @property
+    def through(self) -> list:
+        return self.info.get("through") or []
 
 
 def pos_spacing_for(width: float) -> float:
@@ -136,19 +147,34 @@ class VesselNetwork:
         adj = getattr(self, "_adj", None)
         if adj is None:
             adj = {k: [] for k in self.nodes}
+            thru = {}
             for eid, e in self.edges.items():
                 adj.setdefault(e.u, []).append((eid, 0))
                 adj.setdefault(e.v, []).append((eid, 1))
+                for n in e.through:
+                    thru.setdefault(n, []).append(eid)
             self._adj = adj
+            self._thru = thru
         return adj
 
     def incident(self, nid):
         """[(eid, end)] with end 0 if the edge starts at nid, 1 if it ends."""
         return list(self._adjacency().get(nid, []))
 
+    def passing(self, nid):
+        """Edges that pass through nid without ending there."""
+        self._adjacency()
+        return list(self._thru.get(nid, []))
+
     def degrees(self) -> dict:
+        """Number of vessel segments meeting at each node: every edge ending
+        there counts one, every edge passing through counts two."""
         adj = self._adjacency()
-        return {k: len(adj.get(k, [])) for k in self.nodes}
+        thru = self._thru
+        return {k: len(adj.get(k, [])) + 2 * len(thru.get(k, [])) for k in self.nodes}
+
+    def has_through(self) -> bool:
+        return any(e.through for e in self.edges.values())
 
     def node_kind(self, nid, deg=None, margin=3.0) -> str:
         n = self.nodes[nid]
@@ -262,8 +288,8 @@ class VesselNetwork:
         e = self.edges.pop(eid)
         self._touch()
         if drop_orphans:
-            for n in (e.u, e.v):
-                if n in self.nodes and not self.incident(n):
+            for n in (e.u, e.v, *e.through):
+                if n in self.nodes and not self.incident(n) and not self.passing(n):
                     del self.nodes[n]
                     self._touch()
 
@@ -295,12 +321,72 @@ class VesselNetwork:
         sl1, sl2 = slice(0, i + 1), slice(i, None)
         u, v = e.u, e.v
         spacing = e.info.get("spacing")
+        thru = self.through_order(eid, smp)
         self.remove_edge(eid, drop_orphans=False)
+        info1, info2 = dict(info), dict(info)
+        info1["through"] = [n for j, n in thru if j < i]
+        info2["through"] = [n for j, n in thru if j >= i]
+        for inf in (info1, info2):
+            if not inf["through"]:
+                del inf["through"]
         self.add_edge_dense(smp["xy"][sl1], smp["r"][sl1], smp["s"][sl1], smp["a"][sl1],
-                            u=u, v=nid, spacing=spacing, info=info, faithful=True)
+                            u=u, v=nid, spacing=spacing, info=info1, faithful=True)
         self.add_edge_dense(smp["xy"][sl2], smp["r"][sl2], smp["s"][sl2], smp["a"][sl2],
-                            u=nid, v=v, spacing=spacing, info=info, faithful=True)
+                            u=nid, v=v, spacing=spacing, info=info2, faithful=True)
         return nid
+
+    def through_order(self, eid, smp=None):
+        """[(sample index, node)] of the nodes eid passes through, in order
+        along the edge (indices into smp, by default sample(eid, 0.5))."""
+        e = self.edges[eid]
+        if not e.through:
+            return []
+        smp = smp or self.sample(eid, 0.5)
+        out = []
+        for n in e.through:
+            if n in self.nodes:
+                d = np.linalg.norm(smp["xy"] - self.nodes[n].xy, axis=1)
+                out.append((int(np.argmin(d)), n))
+        return sorted(out)
+
+    def snap_through_nodes(self):
+        """Move every node an edge passes through onto that edge's
+        centreline (the renderer keeps them there only approximately), and
+        the ends of the edges attached to it along with it."""
+        for eid, e in self.edges.items():
+            if not e.through:
+                continue
+            smp = self.sample(eid, 0.25)
+            for j, n in self.through_order(eid, smp):
+                self.nodes[n].x, self.nodes[n].y = (float(v) for v in smp["xy"][j])
+                for k, _ in self.incident(n):
+                    self.sync_ends(k)
+
+    def to_segments(self) -> "VesselNetwork":
+        """A copy in which every edge ends at every node it meets: edges
+        passing through nodes are cut there.  The pieces keep the id of the
+        edge they came from in info["vessel"].  Without through nodes this is
+        a plain copy."""
+        out = self.copy()
+        for eid in list(out.edges):
+            e = out.edges[eid]
+            if not e.through:
+                continue
+            smp = out.sample(eid, 0.5)
+            cuts = [(j, n) for j, n in out.through_order(eid, smp)
+                    if 0 < j < len(smp["xy"]) - 1]
+            info = {k: v for k, v in e.info.items() if k != "through"}
+            info["vessel"] = int(eid)
+            spacing = e.info.get("spacing")
+            stops = [(0, e.u)] + cuts + [(len(smp["xy"]) - 1, e.v)]
+            out.remove_edge(eid, drop_orphans=False)
+            for (j0, n0), (j1, n1) in zip(stops[:-1], stops[1:]):
+                if j1 <= j0:
+                    continue
+                sl = slice(j0, j1 + 1)
+                out.add_edge_dense(smp["xy"][sl], smp["r"][sl], smp["s"][sl], smp["a"][sl],
+                                   u=n0, v=n1, spacing=spacing, info=dict(info), faithful=True)
+        return out
 
     def merge_nodes(self, keep, drop):
         """Re-attach every edge of `drop` to `keep` and delete `drop`."""
@@ -355,6 +441,11 @@ class VesselNetwork:
         info = dict(self.edges[e1].info)
         for k in ("gain",):
             info.pop(k, None)
+        thru = [n for n in E1.through + E2.through]
+        if thru:
+            info["through"] = list(dict.fromkeys(thru))
+        else:
+            info.pop("through", None)
         b1, b2 = E1.info.get("band"), E2.info.get("band")
         if b1 and b2:
             info["band"] = [min(b1[0], b2[0]), max(b1[1], b2[1])]
@@ -426,7 +517,7 @@ class VesselNetwork:
         while changed:
             changed = False
             for nid in list(self.nodes):
-                if nid not in self.nodes or self.nodes[nid].fixed_kind:
+                if nid not in self.nodes or self.nodes[nid].fixed_kind or self.passing(nid):
                     continue
                 inc = self.incident(nid)
                 if len(inc) == 2 and inc[0][0] != inc[1][0]:
@@ -593,7 +684,7 @@ class VesselNetwork:
         out = []
         for (a, b), ps in pairs.items():
             ea, eb = self.edges[a], self.edges[b]
-            shared = {ea.u, ea.v} & {eb.u, eb.v}
+            shared = {ea.u, ea.v, *ea.through} & {eb.u, eb.v, *eb.through}
             ys, xs = np.divmod(np.array(ps), w)
             pts = np.stack([xs, ys], 1).astype(float)
             # cluster the overlapping pixels of this pair
@@ -620,7 +711,9 @@ class VesselNetwork:
         width = {}
         for eid, e in self.edges.items():
             width[eid] = float(np.mean(np.maximum(e.r, R_MIN)))
-            G.add_edge(e.u, e.v, key=eid)
+            stops = [e.u] + [n for _, n in self.through_order(eid)] + [e.v]
+            for i, (a, b) in enumerate(zip(stops[:-1], stops[1:])):
+                G.add_edge(a, b, key=(eid, i))
         deg = self.degrees()
         for comp in nx.connected_components(G):
             comp_edges = [eid for eid, e in self.edges.items() if e.u in comp]
@@ -645,7 +738,15 @@ class VesselNetwork:
     # ------------------------------------------------------------- exports
     def to_digraph(self):
         """networkx.DiGraph (MultiDiGraph if parallel edges exist) with
-        node positions/kinds and per-edge geometry + profile statistics."""
+        node positions/kinds and per-edge geometry + profile statistics.
+        Graph edges are vessel segments between nodes: an edge that passes
+        through nodes (a consolidated vessel) contributes one graph edge per
+        segment, each with ``vessel`` = the id of that edge."""
+        if self.has_through():
+            G = self.to_segments().to_digraph()
+            G.graph["crossings"] = self.crossings()
+            G.graph["n_vessels"] = len(self.edges)
+            return G
         import networkx as nx
         multi = len({(e.u, e.v) for e in self.edges.values()}) < len(self.edges)
         G = nx.MultiDiGraph() if multi else nx.DiGraph()
@@ -654,7 +755,8 @@ class VesselNetwork:
             G.add_node(nid, x=n.x, y=n.y, kind=self.node_kind(nid, deg[nid]))
         for eid, e in self.edges.items():
             st = self.edge_stats(eid)
-            attrs = dict(eid=eid, orientation=e.info.get("orientation", "structural"), **st)
+            attrs = dict(eid=eid, vessel=int(e.info.get("vessel", eid)),
+                         orientation=e.info.get("orientation", "structural"), **st)
             if multi:
                 G.add_edge(e.u, e.v, key=eid, **attrs)
             else:
