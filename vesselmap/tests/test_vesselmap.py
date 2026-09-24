@@ -109,3 +109,21 @@ def test_fit_frame_recovers_shift():
     t = np.array(rep["affine"]["t"])
     assert abs(t[0] - 3.0) < 0.6 and abs(t[1] + 2.0) < 0.6, rep
     assert set(net.edges) == set(ref.edges)
+
+
+def test_chained_start_carries_local_deformation_only():
+    from vesselmap.fit import _carry_deformation, apply_affine
+    ref = VesselNetwork((200, 300))
+    _line(ref, (20, 100), (280, 100))
+    A_prev, t_prev = [[1.0, 0.0], [0.0, 1.0]], [10.0, -5.0]
+    prev = ref.copy()
+    apply_affine(prev, A_prev, t_prev)
+    init = prev.copy()                        # previous frame's fit ...
+    (k,) = init.edges
+    init.edges[k].ctrl[1:-1, 1] += 2.0        # ... with a local 2 px bulge
+    init.meta["frame_fit"] = {"affine": {"A": A_prev, "t": t_prev}}
+    base = ref.copy()
+    apply_affine(base, [[1.0, 0.0], [0.0, 1.0]], [-20.0, 7.0])   # this frame moved
+    net = _carry_deformation(ref, base, init)
+    d = net.edges[k].ctrl - base.edges[k].ctrl
+    assert np.allclose(d[1:-1, 1], 2.0) and np.allclose(d[:, 0], 0.0)

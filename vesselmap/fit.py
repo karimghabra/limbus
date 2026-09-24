@@ -631,9 +631,7 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
                      t=m.aff_t.detach().numpy().tolist())
         m.write_back()
     if init is not None:
-        net = init.copy()
-        net.background = base.background
-        net.bg_spacing = base.bg_spacing
+        net = _carry_deformation(ref, base, init)
     else:
         net = base.copy()
     model = NetworkModel(net, P.logI, P.weight, stride=cfg.stride, ref=base)
@@ -658,6 +656,43 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
                   visible_fraction=float(np.mean(list(vis.values()))) if vis else 0.0)
     net.meta["frame_fit"] = report
     return net, report
+
+
+def apply_affine(net: VesselNetwork, A, t):
+    """Apply p -> (p - c) A^T + c + t (c = image centre, as in the renderer's
+    affine) to every node and control point of net, in place."""
+    A = np.asarray(A, float)
+    t = np.asarray(t, float)
+    H, W = net.shape
+    c = np.array([W / 2.0, H / 2.0])
+    f = lambda p: (p - c) @ A.T + c + t
+    for n in net.nodes.values():
+        n.x, n.y = (float(v) for v in f(n.xy))
+    for e in net.edges.values():
+        e.ctrl = f(e.ctrl)
+
+
+def _carry_deformation(ref: VesselNetwork, base: VesselNetwork, init: VesselNetwork):
+    """Start for this frame: its globally aligned map (base) plus the local
+    deformation the previous frame's fit (init) had relative to its own
+    aligned map; profiles are taken from init."""
+    net = base.copy()
+    prev = ref.copy()
+    aff = (init.meta.get("frame_fit") or {}).get("affine")
+    if aff:
+        apply_affine(prev, aff["A"], aff["t"])
+    for k, n in net.nodes.items():
+        if k in init.nodes and k in prev.nodes:
+            d = init.nodes[k].xy - prev.nodes[k].xy
+            n.x, n.y = (float(v) for v in n.xy + d)
+    for k, e in net.edges.items():
+        if k in init.edges and k in prev.edges and init.edges[k].ctrl.shape == e.ctrl.shape:
+            e.ctrl = e.ctrl + (init.edges[k].ctrl - prev.edges[k].ctrl)
+            ie = init.edges[k]
+            if ie.r.shape == e.r.shape:
+                e.r, e.s, e.a = ie.r.copy(), ie.s.copy(), ie.a.copy()
+        net.sync_ends(k)
+    return net
 
 
 def phase_shift(model: NetworkModel, P: Prepared, hp_sigma=15.0):
