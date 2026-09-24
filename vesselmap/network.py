@@ -508,7 +508,11 @@ class VesselNetwork:
             if changed:
                 continue
 
-    def merge_joints(self, cos_max=-0.5):
+    def _calibre(self, eid):
+        e = self.edges[eid]
+        return float(np.median(e.r) + np.median(e.s))
+
+    def merge_joints(self, cos_max=-0.5, width_ratio=2.5):
         """Fuse the two edges at every degree-2 node into a single edge when
         they continue smoothly through it (outward tangents at least 120
         degrees apart).  Sharper meetings stay as two edges and a 'joint'
@@ -525,6 +529,13 @@ class VesselNetwork:
                     far1 = self.edges[e1].v if end1 == 0 else self.edges[e1].u
                     far2 = self.edges[e2].v if end2 == 0 else self.edges[e2].u
                     if np.dot(self.end_tangent(e1, end1), self.end_tangent(e2, end2)) > cos_max:
+                        continue
+                    # only vessels of compatible calibre become one spline: a
+                    # thin piece fused to a wide one would give a wide vessel
+                    # the thin one's flexibility (it then patches profile
+                    # misfit instead of following a vessel)
+                    w1, w2 = self._calibre(e1), self._calibre(e2)
+                    if max(w1, w2) / max(min(w1, w2), 1e-6) > width_ratio:
                         continue
                     if far1 == far2:
                         # two edges between the same pair of nodes: a lens.

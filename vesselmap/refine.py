@@ -340,6 +340,10 @@ def refine_map(intensity: np.ndarray, net: VesselNetwork, cfg: MapConfig | None 
         net._nid, net._eid, net._adj = seg._nid, seg._eid, None
     log = lambda *a: _say(cfg, f"[{time.time() - t0:6.0f}s]", *a) if rc.verbose else None
     L_start = net.summary()["total_length_px"]
+    # the map we start from has already passed the evidence test: new
+    # proposals may take some of its evidence, but must not get it pruned
+    for e in net.edges.values():
+        e.info["protected"] = True
     split_test(net, P, cfg, rc, log)
     for band in rc.fine_bands:
         for rep in range(rc.max_reps):
@@ -391,6 +395,8 @@ def refine_map(intensity: np.ndarray, net: VesselNetwork, cfg: MapConfig | None 
     gains, _ = model.edge_gains()
     for k, eid in enumerate(model.eids):
         net.edges[eid].info["gain"] = float(gains[k])
+    for e in net.edges.values():
+        e.info.pop("protected", None)
     net.orient_structural()
     net.meta.setdefault("refinements", []).append(dict(
         seconds=round(time.time() - t0, 1), length_before=round(L_start, 1),
