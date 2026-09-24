@@ -175,21 +175,35 @@ class VesselNetwork:
     # --------------------------------------------------------------- sampling
     def length(self, eid) -> float:
         e = self.edges[eid]
-        return sp.arclength_params(e.ctrl, 1.0)[1]
+        n = len(e.ctrl)
+        return float(sp.arclength(sp.design(n, max(128, 16 * n)) @ e.ctrl)[-1])
 
     def sample(self, eid, spacing: float = 0.7) -> dict:
         """Dense samples of an edge, evenly spaced in arclength: xy, unit
-        tangent, arclength, r, s, a."""
+        tangent, arclength, r, s, a.  Uses cached dense evaluations at
+        uniform parameters, re-spaced by arclength with linear interpolation
+        (the renderer evaluates the splines exactly)."""
         self.sync_ends(eid)
         e = self.edges[eid]
-        u, _ = sp.arclength_params(e.ctrl, spacing)
-        xy = sp.design_at(len(e.ctrl), u) @ e.ctrl
-        d1 = sp.design_at(len(e.ctrl), u, 1) @ e.ctrl
+        n = len(e.ctrl)
+        m0 = max(128, 16 * n)
+        xy_d = sp.design(n, m0) @ e.ctrl
+        d1_d = sp.design(n, m0, 1) @ e.ctrl
+        prof_d = sp.design(len(e.r), m0) @ np.stack([e.r, e.s, e.a], 1)
+        s_d = sp.arclength(xy_d)
+        L = float(s_d[-1])
+        m = sp.n_samples_for_length(L, spacing)
+        q = np.linspace(0.0, L, m)
+        if L <= 0:
+            idx = np.zeros(m, int)
+            xy, d1, pr = xy_d[idx], d1_d[idx], prof_d[idx]
+        else:
+            f = lambda arr: np.stack([np.interp(q, s_d, arr[:, j]) for j in range(arr.shape[1])], 1)
+            xy, d1, pr = f(xy_d), f(d1_d), f(prof_d)
         tan = d1 / (np.linalg.norm(d1, axis=1, keepdims=True) + 1e-9)
-        Bp = sp.design_at(len(e.r), u)
-        return dict(xy=xy.astype(float), tan=tan, s_arc=sp.arclength(xy), u=u,
-                    r=np.maximum(Bp @ e.r, R_MIN), s=np.maximum(Bp @ e.s, S_MIN),
-                    a=np.maximum(Bp @ e.a, A_MIN))
+        return dict(xy=xy.astype(float), tan=tan, s_arc=sp.arclength(xy),
+                    r=np.maximum(pr[:, 0], R_MIN), s=np.maximum(pr[:, 1], S_MIN),
+                    a=np.maximum(pr[:, 2], A_MIN))
 
     def edge_stats(self, eid) -> dict:
         smp = self.sample(eid, 1.0)

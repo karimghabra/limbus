@@ -21,8 +21,12 @@ pip install -r requirements-vesselmap.txt
 #    --set reps_per_band=2 penalty_scale=3.0 is about 25 min at slightly lower recall)
 python -m vesselmap map reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/map
 
-# 2. adjust it to other (stabilised) frames: same ids, small moves
-python -m vesselmap fit-frames out/map/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
+# 2. add fine detail: small vessels and forks whose branches run side by side
+#    (about 40 min; can be repeated on its own output)
+python -m vesselmap refine out/map/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/refined
+
+# 3. adjust it to other (stabilised) frames: same ids, small moves
+python -m vesselmap fit-frames out/refined/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
 
 # score the mapper on synthetic images with known ground truth
 python -m vesselmap synth-eval --seeds 0 1 2 -o out/synth
@@ -65,7 +69,9 @@ weighted squared residuals, with per-pixel noise estimated from the image,
 plus bending energy, smoothness of the profiles along each edge and smoothness
 of the background. Every edge, and every overlap and junction, is scored
 together. The renderer is written in PyTorch, so all splines are optimised
-jointly with Adam. On CPU the per-pixel kernel is fused with `torch.compile`
+jointly with Adam. Each centreline is rendered from samples spaced evenly in
+arclength, not in the spline parameter. Otherwise the fit can exploit gaps
+where control points bunch up. On CPU the per-pixel kernel is fused with `torch.compile`
 when a C++ compiler is available.
 
 **Discovery** (`build_map`) runs coarse to fine over ridge-scale bands 10–20,
@@ -93,6 +99,24 @@ when a C++ compiler is available.
    for, and remove edges whose gain does not pay for their parameters (a BIC
    / MDL test). Also remove blob-shaped edges and edges that duplicate a
    stronger parallel edge.
+
+**Refinement** (`refine_map`, `python -m vesselmap refine`) keeps the map
+and adds fine detail:
+
+* *Split test for parallel vessels.* A fork whose two branches then run side
+  by side is often fitted as one wide vessel, or as one vessel with its
+  neighbour missed. For every edge, the cross-section of what it explains
+  (its own contribution plus the residual) is averaged in 16 px windows. A
+  stretch where that profile has two separate dark peaks is replaced by two
+  parallel edges that fork where they converge. All candidate splits are
+  fitted jointly, and each one is kept only if it lowers the NLL in its own
+  neighbourhood by more than the MDL cost of the extra edge.
+* *Fine-scale rounds* with elongated oriented ridge filters, 12
+  orientations and about 3× longer along the vessel than across it. They
+  integrate along a vessel, so faint capillaries rise above the noise while
+  speckle does not. Bands 1.6–2.6, 1.1–1.6 and 0.8–1.1 px each repeat
+  until a round adds less than 60 px of centreline.
+* A second split test, then a joint fit and pruning.
 
 **Per-frame fitting** (`fit_frame`) first aligns the map to the frame
 globally. Phase correlation between the rendered vessel image and the frame's
