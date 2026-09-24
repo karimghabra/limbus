@@ -170,7 +170,7 @@ def _edge_index(net: VesselNetwork, spacing=1.0):
 
 
 def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0,
-                  sharp_ratio=0.35):
+                  sharp_ratio=0.35, lumen_ratio=2.5):
     """Drop the parts of proposals that run parallel inside an existing
     vessel's footprint: they are misfit of that vessel, not new vessels.
     Misfit residuals cannot be sharper than the vessel's own blur, so a
@@ -195,7 +195,10 @@ def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0,
             reach = idx["rs"][cand, 0] + 0.7 * idx["rs"][cand, 1] + slack
             par = np.abs((idx["tan"][cand] * tan[i]).sum(1)) > cos_par
             coarse = sd.scale[i] >= sharp_ratio * idx["rs"][cand, 1]
-            if np.any((d < reach) & par & coarse):
+            # any direction: a much finer ridge inside the lumen of a wide
+            # vessel is texture or profile misfit of that vessel
+            lumen = (d < idx["rs"][cand, 0] - 0.5) & (idx["rs"][cand, 0] >= lumen_ratio * sd.scale[i])
+            if np.any((d < reach) & par & coarse) or np.any(lumen):
                 shadow[i] = True
         # keep runs of un-shadowed points
         keep = ~shadow
@@ -418,8 +421,36 @@ def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9, ra
         if inside.mean() > frac:
             net.remove_edge(eid)
             removed.append(eid)
+    removed += remove_inside_lumen(net)
     if removed:
         net.merge_joints()
+    return removed
+
+
+def remove_inside_lumen(net: VesselNetwork, ratio=3.0, frac=0.6):
+    """Remove edges that run mostly inside the lumen of a vessel at least
+    `ratio` times wider (texture or profile misfit of that vessel)."""
+    big = [k for k, e in net.edges.items() if float(np.median(e.r)) >= 3.0]
+    if not big:
+        return []
+    xs, rs, ids = [], [], []
+    for k in big:
+        so = net.sample(k, 1.0)
+        xs.append(so["xy"])
+        rs.append(so["r"])
+        ids.append(np.full(len(so["xy"]), k))
+    X, Rr, I = np.concatenate(xs), np.concatenate(rs), np.concatenate(ids)
+    tree = cKDTree(X)
+    removed = []
+    for k in list(net.edges):
+        e = net.edges[k]
+        rk = float(np.median(e.r) + 0.5 * np.median(e.s))
+        smp = net.sample(k, 1.0)
+        d, j = tree.query(smp["xy"])
+        inside = (d < Rr[j] - 0.5) & (Rr[j] >= ratio * rk) & (I[j] != k)
+        if inside.mean() > frac:
+            net.remove_edge(k)
+            removed.append(k)
     return removed
 
 
@@ -474,7 +505,9 @@ def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
         net.edges[eid].info.update(gain=float(gains[k]), penalty=float(pen),
                                    gain_per_px=float(gains[k] / L))
         gdict[eid] = float(gains[k])
-        if eid in protect:
+        # protected edges (e.g. the map a refinement started from) are only
+        # removed when they make the fit worse
+        if eid in protect or (net.edges[eid].info.get("protected") and gains[k] > 0):
             continue
         st_w = float(np.mean(net.edges[eid].r) + np.mean(net.edges[eid].s))
         dg = net.degrees()
