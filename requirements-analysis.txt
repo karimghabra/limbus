@@ -1,6 +1,9 @@
-# Offline stabilization (analysis/stabilize) only: no camera, driver or GUI.
+# Offline stabilization (analysis/stabilize) and vessel annotation
+# (analysis/lucky) only: no camera, driver or GUI.
 # Tested with Python 3.12: numpy 2.5.3, opencv-python 5.0.0.93, tifffile 2026.9.15.
 # Every result's metrics.json records the exact versions that produced it.
 numpy>=2.0
 opencv-python>=4.8
 tifffile>=2024.1
+scipy>=1.10          # analysis/lucky
+scikit-image>=0.22   # analysis/lucky

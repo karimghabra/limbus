@@ -154,8 +154,8 @@ every step works and how it was validated.
 
 ## Analysis on another computer
 
-Stabilization needs no camera, driver or GUI — only Python 3.10+ and three
-packages:
+Stabilization and vessel annotation need no camera, driver or GUI — only
+Python 3.10+ and a few packages:
 
 ```bash
 git clone https://github.com/karimghabra/limbus.git
@@ -189,11 +189,28 @@ Results go to `stabilization/<method>/<burst>/` beside the input folder
 (or `--out DIR`), with `summary.html` ranking every burst. Re-running skips
 results that are already current — same code version and parameters.
 
+**Lucky image and vessel annotation.** Once a burst is stabilized:
+
+```bash
+python -m lucky ../reference_data                  # after python -m stabilize ... --method nonrigid
+```
+
+This re-warps each raw frame with the saved transforms and fuses them band
+by band. At each place, fine detail is weighted towards the frames that
+were sharp there, which gives `lucky.tif`. It then traces the vessels:
+centrelines, a half-maximum vessel mask, widths, and a per-segment table.
+Results go to `stabilization/lucky/<burst>/`, with `compare.png` setting the
+new annotation beside the skeleton of the stabilization's consensus mask,
+and `summary.csv` comparing every burst. See
+[`analysis/lucky/METHODS.md`](analysis/lucky/METHODS.md) for how it works
+and how it was validated.
+
 **Tests.** From the repository root:
 
 ```bash
 python analysis/tests/test_synthetic.py       # translation vs known motion
 python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks
+python analysis/tests/test_lucky_synthetic.py # annotation vs known vessels
 ```
 
 ## Repository layout
@@ -202,6 +219,7 @@ python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks
 |---|---|
 | `camera_recorder.py`, `run.bat`, `run.sh` | the recorder app and its launchers |
 | `analysis/stabilize/` | offline stabilization package, with `METHODS.md` |
+| `analysis/lucky/` | lucky fusion and vessel annotation of stabilized bursts, with `METHODS.md` |
 | `analysis/tests/` | synthetic ground-truth and smoke tests |
 | `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |
 | `tools/` | building and fetching the reference-data release |
