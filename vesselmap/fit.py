@@ -1,0 +1,609 @@
+"""Fitting a whole vessel network to ONE image, and re-fitting it per frame.
+
+``build_map``   discovers the network from scratch (coarse to fine):
+
+    1. robust smooth background, empty network
+    2. for each scale band, coarse -> fine, a few times:
+         a. residual = image - current model
+         b. propose centrelines = multi-scale ridges of the residual in the
+            band (so vessels already explained are not proposed twice, and a
+            thin vessel crossing a thick one is still found)
+         c. turn proposals into spline edges, join them to the network
+            (gap bridging, bifurcation snapping, crossing resolution)
+         d. jointly optimise every spline and the background
+         e. score every edge by how much of the image it explains
+            (drop of the negative log-likelihood) and remove edges whose
+            gain does not pay for their parameters (MDL / BIC)
+    3. final topology clean-up and joint optimisation at full resolution.
+
+``fit_frame``   takes an existing map and adjusts it to another frame:
+    global affine pre-alignment, then a joint optimisation with a prior that
+    keeps every parameter close to the reference map.  The topology is not
+    changed; every edge reports how visible it is in that frame.
+
+Only single-frame intensities are used.  Nothing in this module looks at
+temporal changes, kymographs or flow.
+"""
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass, field, asdict
+
+import numpy as np
+import torch
+from scipy.spatial import cKDTree
+
+from .image import Prepared, prepare
+from .network import S_MIN, R_MIN, VesselNetwork, pos_spacing_for
+from .render import NetworkModel, profile_peak
+from .ridges import detect
+
+torch.set_num_threads(max(1, torch.get_num_threads()))
+
+
+@dataclass
+class MapConfig:
+    bands: tuple = ((10.0, 20.0), (5.0, 10.0), (2.5, 5.0), (1.2, 2.5), (0.8, 1.2))
+    scales_per_band: int = 3
+    z_hi: float = 5.0
+    z_lo: float = 2.5
+    reps_per_band: int = 2
+    iters_band: int = 120
+    iters_final: int = 300
+    rebuild_every: int = 25
+    penalty_scale: float = 3.0      # multiplies the BIC parameter cost
+    min_gain_per_px: float = 1.0    # minimum explained NLL per px of length
+    min_length: float = 6.0
+    bg_spacing: float = 64.0
+    lam_bend: float = 300.0
+    lam_prof: float = 20.0
+    lam_bg: float = 2e4
+    lr_pos: float = 0.15
+    lr_prof: float = 0.04
+    lr_bg: float = 0.004
+    verbose: bool = True
+    log: list = field(default_factory=list)
+    callback: object = None         # callback(net, stage_name) for debugging
+
+    bg_free_below: float = 5.0      # background frozen for bands starting at >= this
+    anchor_px: float = 5.0          # positional prior per optimisation round
+    min_elongation: float = 2.5     # length / (2r + 2s) below which an edge is a blob
+
+    def priors(self):
+        return dict(lam_bend=self.lam_bend, lam_prof=self.lam_prof, lam_bg=self.lam_bg)
+
+    def anchor(self):
+        # positions stay within a few px of where the round started; the
+        # profiles are free (huge sigmas)
+        return dict(sigma_pos=self.anchor_px, sigma_logprof=1e3, sigma_amp=1e3)
+
+
+def _snap(cfg, net, stage):
+    if cfg.callback is not None:
+        cfg.callback(net, stage)
+
+
+def _say(cfg, *a):
+    msg = " ".join(str(x) for x in a)
+    cfg.log.append(msg)
+    if cfg.verbose:
+        print(msg, flush=True)
+
+
+# --------------------------------------------------------------- optimiser
+def optimize(model: NetworkModel, iters: int, lr_pos=0.15, lr_prof=0.04, lr_bg=0.004,
+             rebuild_every=25, track=None, priors=None, fit_pos=True, fit_prof=True,
+             fit_bg=True, affine=False, lr_aff=(1e-3, 0.3)):
+    groups = []
+    if fit_pos:
+        groups.append(dict(params=[model.node_xy, model.inner], lr=lr_pos))
+    if fit_prof:
+        groups.append(dict(params=[model.raw_r, model.raw_s, model.raw_a], lr=lr_prof))
+        groups.append(dict(params=[model.raw_hw, model.raw_hs], lr=lr_prof * 0.5))
+    if fit_bg and model.bg.requires_grad:
+        groups.append(dict(params=[model.bg], lr=lr_bg))
+    if affine:
+        model.aff_A.requires_grad_(True)
+        model.aff_t.requires_grad_(True)
+        groups.append(dict(params=[model.aff_A], lr=lr_aff[0]))
+        groups.append(dict(params=[model.aff_t], lr=lr_aff[1]))
+    if not groups or iters <= 0:
+        return []
+    opt = torch.optim.Adam(groups)
+    base = [g["lr"] for g in opt.param_groups]
+    hist = []
+    for it in range(iters):
+        f = 0.5 * (1 + math.cos(math.pi * it / iters)) * 0.9 + 0.1
+        for g, b in zip(opt.param_groups, base):
+            g["lr"] = b * f
+        opt.zero_grad(set_to_none=True)
+        loss, nll, _, _ = model.loss(track=track, priors=priors)
+        loss.backward()
+        # parameters that are not fitted must not move
+        if not fit_pos:
+            for p in (model.node_xy, model.inner):
+                p.grad = None
+        opt.step()
+        model.project()
+        hist.append((float(loss.detach()), float(nll.detach())))
+        if rebuild_every and (it + 1) % rebuild_every == 0 and it + 1 < iters:
+            model.rebuild()
+    model.rebuild()
+    return hist
+
+
+# --------------------------------------------------------------- proposals
+def seeds_to_edges(net: VesselNetwork, seeds, band):
+    new = []
+    for sd in seeds:
+        sc = np.clip(sd.scale, band[0], band[1])
+        w = np.median(sc) / math.sqrt(2.0)                  # Gaussian-equivalent std
+        s = max(S_MIN, 0.6 * w)
+        r = max(R_MIN, 2.0 * math.sqrt(max(w * w - s * s, 0.04)))
+        amp = float(np.clip(np.median(sd.amp), 0.005, 3.0))
+        a = amp / float(profile_peak(r, s))
+        n = len(sd.xy)
+        eid = net.add_edge_dense(sd.xy, np.full(n, r), np.full(n, s), np.full(n, a),
+                                 info=dict(band=list(band), z=float(np.median(sd.z))))
+        new.append(eid)
+    return new
+
+
+def _edge_index(net: VesselNetwork, spacing=1.0):
+    """KD-tree over dense samples of all edges, with tangents and reach."""
+    xs, ts, rs, ids = [], [], [], []
+    for eid in net.edges:
+        smp = net.sample(eid, spacing)
+        xs.append(smp["xy"])
+        ts.append(smp["tan"])
+        rs.append(np.stack([smp["r"], smp["s"]], 1))
+        ids.append(np.full(len(smp["xy"]), eid))
+    if not xs:
+        return None
+    X = np.concatenate(xs)
+    return dict(tree=cKDTree(X), xy=X, tan=np.concatenate(ts), rs=np.concatenate(rs),
+                eid=np.concatenate(ids))
+
+
+def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0):
+    """Drop the parts of proposals that run parallel inside an existing
+    vessel's footprint (they are misfit of that vessel, not new vessels)."""
+    idx = _edge_index(net)
+    if idx is None:
+        return seeds
+    out = []
+    for sd in seeds:
+        xy = sd.xy
+        tan = np.gradient(xy, axis=0)
+        tan /= np.linalg.norm(tan, axis=1, keepdims=True) + 1e-9
+        rmax = float(idx["rs"][:, 0].max() + idx["rs"][:, 1].max() + slack + 2)
+        shadow = np.zeros(len(xy), bool)
+        nb = idx["tree"].query_ball_point(xy, rmax)
+        for i, cand in enumerate(nb):
+            if not cand:
+                continue
+            cand = np.asarray(cand)
+            d = np.linalg.norm(idx["xy"][cand] - xy[i], axis=1)
+            reach = idx["rs"][cand, 0] + 0.7 * idx["rs"][cand, 1] + slack
+            par = np.abs((idx["tan"][cand] * tan[i]).sum(1)) > cos_par
+            if np.any((d < reach) & par):
+                shadow[i] = True
+        # keep runs of un-shadowed points
+        keep = ~shadow
+        if keep.all():
+            out.append(sd)
+            continue
+        lab = np.cumsum(np.r_[1, np.diff(keep.astype(int)) != 0])
+        for l in np.unique(lab[keep]):
+            m = lab == l
+            sub = type(sd)(sd.xy[m], sd.scale[m], sd.amp[m], sd.z[m], [None, None])
+            if sub.length >= min_len:
+                out.append(sub)
+    return out
+
+
+# --------------------------------------------------------------- topology
+def connect_ends(net: VesselNetwork, gap_factor=5.0, max_gap=40.0, cone_deg=40.0):
+    """Bridge gaps between collinear free ends and snap free ends that run
+    into another vessel onto it (creating a bifurcation)."""
+    h, w = net.shape
+    for _ in range(3):
+        changed = False
+        deg = net.degrees()
+        free = [n for n in net.nodes if deg[n] == 1 and net.node_kind(n, 1) == "endpoint"]
+        if not free:
+            break
+        info = {}
+        for n in free:
+            (eid, end), = net.incident(n)
+            info[n] = (eid, end, net.end_tangent(eid, end), net.end_width(eid, end))
+        # (a) end-to-end continuation
+        cands = []
+        P = np.array([net.nodes[n].xy for n in free])
+        tree = cKDTree(P)
+        for i, n in enumerate(free):
+            eid, end, t, wd = info[n]
+            G = min(max_gap, max(10.0, gap_factor * wd))
+            for j in tree.query_ball_point(P[i], G):
+                m = free[j]
+                if m == n or info[m][0] == eid:
+                    continue
+                v = P[j] - P[i]
+                dist = np.linalg.norm(v)
+                if dist < 1e-6:
+                    cands.append((0.0, n, m))
+                    continue
+                c1 = np.dot(v / dist, t)
+                c2 = np.dot(-v / dist, info[m][2])
+                c3 = np.dot(t, info[m][2])
+                if c1 > math.cos(math.radians(cone_deg)) and c2 > math.cos(math.radians(cone_deg)) and c3 < -0.5:
+                    wr = max(wd, info[m][3]) / min(wd, info[m][3])
+                    if wr < 3.0:
+                        cands.append((dist * (2.5 - c1 - c2) * (1 + 0.3 * math.log(wr)), n, m))
+        cands.sort()
+        used = set()
+        for _, n, m in cands:
+            if n in used or m in used or n not in net.nodes or m not in net.nodes:
+                continue
+            (e1, end1), = net.incident(n)
+            (e2, end2), = net.incident(m)
+            if e1 == e2:
+                continue
+            net.join_edges(e1, end1, e2, end2)
+            used |= {n, m}
+            changed = True
+        # (b) snapping into another vessel
+        idx = _edge_index(net, 1.0)
+        if idx is None:
+            break
+        rmax = float(idx["rs"][:, 0].max())
+        deg = net.degrees()
+        for n in list(net.nodes):
+            if n not in net.nodes or deg.get(n, 0) != 1 or net.node_kind(n, 1) != "endpoint":
+                continue
+            inc = net.incident(n)
+            if len(inc) != 1:
+                continue
+            (eid, end), = inc
+            t = net.end_tangent(eid, end)
+            wd = net.end_width(eid, end)
+            p = net.nodes[n].xy
+            reach = max(6.0, 2.5 * wd)
+            cand = np.asarray(idx["tree"].query_ball_point(p, reach + rmax), dtype=int)
+            if cand.size == 0:
+                continue
+            cand = cand[idx["eid"][cand] != eid]
+            if cand.size == 0:
+                continue
+            v = idx["xy"][cand] - p
+            dist = np.linalg.norm(v, axis=1)
+            along = (v * t).sum(1)
+            inside = dist < idx["rs"][cand, 0] + 1.0          # end already inside
+            ahead = (dist < reach + idx["rs"][cand, 0]) & (along >= 0.6 * dist)
+            ok = inside | ahead
+            if not ok.any():
+                continue
+            k = cand[ok][np.argmin(dist[ok])]
+            q = idx["xy"][k]
+            target = _current_edge_at(net, int(idx["eid"][k]), q, exclude=eid)
+            if target is None:
+                continue
+            nid = net.split_edge(target, q)
+            if nid == n:
+                continue
+            # extend the free end to the junction node, then merge the nodes
+            smp = net.sample(eid, 0.7)
+            xy = smp["xy"]
+            if end == 0:
+                xy = np.vstack([net.nodes[nid].xy, xy])
+                r, s, a = (np.r_[smp[k_][0], smp[k_]] for k_ in ("r", "s", "a"))
+            else:
+                xy = np.vstack([xy, net.nodes[nid].xy])
+                r, s, a = (np.r_[smp[k_], smp[k_][-1]] for k_ in ("r", "s", "a"))
+            net.merge_nodes(nid, n)
+            if eid in net.edges:
+                net.refit_edge(eid, xy, r, s, a)
+            changed = True
+            deg = net.degrees()
+        net.merge_joints()
+        if not changed:
+            break
+
+
+def _current_edge_at(net: VesselNetwork, eid_hint, q, exclude=None, tol=2.0):
+    """The edge that now passes through q: eid_hint if it still exists,
+    otherwise the nearest current edge (edges get split while snapping)."""
+    if eid_hint in net.edges:
+        return eid_hint
+    best, bd = None, tol
+    for k, e in net.edges.items():
+        if k == exclude:
+            continue
+        c = e.ctrl
+        if (q[0] < c[:, 0].min() - 30 or q[0] > c[:, 0].max() + 30 or
+                q[1] < c[:, 1].min() - 30 or q[1] > c[:, 1].max() + 30):
+            continue
+        d = np.linalg.norm(net.sample(k, 1.0)["xy"] - q, axis=1).min()
+        if d < bd:
+            best, bd = k, d
+    return best
+
+
+def clean_topology(net: VesselNetwork, min_length=6.0):
+    net.merge_close_nodes(1.5)
+    net.resolve_crossings()
+    net.resolve_near_crossings()
+    net.merge_joints()
+    for eid in list(net.edges):
+        if eid in net.edges and net.length(eid) < min_length:
+            deg = net.degrees()
+            e = net.edges[eid]
+            # short spurs from a junction to nowhere are skeleton artefacts
+            if deg[e.u] == 1 or deg[e.v] == 1:
+                net.remove_edge(eid)
+    net.merge_joints()
+
+
+def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9):
+    """Remove edges that mostly run inside and parallel to a stronger edge."""
+    order = sorted(net.edges, key=lambda e: gains.get(e, 0.0))
+    removed = []
+    for eid in order:
+        if eid not in net.edges or len(net.edges) < 2:
+            continue
+        others = {k: v for k, v in net.edges.items() if k != eid}
+        smp = net.sample(eid, 1.0)
+        # build a light index of the other edges near this one
+        bb0 = smp["xy"].min(0) - 40
+        bb1 = smp["xy"].max(0) + 40
+        xs, ts, rs = [], [], []
+        for k in others:
+            e = net.edges[k]
+            c = e.ctrl
+            if (c[:, 0].max() < bb0[0] or c[:, 0].min() > bb1[0] or
+                    c[:, 1].max() < bb0[1] or c[:, 1].min() > bb1[1]):
+                continue
+            if gains.get(k, 0.0) < gains.get(eid, 0.0):
+                continue
+            so = net.sample(k, 1.0)
+            xs.append(so["xy"])
+            ts.append(so["tan"])
+            rs.append(so["r"] + 0.7 * so["s"] + 1.0)
+        if not xs:
+            continue
+        X = np.concatenate(xs)
+        T = np.concatenate(ts)
+        Rr = np.concatenate(rs)
+        d, j = cKDTree(X).query(smp["xy"])
+        par = np.abs((T[j] * smp["tan"]).sum(1)) > cos_par
+        inside = (d < Rr[j]) & par
+        if inside.mean() > frac:
+            net.remove_edge(eid)
+            removed.append(eid)
+    if removed:
+        net.merge_joints()
+    return removed
+
+
+def reparameterize(net: VesselNetwork, tol=0.25):
+    """Refit edges whose length changed so much during optimisation that
+    their control-point spacing no longer matches, and give edges that
+    turned out thinner than proposed the finer spacing their calibre calls
+    for (thin vessels can be tortuous)."""
+    for eid in list(net.edges):
+        e = net.edges[eid]
+        L = net.length(eid)
+        sp_ = e.info.get("spacing", 12.0)
+        cal = float(np.median(e.r) + np.median(e.s))
+        sp_cal = pos_spacing_for(cal)
+        refine = sp_cal < 0.75 * sp_
+        if refine:
+            sp_ = sp_cal
+        want = max(4, int(np.ceil(L / sp_)) + 1)
+        if refine or abs(want - len(e.ctrl)) > max(1, tol * len(e.ctrl)):
+            smp = net.sample(eid, 0.7)
+            net.refit_edge(eid, smp["xy"], smp["r"], smp["s"], smp["a"], spacing=sp_)
+
+
+def n_params(net: VesselNetwork, eid) -> int:
+    e = net.edges[eid]
+    return 2 * max(len(e.ctrl) - 2, 0) + 4 + 3 * len(e.r)
+
+
+def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
+    gains, counts = model.edge_gains()
+    gdict = {}
+    removed = []
+    for k, eid in enumerate(model.eids):
+        if eid not in net.edges:
+            continue
+        L = max(net.length(eid), 1.0)
+        pen = cfg.penalty_scale * 0.5 * n_params(net, eid) * math.log(max(counts[k], 2.0))
+        net.edges[eid].info.update(gain=float(gains[k]), penalty=float(pen),
+                                   gain_per_px=float(gains[k] / L))
+        gdict[eid] = float(gains[k])
+        if eid in protect:
+            continue
+        st_w = float(np.mean(net.edges[eid].r) + np.mean(net.edges[eid].s))
+        blob = L < cfg.min_elongation * 2.0 * st_w and min(net.degrees()[net.edges[eid].u],
+                                                            net.degrees()[net.edges[eid].v]) <= 1
+        if gains[k] < pen or gains[k] / L < cfg.min_gain_per_px or blob:
+            removed.append(eid)
+    for eid in removed:
+        if eid in net.edges:
+            net.remove_edge(eid)
+    net.merge_joints()
+    dup = remove_duplicates(net, gdict)
+    return removed + dup, gdict
+
+
+# --------------------------------------------------------------- the map
+def band_scales(band, n):
+    return np.geomspace(band[0], band[1], n)
+
+
+def residual_image(model: NetworkModel) -> np.ndarray:
+    with torch.no_grad():
+        return (model.logI - model.predict()).numpy()
+
+
+def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
+              prepared: Prepared | None = None) -> VesselNetwork:
+    """Discover the full vessel network of a single image."""
+    cfg = cfg or MapConfig()
+    P = prepared or prepare(intensity)
+    net = VesselNetwork(P.shape)
+    t0 = time.time()
+    # the background starts as a robust upper envelope that ignores dark
+    # (vessel) pixels, and stays frozen while the coarse vessels are found:
+    # a least-squares background fitted first would absorb wide vessels
+    model = NetworkModel(net, P.logI, P.weight, stride=2, bg_spacing=cfg.bg_spacing)
+    model.write_back()
+    for band in cfg.bands:
+        lr_bg = 0.0 if band[0] >= cfg.bg_free_below else cfg.lr_bg
+        stride = 2 if band[0] >= 5.0 else 1
+        for rep in range(cfg.reps_per_band):
+            model = NetworkModel(net, P.logI, P.weight, stride=stride, bg_spacing=cfg.bg_spacing)
+            res = residual_image(model)
+            seeds = detect(-res, P.sigma, band_scales(band, cfg.scales_per_band),
+                           z_hi=cfg.z_hi, z_lo=cfg.z_lo,
+                           min_len=max(cfg.min_length, 2.5 * band[0]), valid=P.valid)
+            n_raw = len(seeds)
+            seeds = shadow_filter(seeds, net, max(cfg.min_length, 2.5 * band[0]))
+            if not seeds:
+                _say(cfg, f"[{time.time()-t0:6.0f}s] band {band} rep {rep}: no proposals")
+                break
+            new = seeds_to_edges(net, seeds, band)
+            _snap(cfg, net, f"b{band[0]}_r{rep}_1seeds")
+            clean_topology(net, cfg.min_length)
+            connect_ends(net)
+            net.resolve_near_crossings()
+            _snap(cfg, net, f"b{band[0]}_r{rep}_2topo")
+            model = NetworkModel(net, P.logI, P.weight, stride=stride, bg_spacing=cfg.bg_spacing,
+                                 ref=net)
+            optimize(model, cfg.iters_band, cfg.lr_pos, cfg.lr_prof, lr_bg,
+                     cfg.rebuild_every, priors=cfg.priors(), track=cfg.anchor(),
+                     fit_bg=lr_bg > 0)
+            model.write_back()
+            reparameterize(net)
+            _snap(cfg, net, f"b{band[0]}_r{rep}_3fit")
+            n_before = len(net.edges)
+            removed, _ = score_and_prune(net, model, cfg)
+            new_alive = len(set(new) & set(net.edges))
+            _snap(cfg, net, f"b{band[0]}_r{rep}_4pruned")
+            _say(cfg, f"[{time.time()-t0:6.0f}s] band {band} rep {rep}: {n_raw} ridges -> "
+                      f"{len(seeds)} proposals, kept {n_before - len(removed)} of "
+                      f"{n_before} edges; network {net.summary()}")
+            if len(new) and new_alive == 0 and len(removed) >= len(new):
+                break
+    # final joint refinement at full resolution
+    clean_topology(net, cfg.min_length)
+    connect_ends(net)
+    net.resolve_near_crossings()
+    model = NetworkModel(net, P.logI, P.weight, stride=1, bg_spacing=cfg.bg_spacing, ref=net)
+    optimize(model, cfg.iters_final, cfg.lr_pos * 0.7, cfg.lr_prof, cfg.lr_bg,
+             cfg.rebuild_every, priors=cfg.priors(), track=cfg.anchor())
+    model.write_back()
+    reparameterize(net)
+    score_and_prune(net, model, cfg)
+    model = NetworkModel(net, P.logI, P.weight, stride=1, bg_spacing=cfg.bg_spacing)
+    optimize(model, 60, cfg.lr_pos * 0.3, cfg.lr_prof * 0.5, cfg.lr_bg * 0.5,
+             cfg.rebuild_every, priors=cfg.priors())
+    model.write_back()
+    gains, _ = model.edge_gains()
+    for k, eid in enumerate(model.eids):
+        net.edges[eid].info["gain"] = float(gains[k])
+    net.orient_structural()
+    net.meta.update(builder="vesselmap.build_map", seconds=round(time.time() - t0, 1),
+                    config={k: v for k, v in asdict(cfg).items() if k not in ("log", "callback")},
+                    final_nll=float(model.data_nll(model.predict())))
+    _say(cfg, f"[{time.time()-t0:6.0f}s] done: {net.summary()}")
+    return net
+
+
+# --------------------------------------------------------------- per frame
+@dataclass
+class FrameFitConfig:
+    iters_align: int = 40
+    iters: int = 80
+    stride: int = 1
+    sigma_pos: float = 3.0          # px: how far control points may drift
+    sigma_logprof: float = 0.35     # relative change of width / blur
+    sigma_amp: float = 0.6          # relative change of contrast
+    lr_pos: float = 0.1
+    lr_prof: float = 0.03
+    lr_bg: float = 0.004
+    visible_gain_per_px: float = 1.0
+
+
+def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | None = None,
+              prepared: Prepared | None = None, priors=None, init: VesselNetwork | None = None):
+    """Adjust a reference map to one (stabilised) frame.
+
+    ref   the map (from build_map), never modified.
+    init  optional starting point, e.g. the result for the previous frame
+          (faster convergence); the prior still pulls towards `ref`.
+
+    Only this frame's intensities are used.  Returns (network, report).  The
+    network has the same node and edge ids as `ref`; only positions and
+    profiles move, within the prior set by `cfg`.  Each edge gets
+    info["visible"], info["frame_gain"] and info["gain_per_px"].
+    """
+    cfg = cfg or FrameFitConfig()
+    P = prepared or prepare(intensity)
+    t0 = time.time()
+    priors = priors or dict(lam_bend=300.0, lam_prof=20.0, lam_bg=2e4)
+    base = ref.copy()
+    align = None
+    if cfg.iters_align > 0 and base.edges:
+        m = NetworkModel(base, P.logI, P.weight, stride=2)
+        optimize(m, cfg.iters_align, lr_bg=cfg.lr_bg, priors=priors, fit_pos=False,
+                 fit_prof=False, affine=True)
+        align = dict(A=(np.eye(2) + m.aff_A.detach().numpy()).tolist(),
+                     t=m.aff_t.detach().numpy().tolist())
+        m.write_back()
+    if init is not None:
+        net = init.copy()
+        net.background = base.background
+        net.bg_spacing = base.bg_spacing
+    else:
+        net = base.copy()
+    model = NetworkModel(net, P.logI, P.weight, stride=cfg.stride, ref=base)
+    track = dict(sigma_pos=cfg.sigma_pos, sigma_logprof=cfg.sigma_logprof, sigma_amp=cfg.sigma_amp)
+    hist = optimize(model, cfg.iters, cfg.lr_pos, cfg.lr_prof, cfg.lr_bg, 25,
+                    track=track, priors=priors)
+    model.write_back()
+    gains, _ = model.edge_gains()
+    vis = {}
+    for k, eid in enumerate(model.eids):
+        L = max(net.length(eid), 1.0)
+        e = net.edges[eid]
+        e.info["frame_gain"] = float(gains[k])
+        e.info["gain_per_px"] = float(gains[k] / L)
+        e.info["visible"] = bool(gains[k] / L >= cfg.visible_gain_per_px)
+        vis[eid] = e.info["visible"]
+    disp = [np.linalg.norm(net.nodes[n].xy - base.nodes[n].xy) for n in net.nodes if n in base.nodes]
+    report = dict(seconds=round(time.time() - t0, 2), affine=align,
+                  final_nll=hist[-1][1] if hist else None,
+                  node_shift_median=float(np.median(disp)) if disp else 0.0,
+                  node_shift_p95=float(np.percentile(disp, 95)) if disp else 0.0,
+                  visible_fraction=float(np.mean(list(vis.values()))) if vis else 0.0)
+    net.meta["frame_fit"] = report
+    return net, report
+
+
+def fit_frames(frames, ref: VesselNetwork, cfg: FrameFitConfig | None = None, chain=True,
+               callback=None):
+    """fit_frame over an iterable of images (arrays or paths).  With chain,
+    each frame starts from the previous frame's result.  Yields
+    (index, network, report)."""
+    from .image import load_image
+    prev = None
+    for i, f in enumerate(frames):
+        I = load_image(f) if isinstance(f, (str, bytes)) or hasattr(f, "__fspath__") else f
+        net, rep = fit_frame(I, ref, cfg, init=prev if chain else None)
+        prev = net
+        if callback:
+            callback(i, net, rep)
+        yield i, net, rep
