@@ -95,7 +95,7 @@ def draw_digraph(net: VesselNetwork, path, intensity=None, figsize=None, dpi=150
         xy = smp["xy"]
         for i in range(len(xy) - 1):
             segs.append(xy[i:i + 2])
-            widths.append(0.25 + 0.35 * 2 * smp["r"][i])
+            widths.append(min(0.3 + 0.12 * 2 * smp["r"][i], 4.0))
             vals.append(smp[key][i] * (2 if key == "r" else 1))
     cmap = plt.get_cmap("viridis_r" if key == "s" else "plasma")
     vmin, vmax = {"s": (0.6, 6.0), "a": (0.0, 0.5), "r": (1.0, 20.0)}[key]

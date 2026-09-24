@@ -70,6 +70,7 @@ class MapConfig:
     bg_free_below: float = 5.0      # background frozen for bands starting at >= this
     anchor_px: float = 5.0          # positional prior per optimisation round
     min_elongation: float = 2.5     # length / (2r + 2s) below which an edge is a blob
+    wide_test_w: float = 8.0        # r + s from which an edge must also beat the background
 
     def priors(self):
         return dict(lam_bend=self.lam_bend, lam_prof=self.lam_prof, lam_bg=self.lam_bg)
@@ -454,6 +455,14 @@ def n_params(net: VesselNetwork, eid, L=None) -> float:
 
 def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
     gains, counts = model.edge_gains()
+    # wide edges must also beat the background: their gain is re-evaluated
+    # with the low-frequency part of their contribution given to it
+    wide = [k for k, eid in enumerate(model.eids) if eid in net.edges and
+            float(np.mean(net.edges[eid].r) + np.mean(net.edges[eid].s)) >= cfg.wide_test_w]
+    if wide:
+        gperp = model.edge_gains_bg_orthogonal(wide)
+        for k in wide:
+            gains[k] = min(gains[k], gperp[k])
     gdict = {}
     removed = []
     for k, eid in enumerate(model.eids):
@@ -569,7 +578,7 @@ def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
     net.orient_structural()
     net.meta.update(builder="vesselmap.build_map", seconds=round(time.time() - t0, 1),
                     config={k: v for k, v in asdict(cfg).items() if k not in ("log", "callback", "prune_stats")},
-                    final_nll=float(model.data_nll(model.predict())))
+                    final_nll=float(model.data_nll(model.predict()).detach()))
     _say(cfg, f"[{time.time()-t0:6.0f}s] done: {net.summary()}")
     return net
 
@@ -611,6 +620,11 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
     align = None
     if cfg.iters_align > 0 and base.edges:
         m = NetworkModel(base, P.logI, P.weight, stride=2)
+        # large capture range: phase correlation of the rendered vessels with
+        # the frame's high-passed image gives the starting translation
+        shift = phase_shift(m, P)
+        with torch.no_grad():
+            m.aff_t.copy_(torch.tensor(shift, dtype=torch.float32))
         optimize(m, cfg.iters_align, lr_bg=cfg.lr_bg, priors=priors, fit_pos=False,
                  fit_prof=False, affine=True)
         align = dict(A=(np.eye(2) + m.aff_A.detach().numpy()).tolist(),
@@ -644,6 +658,28 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
                   visible_fraction=float(np.mean(list(vis.values()))) if vis else 0.0)
     net.meta["frame_fit"] = report
     return net, report
+
+
+def phase_shift(model: NetworkModel, P: Prepared, hp_sigma=15.0):
+    """Translation (dx, dy) that moves the model's vessels onto the frame,
+    by phase correlation of the rendered vessel density with the frame's
+    high-passed negative log image."""
+    import cv2
+    with torch.no_grad():
+        full = model.stride == 1
+        V = model.optical_density().numpy() if full else None
+    if V is None:
+        m1 = NetworkModel(model.net, P.logI, P.weight, stride=1)
+        with torch.no_grad():
+            V = m1.optical_density().numpy()
+    L = np.where(P.valid, P.logI, np.median(P.logI)).astype(np.float32)
+    hp = -(L - cv2.GaussianBlur(L, (0, 0), hp_sigma))
+    hp = np.clip(hp, 0, None)
+    win = cv2.createHanningWindow(hp.shape[::-1], cv2.CV_32F)
+    (dx, dy), resp = cv2.phaseCorrelate(V.astype(np.float32), hp, win)
+    if resp < 0.02:
+        return (0.0, 0.0)
+    return (float(dx), float(dy))
 
 
 def fit_frames(frames, ref: VesselNetwork, cfg: FrameFitConfig | None = None, chain=True,

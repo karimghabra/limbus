@@ -166,7 +166,7 @@ def _block_sparse(blocks, row_off, col_off, n_rows, n_cols):
         v = np.zeros(0)
     return torch.sparse_coo_tensor(torch.as_tensor(idx, dtype=torch.long),
                                    torch.as_tensor(v, dtype=torch.float32),
-                                   (n_rows, n_cols)).coalesce()
+                                   (n_rows, n_cols), check_invariants=False).coalesce()
 
 
 class NetworkModel(torch.nn.Module):
@@ -473,7 +473,7 @@ class NetworkModel(torch.nn.Module):
         return 0.5 * (self.weight[m] * res[m] ** 2).sum() * self.stride ** 2
 
     def prior(self, lam_bend=300.0, lam_prof=20.0, lam_bg=2e4, track=None,
-              lam_cusp=2e3, lam_even=50.0):
+              lam_cusp=2e3, lam_even=50.0, lam_calibre=300.0, calibre_tol=1.6):
         ctrl = self.ctrl_all()
         pen = torch.zeros(())
         # bending energy ~ sum |d2 P|^2 / h^3, per edge
@@ -494,6 +494,14 @@ class NetworkModel(torch.nn.Module):
             pen = pen + lam_cusp * (F.relu(-cos) ** 2)[ok].sum()
             pen = pen + lam_even * (((lb - la) / h) ** 2)[ok].sum()
             r, s, a = self.profiles()
+            # calibre consistency: a vessel may taper, but its width should
+            # not balloon locally (e.g. to soak up the darkness of a junction)
+            lr = torch.log(r)
+            ne = len(self.eids)
+            cnt = torch.zeros(ne).index_add(0, self._prof_edge, torch.ones_like(lr))
+            mean = torch.zeros(ne).index_add(0, self._prof_edge, lr) / cnt.clamp(min=1)
+            dev = (lr - mean[self._prof_edge]).abs() - math.log(calibre_tol)
+            pen = pen + lam_calibre * (F.relu(dev) ** 2).sum()
             for q in (r, s, a):
                 lq = torch.log(q)
                 jj = torch.arange(len(lq) - 1)
@@ -550,6 +558,58 @@ class NetworkModel(torch.nn.Module):
         out = torch.zeros(len(self.eids)).index_add(0, self.e_edge, g)
         cnt = torch.zeros(len(self.eids)).index_add(0, self.e_edge, torch.ones_like(g))
         return out.numpy(), cnt.numpy() * self.stride ** 2
+
+    @torch.no_grad()
+    def edge_gains_bg_orthogonal(self, ks, entries=None, pred=None, sigma_bg=None):
+        """For the edges with indices ks: the NLL drop they are responsible
+        for when the background is allowed to absorb the low-frequency part
+        of their contribution.  Removing edge e and lowering the background
+        by lowpass(m_e) changes the prediction by m_perp = m_e - lowpass(m_e),
+        so gain_perp = sum_bbox w (m_perp^2 / 2 - r m_perp).  A thin vessel
+        keeps nearly all its gain; a broad dark lump of background texture
+        modelled as a blurred wide 'vessel' loses most of it."""
+        import cv2
+        if entries is None:
+            entries = self.vessel_entries()
+        if pred is None:
+            pred = self.predict(entries)
+        sigma_bg = sigma_bg or self.bg_spacing / 2.5
+        st = self.stride
+        R = (self.logI - pred).numpy()
+        Wt = self.weight.numpy()
+        m_np = entries.numpy()
+        e_edge = self.e_edge.numpy()
+        order = np.argsort(e_edge, kind="stable")
+        bounds = np.searchsorted(e_edge[order], np.arange(len(self.eids) + 1))
+        pix = self.e_pix.numpy()
+        out = {}
+        pad = int(3 * sigma_bg)
+        for k in ks:
+            sel = order[bounds[k]:bounds[k + 1]]
+            if len(sel) == 0:
+                out[k] = 0.0
+                continue
+            ys, xs = np.divmod(pix[sel], self.W)
+            y0, y1 = max(0, ys.min() - pad), min(self.H, ys.max() + pad + 1)
+            x0, x1 = max(0, xs.min() - pad), min(self.W, xs.max() + pad + 1)
+            M = np.zeros((y1 - y0, x1 - x0), np.float32)
+            np.add.at(M, (ys - y0, xs - x0), m_np[sel])
+            if st > 1:
+                # entries live on the stride grid: blur the grid
+                g = M[(-y0) % st::st, (-x0) % st::st]
+                glow = cv2.GaussianBlur(g, (0, 0), sigma_bg / st)
+                low = np.zeros_like(M)
+                low[(-y0) % st::st, (-x0) % st::st] = glow
+                mask = np.zeros_like(M, bool)
+                mask[(-y0) % st::st, (-x0) % st::st] = True
+            else:
+                low = cv2.GaussianBlur(M, (0, 0), sigma_bg)
+                mask = np.ones_like(M, bool)
+            mp = (M - low)[mask]
+            r = R[y0:y1, x0:x1][mask]
+            w = Wt[y0:y1, x0:x1][mask]
+            out[k] = float((w * (0.5 * mp ** 2 - r * mp)).sum()) * st ** 2
+        return out
 
     # ------------------------------------------------------------ write back
     @torch.no_grad()

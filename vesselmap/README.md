@@ -93,8 +93,11 @@ when a C++ compiler is available.
    / MDL test). Also remove blob-shaped edges and edges that duplicate a
    stronger parallel edge.
 
-**Per-frame fitting** (`fit_frame`) first estimates a global affine
-pre-alignment of the map to the frame. It then optimises all parameters with a
+**Per-frame fitting** (`fit_frame`) first aligns the map to the frame
+globally. Phase correlation between the rendered vessel image and the frame's
+high-passed image gives a translation with a large capture range: raw frames
+of reference burst 1 drift up to about 60 px. A gradient-refined affine
+follows. It then optimises all parameters with a
 Gaussian prior that ties them to the map (default σ = 3 px for control
 points, ±35 % for width and blur, ±60 % for contrast). Topology and ids are
 unchanged. Each edge reports `visible` and `gain_per_px` for that frame. For
@@ -105,8 +108,10 @@ result, while the prior stays on the map, so the fits cannot drift.
 ## The graph
 
 Node kinds: `bifurcation` (degree 3), `junction` (degree ≥ 4), `endpoint`
-(a vessel fades or leaves the focal volume) and `border` (a vessel leaves the
-image). Crossings of vessels at different depths are not nodes. The two
+(a vessel fades or leaves the focal volume), `border` (a vessel leaves the
+image) and `joint`. A `joint` is degree 2: two segments meet at a sharp
+angle, usually where a branch was too faint to keep. They stay as two
+splines, because fusing them would force a cusp into one. Crossings of vessels at different depths are not nodes. The two
 vessels overlap and their densities add, and the crossings are listed in
 `G.graph["crossings"]`.
 
