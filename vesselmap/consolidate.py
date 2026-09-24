@@ -83,6 +83,7 @@ class ConsolidateConfig:
     rounds: int = 3                 # verify -> reject -> re-match passes
     calibre_window: int = 4         # profile knots (x 30 px) the calibre prior averages over
     link_pad: float = 12.0          # px of vessel on either side of a link it is tested on
+    keep_frac: float = 0.05         # a link may lose this fraction of the zone's evidence
     switch_ratio: float = 1.6       # blur / width step along an edge that splits it
     switch_min_piece: float = 15.0  # px, shortest piece a split may leave
     verbose: bool = True
@@ -237,8 +238,8 @@ def candidates(net: VesselNetwork, cc: ConsolidateConfig, samples=None, ends=Non
 # ---------------------------------------------------------------- switches
 def _change_point(y, m):
     """Index splitting y (n x d) into two runs of at least m samples with
-    the largest drop of the squared error around the run means, and the
-    difference of the two run means (d)."""
+    the largest drop of the squared error around the run means, and that
+    squared error."""
     n = len(y)
     if n < 2 * m + 1:
         return None, None
@@ -250,7 +251,26 @@ def _change_point(y, m):
     s2, q2 = c1[-1] - s1, c2[-1] - q1
     sse = (q1 - s1 ** 2 / n1 + q2 - s2 ** 2 / n2).sum(1)
     k = int(np.argmin(sse))
-    return int(i[k]), (s2[k] / n2[k] - s1[k] / n1[k])
+    return int(i[k]), float(sse[k])
+
+
+def _is_step(y, i, m, ratio, sharp=0.5):
+    """Is there an abrupt step at i: the medians of the m samples on either
+    side (a few samples around i left out) differ by more than `ratio`, and
+    a step explains y much better than a linear trend does?  A vessel whose
+    blur drifts as it changes depth is a ramp, not a step."""
+    g = 3
+    a = np.median(y[max(0, i - g - m):max(1, i - g)], 0)
+    b = np.median(y[i + g:i + g + m], 0)
+    if np.abs(b - a).max() < math.log(ratio):
+        return False
+    x = np.arange(len(y), dtype=float)
+    X = np.stack([np.ones_like(x), x], 1)
+    coef, *_ = np.linalg.lstsq(X, y, rcond=None)
+    sse_lin = float(((y - X @ coef) ** 2).sum())
+    step = np.where(x[:, None] < i, y[:i].mean(0), y[i:].mean(0))
+    sse_step = float(((y - step) ** 2).sum())
+    return sse_step < sharp * sse_lin
 
 
 def split_switches(net: VesselNetwork, cc: ConsolidateConfig, max_splits=3):
@@ -269,8 +289,8 @@ def split_switches(net: VesselNetwork, cc: ConsolidateConfig, max_splits=3):
         smp = net.sample(eid, 1.0)
         m = int(cc.switch_min_piece)
         y = np.stack([np.log(smp["s"]), 0.5 * np.log(smp["s"] ** 2 + 0.25 * smp["r"] ** 2)], 1)
-        i, d = _change_point(y, m)
-        if i is None or np.abs(d).max() < math.log(cc.switch_ratio):
+        i, _ = _change_point(y, m)
+        if i is None or not _is_step(y, i, m, cc.switch_ratio):
             continue
         n_before = len(net.edges)
         nid = net.split_edge(eid, smp["xy"][i])
@@ -548,16 +568,26 @@ def verify(trial, records, model, R0, P: Prepared, cfg: MapConfig, cc: Consolida
         mask = _zone_mask(trial, eid, i0, i1, smp, P.shape, pad)
         npix = max(int(mask.sum()), 2)
         dnll = 0.5 * float((W[mask] * (R1[mask] ** 2 - R0[mask] ** 2)).sum())
-        # the merge saves one pair of ends (4 dof, see fit.n_params)
+        # the evidence the vessel carries in the zone (its NLL drop there)
+        k = with_edges[eid]
+        a0, a1 = model.samp_first[k], model.samp_last[k] + 1
+        m0 = a0 + int(np.argmin(np.linalg.norm(C[a0:a1] - rec["xy0"], axis=1)))
+        m1 = a0 + int(np.argmin(np.linalg.norm(C[a0:a1] - rec["xy1"], axis=1)))
+        m0, m1 = min(m0, m1), max(m0, m1)
+        z = (arc_m[a0:a1] >= arc_m[m0] - pad) & (arc_m[a0:a1] <= arc_m[m1] + pad)
+        zone_gain = float(gs[a0:a1][z].sum())
+        # the merge saves one pair of ends (4 dof, see fit.n_params).  At a
+        # node (or an overlap) both pieces already explain the image, so the
+        # NLL barely tells one vessel from two; there the test only has to
+        # catch a merge that clearly hurts the fit: the single spline must
+        # keep all but keep_frac of the evidence in the zone.  Across a gap
+        # nothing explained the image before, so the data decide strictly.
         tol = cfg.penalty_scale * 0.5 * 4.0 * math.log(npix)
+        if rec["kind"] != "gap":
+            tol = max(tol, cc.keep_frac * zone_gain)
         ok = dnll <= tol
-        rec.update(dnll=dnll, tol=tol)
+        rec.update(dnll=dnll, tol=tol, zone_gain=zone_gain)
         if rec["kind"] == "gap":
-            k = with_edges[eid]
-            a0, a1 = model.samp_first[k], model.samp_last[k] + 1
-            m0 = a0 + int(np.argmin(np.linalg.norm(C[a0:a1] - rec["xy0"], axis=1)))
-            m1 = a0 + int(np.argmin(np.linalg.norm(C[a0:a1] - rec["xy1"], axis=1)))
-            m0, m1 = min(m0, m1), max(m0, m1)
             Lb = max(float(arc_m[m1] - arc_m[m0]), 1.0)
             gain = float(gs[m0:m1 + 1].sum())
             pen = cfg.penalty_scale * 0.5 * (2.0 * Lb / 15.0) * math.log(npix)
