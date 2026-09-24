@@ -48,11 +48,11 @@ class MapConfig:
     scales_per_band: int = 3
     z_hi: float = 5.0
     z_lo: float = 2.5
-    reps_per_band: int = 2
+    reps_per_band: int = 3
     iters_band: int = 120
     iters_final: int = 300
     rebuild_every: int = 25
-    penalty_scale: float = 3.0      # multiplies the BIC parameter cost
+    penalty_scale: float = 2.0      # multiplies the BIC parameter cost
     min_gain_per_px: float = 1.0    # minimum explained NLL per px of length
     min_length: float = 6.0
     bg_spacing: float = 64.0

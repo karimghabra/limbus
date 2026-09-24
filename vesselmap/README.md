@@ -17,7 +17,8 @@ flow is not observed, edge direction is a structural convention (see
 ```bash
 pip install -r requirements-vesselmap.txt
 
-# 1. discover the network in one frame (about 15–30 min for 1920x1200 on 4 CPU cores)
+# 1. discover the network in one frame (about 40 min for 1920x1200 on 4 CPU cores;
+#    --set reps_per_band=2 penalty_scale=3.0 is about 25 min at slightly lower recall)
 python -m vesselmap map reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/map
 
 # 2. adjust it to other (stabilised) frames: same ids, small moves
@@ -125,12 +126,69 @@ component, from wide to narrow, with BFS depth breaking ties. Every edge
 carries `orientation="structural"`. `VesselNetwork.reverse_edge` and
 `set_direction` let an independent measurement override it later.
 
-## Validation
+## Results
 
-See *Results* below. Validation uses synthetic scenes with ground truth
-(`synthetic.py` renders vessels independently of the fitting model:
-super-sampled cylinders, per-vessel depth blur, lumpy background texture, and
-shot and read noise), plus the LIMBUS reference bursts.
+**Synthetic scenes with ground truth.** `python -m vesselmap synth-eval`
+renders 768x512 scenes independently of the fitting model: super-sampled
+cylinders, per-vessel depth blur of 0.6–9 px, bifurcating trees, defocused
+vessels crossing everything, tortuous capillaries of radius 0.6–1.4 px, lumpy
+background texture, illumination fall-off, and shot and read noise. A true
+centreline point counts as found within max(2 px, its radius):
+
+| scene | recall | precision | recall by radius <1 / 1–2 / 2–4 / ≥4 px | recall on blur ≥4 px | time |
+|---|---|---|---|---|---|
+| seed 0 | 0.93 | 0.81 | 0.92 / 0.90 / 0.93 / 0.97 | 0.92 | 4.0 min |
+| seed 1 | 0.94 | 0.71 | 0.84 / 0.95 / 0.95 / 0.98 | 0.96 | 4.4 min |
+| seed 2 | 0.95 | 0.85 | 0.88 / 0.91 / 0.99 / 1.00 | 1.00 | 3.2 min |
+
+The misses are mostly sub-pixel capillaries along tight curls. The false
+positives are mostly very blurred "vessels" fitted to dark lumps of the
+synthetic background texture. This is the one ambiguity that intensity alone
+cannot resolve completely. A wide edge must therefore also beat a smooth
+background explanation (see step 5), which removes most of them.
+
+**LIMBUS reference burst 1, frame 20** (1920x1200, 12-bit):
+
+* 524 vessel edges and 65,300 px of centreline. Nodes: 201 bifurcations,
+  56 endpoints, 50 border exits and 170 joints. 214 crossings of vessels at
+  different depths. Built in 34 min on 4 CPU cores.
+* Fitted calibre: diameter 4.7–35 px (5th–95th percentile, median 11 px).
+  Blur σ 1.3–11.5 px, spanning sharp capillaries to deep, strongly
+  defocused vessels. Contrast 0.08–0.42 OD. Global scattering halo: weight
+  0.55, σ 3.9 px.
+* The rendered model reproduces the frame closely, and the residual has no
+  wide vessels left in it (`map_model_residual.png`).
+* Development history on this frame, measured by the final data NLL
+  (lower is better): 1.66M in an early version, with 32 self-loops and 236
+  kinked edges. Then 1.81M after the anti-cusp fixes, before recall was
+  restored. Then 1.71M, then 1.65M, and finally 1.585M, with no self-loops.
+
+**Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
+harder than the intended use; `fit-frames --chain`):
+
+| frame | global shift (px) | NLL | node adjustment after alignment, median / p95 | visible edges | time |
+|---|---|---|---|---|---|
+| 20 (map) | – | 1.585M | – | – | – |
+| 21 | (1.6, −2.3) | 1.60M | 0.8 / 2.0 px | 99 % | 2.5 min |
+| 40 | (−11.1, −12.4) | 1.73M | 1.1 / 3.2 px | 98 % | 2.0 min |
+| 60 | (7.5, −31.9) | 1.76M | 1.4 / 4.2 px | 98 % | 2.0 min |
+| 80 | (14.3, −33.0) | 1.77M | 1.6 / 5.1 px | 98 % | 2.0 min |
+| 100 | (40.8, −27.3) | 1.88M | 2.0 / 5.7 px | 94 % | 2.0 min |
+| 120 | (51.0, −18.4) | 1.67M | 2.3 / 6.2 px | 81 % (part of the map has drifted out of the frame) | 2.0 min |
+
+The NLL of the map on its own frame is the scale to compare against: every
+frame fits about as well as the frame the map was built from.
+
+## Limitations
+
+* The densest region, with several vessels overlapping at different depths,
+  still has a few traced paths that switch between neighbouring vessels.
+  Use `map_model_residual.png` and the HTML viewer to review them.
+* Heavy tissue texture can be mistaken for very blurred deep vessels.
+  Raising `penalty_scale` or `wide_test_w` trades recall for precision.
+* Widths below about 1.5 px are degenerate with blur: the product of
+  contrast and width is well determined, but the split between them is not.
+* Direction is a structural convention, not a flow measurement.
 
 ## Files
 
