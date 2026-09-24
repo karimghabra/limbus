@@ -56,7 +56,7 @@ class MapConfig:
     min_gain_per_px: float = 1.0    # minimum explained NLL per px of length
     min_length: float = 6.0
     bg_spacing: float = 64.0
-    lam_bend: float = 300.0
+    lam_bend: float = 600.0
     lam_prof: float = 20.0
     lam_bg: float = 2e4
     lr_pos: float = 0.15
@@ -65,6 +65,7 @@ class MapConfig:
     verbose: bool = True
     log: list = field(default_factory=list)
     callback: object = None         # callback(net, stage_name) for debugging
+    prune_stats: dict = field(default_factory=dict)   # why edges were removed (count, px)
 
     bg_free_below: float = 5.0      # background frozen for bands starting at >= this
     anchor_px: float = 5.0          # positional prior per optimisation round
@@ -166,9 +167,13 @@ def _edge_index(net: VesselNetwork, spacing=1.0):
                 eid=np.concatenate(ids))
 
 
-def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0):
+def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0,
+                  sharp_ratio=0.35):
     """Drop the parts of proposals that run parallel inside an existing
-    vessel's footprint (they are misfit of that vessel, not new vessels)."""
+    vessel's footprint: they are misfit of that vessel, not new vessels.
+    Misfit residuals cannot be sharper than the vessel's own blur, so a
+    proposal much finer than the vessel's blur (a sharp capillary running
+    over a defocused deep vessel) is kept."""
     idx = _edge_index(net)
     if idx is None:
         return seeds
@@ -187,7 +192,8 @@ def shadow_filter(seeds, net: VesselNetwork, min_len, cos_par=0.85, slack=1.0):
             d = np.linalg.norm(idx["xy"][cand] - xy[i], axis=1)
             reach = idx["rs"][cand, 0] + 0.7 * idx["rs"][cand, 1] + slack
             par = np.abs((idx["tan"][cand] * tan[i]).sum(1)) > cos_par
-            if np.any((d < reach) & par):
+            coarse = sd.scale[i] >= sharp_ratio * idx["rs"][cand, 1]
+            if np.any((d < reach) & par & coarse):
                 shadow[i] = True
         # keep runs of un-shadowed points
         keep = ~shadow
@@ -248,7 +254,9 @@ def connect_ends(net: VesselNetwork, gap_factor=5.0, max_gap=40.0, cone_deg=40.0
                 continue
             (e1, end1), = net.incident(n)
             (e2, end2), = net.incident(m)
-            if e1 == e2:
+            far1 = net.edges[e1].v if end1 == 0 else net.edges[e1].u
+            far2 = net.edges[e2].v if end2 == 0 else net.edges[e2].u
+            if e1 == e2 or far1 == far2:
                 continue
             net.join_edges(e1, end1, e2, end2)
             used |= {n, m}
@@ -292,14 +300,31 @@ def connect_ends(net: VesselNetwork, gap_factor=5.0, max_gap=40.0, cone_deg=40.0
             nid = net.split_edge(target, q)
             if nid == n:
                 continue
-            # extend the free end to the junction node, then merge the nodes
+            # extend the free end to the junction node, then merge the nodes;
+            # the part of the free end already inside the target vessel is
+            # dropped first so the extension cannot double back
             smp = net.sample(eid, 0.7)
+            qn = net.nodes[nid].xy
+            inner_r = float(idx["rs"][k, 0])
+            dq = np.linalg.norm(smp["xy"] - qn, axis=1)
+            keep = np.ones(len(dq), bool)
+            if end == 0:
+                j = 0
+                while j < len(dq) - 3 and dq[j] < inner_r:
+                    keep[j] = False
+                    j += 1
+            else:
+                j = len(dq) - 1
+                while j > 2 and dq[j] < inner_r:
+                    keep[j] = False
+                    j -= 1
+            smp = {k_: v_[keep] for k_, v_ in smp.items()}
             xy = smp["xy"]
             if end == 0:
-                xy = np.vstack([net.nodes[nid].xy, xy])
+                xy = np.vstack([qn, xy])
                 r, s, a = (np.r_[smp[k_][0], smp[k_]] for k_ in ("r", "s", "a"))
             else:
-                xy = np.vstack([xy, net.nodes[nid].xy])
+                xy = np.vstack([xy, qn])
                 r, s, a = (np.r_[smp[k_], smp[k_][-1]] for k_ in ("r", "s", "a"))
             net.merge_nodes(nid, n)
             if eid in net.edges:
@@ -332,6 +357,7 @@ def _current_edge_at(net: VesselNetwork, eid_hint, q, exclude=None, tol=2.0):
 
 def clean_topology(net: VesselNetwork, min_length=6.0):
     net.merge_close_nodes(1.5)
+    net.remove_short_loops()
     net.resolve_crossings()
     net.resolve_near_crossings()
     net.merge_joints()
@@ -345,8 +371,10 @@ def clean_topology(net: VesselNetwork, min_length=6.0):
     net.merge_joints()
 
 
-def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9):
-    """Remove edges that mostly run inside and parallel to a stronger edge."""
+def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9, ratio=2.0):
+    """Remove edges that mostly run inside and parallel to a stronger edge of
+    similar calibre and blur (a sharp thin vessel over a blurred wide one is
+    a different vessel, at another depth)."""
     order = sorted(net.edges, key=lambda e: gains.get(e, 0.0))
     removed = []
     for eid in order:
@@ -354,6 +382,9 @@ def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9):
             continue
         others = {k: v for k, v in net.edges.items() if k != eid}
         smp = net.sample(eid, 1.0)
+        me = net.edges[eid]
+        w_me = float(np.mean(me.r) + np.mean(me.s))
+        s_me = float(np.mean(me.s))
         # build a light index of the other edges near this one
         bb0 = smp["xy"].min(0) - 40
         bb1 = smp["xy"].max(0) + 40
@@ -365,6 +396,10 @@ def remove_duplicates(net: VesselNetwork, gains: dict, frac=0.6, cos_par=0.9):
                     c[:, 1].max() < bb0[1] or c[:, 1].min() > bb1[1]):
                 continue
             if gains.get(k, 0.0) < gains.get(eid, 0.0):
+                continue
+            w_k = float(np.mean(e.r) + np.mean(e.s))
+            s_k = float(np.mean(e.s))
+            if max(w_k, w_me) / min(w_k, w_me) > ratio or max(s_k, s_me) / min(s_k, s_me) > ratio:
                 continue
             so = net.sample(k, 1.0)
             xs.append(so["xy"])
@@ -406,9 +441,15 @@ def reparameterize(net: VesselNetwork, tol=0.25):
             net.refit_edge(eid, smp["xy"], smp["r"], smp["s"], smp["a"], spacing=sp_)
 
 
-def n_params(net: VesselNetwork, eid) -> int:
+def n_params(net: VesselNetwork, eid, L=None) -> float:
+    """Effective number of free parameters of an edge for the MDL test.
+    Control points are tied together by the bending/cusp priors, so the
+    centreline counts as ~2 dof per 15 px of length (not 2 per control
+    point, which would make finely parameterised thin vessels artificially
+    expensive), plus its two ends and three profiles."""
     e = net.edges[eid]
-    return 2 * max(len(e.ctrl) - 2, 0) + 4 + 3 * len(e.r)
+    L = net.length(eid) if L is None else L
+    return 4.0 + 2.0 * L / 15.0 + 3.0 * len(e.r)
 
 
 def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
@@ -419,22 +460,30 @@ def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):
         if eid not in net.edges:
             continue
         L = max(net.length(eid), 1.0)
-        pen = cfg.penalty_scale * 0.5 * n_params(net, eid) * math.log(max(counts[k], 2.0))
+        pen = cfg.penalty_scale * 0.5 * n_params(net, eid, L) * math.log(max(counts[k], 2.0))
         net.edges[eid].info.update(gain=float(gains[k]), penalty=float(pen),
                                    gain_per_px=float(gains[k] / L))
         gdict[eid] = float(gains[k])
         if eid in protect:
             continue
         st_w = float(np.mean(net.edges[eid].r) + np.mean(net.edges[eid].s))
-        blob = L < cfg.min_elongation * 2.0 * st_w and min(net.degrees()[net.edges[eid].u],
-                                                            net.degrees()[net.edges[eid].v]) <= 1
-        if gains[k] < pen or gains[k] / L < cfg.min_gain_per_px or blob:
+        dg = net.degrees()
+        blob = L < cfg.min_elongation * 2.0 * st_w and \
+            max(dg[net.edges[eid].u], dg[net.edges[eid].v]) <= 1
+        why = ("mdl" if gains[k] < pen else "density" if gains[k] / L < cfg.min_gain_per_px
+               else "blob" if blob else None)
+        if why:
             removed.append(eid)
+            r_ = cfg.prune_stats.setdefault(why, [0, 0.0])
+            r_[0] += 1
+            r_[1] += L
     for eid in removed:
         if eid in net.edges:
             net.remove_edge(eid)
     net.merge_joints()
     dup = remove_duplicates(net, gdict)
+    r_ = cfg.prune_stats.setdefault("duplicate", [0, 0.0])
+    r_[0] += len(dup)
     return removed + dup, gdict
 
 
@@ -492,9 +541,12 @@ def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
             removed, _ = score_and_prune(net, model, cfg)
             new_alive = len(set(new) & set(net.edges))
             _snap(cfg, net, f"b{band[0]}_r{rep}_4pruned")
+            ps = {k: (v[0], round(v[1])) for k, v in cfg.prune_stats.items()}
+            cfg.prune_stats.clear()
+            _say(cfg, f"   pruned (count, px): {ps}")
             _say(cfg, f"[{time.time()-t0:6.0f}s] band {band} rep {rep}: {n_raw} ridges -> "
-                      f"{len(seeds)} proposals, kept {n_before - len(removed)} of "
-                      f"{n_before} edges; network {net.summary()}")
+                      f"{len(seeds)} proposals ({len(new)} edges), {new_alive} new edges kept; "
+                      f"pruned {len(removed)} of {n_before}; network {net.summary()}")
             if len(new) and new_alive == 0 and len(removed) >= len(new):
                 break
     # final joint refinement at full resolution
@@ -516,7 +568,7 @@ def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
         net.edges[eid].info["gain"] = float(gains[k])
     net.orient_structural()
     net.meta.update(builder="vesselmap.build_map", seconds=round(time.time() - t0, 1),
-                    config={k: v for k, v in asdict(cfg).items() if k not in ("log", "callback")},
+                    config={k: v for k, v in asdict(cfg).items() if k not in ("log", "callback", "prune_stats")},
                     final_nll=float(model.data_nll(model.predict())))
     _say(cfg, f"[{time.time()-t0:6.0f}s] done: {net.summary()}")
     return net
@@ -525,9 +577,10 @@ def build_map(intensity: np.ndarray, cfg: MapConfig | None = None,
 # --------------------------------------------------------------- per frame
 @dataclass
 class FrameFitConfig:
-    iters_align: int = 40
-    iters: int = 80
+    iters_align: int = 30           # global affine pre-alignment (stride 2)
+    iters: int = 40                 # joint refinement under the map prior
     stride: int = 1
+    rebuild_every: int = 20
     sigma_pos: float = 3.0          # px: how far control points may drift
     sigma_logprof: float = 0.35     # relative change of width / blur
     sigma_amp: float = 0.6          # relative change of contrast
@@ -553,7 +606,7 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
     cfg = cfg or FrameFitConfig()
     P = prepared or prepare(intensity)
     t0 = time.time()
-    priors = priors or dict(lam_bend=300.0, lam_prof=20.0, lam_bg=2e4)
+    priors = priors or MapConfig().priors()
     base = ref.copy()
     align = None
     if cfg.iters_align > 0 and base.edges:
@@ -571,7 +624,7 @@ def fit_frame(intensity: np.ndarray, ref: VesselNetwork, cfg: FrameFitConfig | N
         net = base.copy()
     model = NetworkModel(net, P.logI, P.weight, stride=cfg.stride, ref=base)
     track = dict(sigma_pos=cfg.sigma_pos, sigma_logprof=cfg.sigma_logprof, sigma_amp=cfg.sigma_amp)
-    hist = optimize(model, cfg.iters, cfg.lr_pos, cfg.lr_prof, cfg.lr_bg, 25,
+    hist = optimize(model, cfg.iters, cfg.lr_pos, cfg.lr_prof, cfg.lr_bg, cfg.rebuild_every,
                     track=track, priors=priors)
     model.write_back()
     gains, _ = model.edge_gains()

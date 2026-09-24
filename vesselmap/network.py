@@ -30,6 +30,7 @@ flip it with ``set_direction``.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -360,6 +361,10 @@ class VesselNetwork:
                 self._touch()
         return eid
 
+    def far_node(self, eid, end):
+        e = self.edges[eid]
+        return e.v if end == 0 else e.u
+
     def end_tangent(self, eid, end, look=6.0):
         """Unit vector pointing OUT of the edge at the given end."""
         smp = self.sample(eid, 0.7)
@@ -398,8 +403,11 @@ class VesselNetwork:
             if changed:
                 continue
 
-    def merge_joints(self):
-        """Fuse the two edges at every degree-2 node into a single edge."""
+    def merge_joints(self, cos_max=-0.5):
+        """Fuse the two edges at every degree-2 node into a single edge when
+        they continue smoothly through it (outward tangents at least 120
+        degrees apart).  Sharper meetings stay as two edges and a 'joint'
+        node: fusing them would force a cusp into one spline."""
         changed = True
         while changed:
             changed = False
@@ -409,8 +417,37 @@ class VesselNetwork:
                 inc = self.incident(nid)
                 if len(inc) == 2 and inc[0][0] != inc[1][0]:
                     (e1, end1), (e2, end2) = inc
+                    far1 = self.edges[e1].v if end1 == 0 else self.edges[e1].u
+                    far2 = self.edges[e2].v if end2 == 0 else self.edges[e2].u
+                    if np.dot(self.end_tangent(e1, end1), self.end_tangent(e2, end2)) > cos_max:
+                        continue
+                    if far1 == far2:
+                        # two edges between the same pair of nodes: a lens.
+                        # If they trace the same vessel keep the stronger one.
+                        if self._same_course(e1, e2):
+                            weaker = min((e1, e2), key=lambda k: (self.edges[k].info.get("gain", 0.0),
+                                                                  float(np.mean(self.edges[k].a))))
+                            self.remove_edge(weaker)
+                            changed = True
+                        continue
                     self.join_edges(e1, end1, e2, end2)
                     changed = True
+
+    def _same_course(self, e1, e2, frac=0.6):
+        a = self.sample(e1, 1.0)
+        b = self.sample(e2, 1.0)
+        from scipy.spatial import cKDTree
+        d, j = cKDTree(b["xy"]).query(a["xy"])
+        tol = b["r"][j] + 0.7 * b["s"][j] + 1.0
+        return float(np.mean(d < tol)) > frac
+
+    def remove_short_loops(self, min_length=40.0):
+        """Self-loops (an edge from a node back to itself) shorter than
+        min_length are artefacts of joining duplicate detections."""
+        for eid in [k for k, e in self.edges.items() if e.u == e.v]:
+            if self.length(eid) < min_length:
+                self.remove_edge(eid)
+        self.merge_joints()
 
     def resolve_crossings(self, cos_thr=0.80, width_ratio=2.5):
         """At nodes of degree >= 3, pair up edges that continue straight
@@ -432,6 +469,8 @@ class VesselNetwork:
                         continue
                     c = float(np.dot(tans[inc[i]], tans[inc[j]]))
                     ratio = max(wid[inc[i]], wid[inc[j]]) / min(wid[inc[i]], wid[inc[j]])
+                    if self.far_node(*inc[i]) == self.far_node(*inc[j]):
+                        continue            # joining would close a loop
                     if c < -cos_thr and ratio < width_ratio:
                         cand.append((c + 0.05 * np.log(ratio), inc[i], inc[j]))
             cand.sort()
@@ -496,6 +535,8 @@ class VesselNetwork:
                             continue
                         tv = self.end_tangent(ev, endv)
                         if np.dot(tv, -dirv) > 0.3 or np.dot(tu, tv) > -cos_thr:
+                            continue
+                        if self.far_node(eu, endu) == self.far_node(ev, endv):
                             continue
                         wu, wv = self.end_width(eu, endu), self.end_width(ev, endv)
                         if max(wu, wv) / min(wu, wv) > width_ratio:
@@ -660,9 +701,40 @@ class VesselNetwork:
                     total_length_px=float(np.sum(L)) if L else 0.0)
 
 
+def despike(xy, *vals, max_turn_deg=110.0):
+    """Remove back-tracking points (hooks, zig-zags at joins) from a dense
+    polyline: drop interior points where the path turns by more than
+    max_turn_deg within one step.  Ends are kept."""
+    xy = np.asarray(xy, float)
+    keep = np.ones(len(xy), bool)
+    cmax = math.cos(math.radians(max_turn_deg))
+    for _ in range(50):
+        idx = np.flatnonzero(keep)
+        if len(idx) < 3:
+            break
+        p = xy[idx]
+        v1 = p[1:-1] - p[:-2]
+        v2 = p[2:] - p[1:-1]
+        n1 = np.linalg.norm(v1, axis=1) + 1e-9
+        n2 = np.linalg.norm(v2, axis=1) + 1e-9
+        bad = ((v1 * v2).sum(1) / (n1 * n2) < cmax) | (n1 < 1e-6)
+        if not bad.any():
+            break
+        # drop the first offender of each run (one at a time keeps it stable)
+        first = np.flatnonzero(bad)[0] + 1
+        keep[idx[first]] = False
+    out = [xy[keep]]
+    for v in vals:
+        v = np.asarray(v, float).reshape(-1)
+        out.append(v[keep] if len(v) == len(xy) else v)
+    return out
+
+
 def _fit_edge_params(xy, r, s, a, spacing):
     xy = np.asarray(xy, float)
     r, s, a = (np.asarray(v, float).reshape(-1) for v in (r, s, a))
+    if len(r) == len(xy) and len(xy) > 3:
+        xy, r, s, a = despike(xy, r, s, a)
     arc = sp.arclength(xy)
     L = float(arc[-1])
     n_ctrl = sp.n_ctrl_for_length(L, spacing, minimum=4)

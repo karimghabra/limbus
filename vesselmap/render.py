@@ -58,18 +58,16 @@ def profile(d, r, s):
     return (0.5 * (torch.erf((rr - dd) / ss) + torch.erf((rr + dd) / ss)) * w).sum(-1)
 
 
-def _entry_core(xy, C, T, R, S, A, arc, Le, hw, hs):
-    """Optical density contributed by one (pixel, edge) pair; all inputs are
-    per pair except the two global halo parameters."""
+def _entry_core(xy, C, T, R, S, A, arc, Le):
+    """Optical density contributed by one (pixel, edge) pair (sharp core of
+    the PSF; the halo is applied to the whole vessel image, see predict)."""
     dv = xy - C
     u = (dv * T).sum(1)
     d = (dv[:, 0] * T[:, 1] - dv[:, 1] * T[:, 0]).abs()
     along = arc + u
     ss = SQRT2 * S
     taper = 0.25 * torch.erfc(-along / ss) * torch.erfc((along - Le) / ss)
-    Sh = torch.sqrt(S * S + hs * hs)
-    prof = (1.0 - hw) * profile(d, R, S) + hw * profile(d, R, Sh)
-    return A * prof * taper
+    return A * profile(d, R, S) * taper
 
 
 _CORE = None
@@ -87,7 +85,7 @@ def entry_core(*args):
             try:
                 cc = torch.compile(_entry_core, dynamic=True)
                 t = [torch.zeros(4, 2), torch.zeros(4, 2), torch.ones(4, 2) / SQRT2] + \
-                    [torch.ones(4) for _ in range(5)] + [torch.tensor(0.2), torch.tensor(3.0)]
+                    [torch.ones(4) for _ in range(5)]
                 t[3].requires_grad_(True)
                 cc(*t).sum().backward()
                 _CORE = cc
@@ -105,6 +103,52 @@ def profile_peak(r, s):
 def inv_softplus(y):
     y = np.maximum(np.asarray(y, float), 1e-6)
     return np.where(y > 20, y, np.log(np.expm1(y)))
+
+
+def _cv_blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    import cv2
+    rad = int(math.ceil(3.0 * sigma))
+    return cv2.GaussianBlur(a, (2 * rad + 1, 2 * rad + 1), sigma, sigma,
+                            borderType=cv2.BORDER_CONSTANT)
+
+
+class _GaussianBlur(torch.autograd.Function):
+    """Gaussian blur with zero padding, done by OpenCV.  The operator is
+    self-adjoint, so the input gradient is the blurred output gradient; the
+    sigma gradient uses the heat equation dG/dsigma = sigma * Laplacian(G),
+    evaluated on a padded domain so the image border is not a false edge."""
+
+    @staticmethod
+    def forward(ctx, img, sigma):
+        import cv2
+        s = float(sigma)
+        rad = int(math.ceil(3.0 * s)) + 1
+        a = img.detach().numpy().astype(np.float32, copy=False)
+        ap = cv2.copyMakeBorder(a, rad, rad, rad, rad, cv2.BORDER_CONSTANT, value=0.0)
+        outp = _cv_blur(ap, s)
+        ctx.save_for_backward(torch.from_numpy(outp))
+        ctx.s, ctx.rad = s, rad
+        return torch.from_numpy(np.ascontiguousarray(outp[rad:-rad, rad:-rad]))
+
+    @staticmethod
+    def backward(ctx, g):
+        import cv2
+        (outp,) = ctx.saved_tensors
+        s, rad = ctx.s, ctx.rad
+        gn = g.contiguous().numpy().astype(np.float32, copy=False)
+        gi = torch.from_numpy(_cv_blur(gn, s))
+        lap = cv2.Laplacian(outp.numpy(), cv2.CV_32F, ksize=1)[rad:-rad, rad:-rad]
+        gs = float((gn.astype(np.float64) * lap).sum()) * s
+        return gi, torch.tensor(gs, dtype=torch.float32)
+
+
+def gaussian_blur(img, sigma):
+    """Differentiable Gaussian blur (zero padding) of a 2-D tensor; sigma a
+    scalar tensor (differentiable) or float, in pixels."""
+    sigma = torch.as_tensor(sigma, dtype=torch.float32)
+    if float(sigma.detach()) < 0.3:
+        return img
+    return _GaussianBlur.apply(img.contiguous(), sigma)
 
 
 def _block_sparse(blocks, row_off, col_off, n_rows, n_cols):
@@ -353,10 +397,7 @@ class NetworkModel(torch.nn.Module):
         with torch.no_grad():
             C, T, R, S, A, arc, Ledge = self.samples()
         C = C.numpy()
-        hw, hs = (float(v) for v in self.halo())
-        # the halo tail beyond 2 of its sigmas is far below the noise
-        Sh = torch.sqrt(S * S + hs * hs) if hw > 0.03 else S
-        reach = (R + torch.maximum(3.0 * S, 2.0 * Sh)).numpy() + 1.5
+        reach = (R + 3.0 * S).numpy() + 1.5
         mask = self._pix_mask.numpy()
         pix_l, samp_l, edge_l = [], [], []
         for k in range(len(self.eids)):
@@ -395,11 +436,10 @@ class NetworkModel(torch.nn.Module):
         """Per (pixel, edge) contributions m >= 0 to the optical density."""
         C, T, R, S, A, arc, Ledge = self.samples()
         j = self.e_samp
-        hw, hs = self.halo()
         if len(j) == 0:
             return torch.zeros(0)
         return entry_core(self.e_xy, C[j], T[j], R[j], S[j], A[j], arc[j],
-                          Ledge[self.samp_edge_t[j]], hw, hs)
+                          Ledge[self.samp_edge_t[j]])
 
     def vessel_image(self, entries=None):
         m = self.vessel_entries() if entries is None else entries
@@ -407,8 +447,24 @@ class NetworkModel(torch.nn.Module):
         V = V.index_add(0, self.e_pix, m)
         return V.view(self.H, self.W)
 
+    def optical_density(self, entries=None):
+        """Total vessel optical density with the PSF halo:
+        (1 - h) V + h (G_sh * V), V the sharp-core vessel image.  Because
+        Gaussians compose, this equals rendering every vessel with the
+        two-component PSF (1-h) G(s) + h G(sqrt(s^2 + sh^2)).  On a strided
+        grid the convolution runs on the grid."""
+        V = self.vessel_image(entries)
+        hw, hs = self.halo()
+        st = self.stride
+        if st > 1:
+            Vg = V[::st, ::st]
+            out = torch.zeros_like(V)
+            out[::st, ::st] = (1 - hw) * Vg + hw * gaussian_blur(Vg, hs / st)
+            return out
+        return (1 - hw) * V + hw * gaussian_blur(V, hs)
+
     def predict(self, entries=None):
-        return self.background() - self.vessel_image(entries)
+        return self.background() - self.optical_density(entries)
 
     # ------------------------------------------------------------ scoring
     def data_nll(self, pred):
@@ -416,7 +472,8 @@ class NetworkModel(torch.nn.Module):
         m = self._pix_mask
         return 0.5 * (self.weight[m] * res[m] ** 2).sum() * self.stride ** 2
 
-    def prior(self, lam_bend=300.0, lam_prof=20.0, lam_bg=2e4, track=None):
+    def prior(self, lam_bend=300.0, lam_prof=20.0, lam_bg=2e4, track=None,
+              lam_cusp=2e3, lam_even=50.0):
         ctrl = self.ctrl_all()
         pen = torch.zeros(())
         # bending energy ~ sum |d2 P|^2 / h^3, per edge
@@ -427,6 +484,15 @@ class NetworkModel(torch.nn.Module):
             d2 = ctrl[i] - 2 * ctrl[i + 1] + ctrl[i + 2]
             h = self._ctrl_h[same[i]]
             pen = pen + lam_bend * ((d2 ** 2).sum(1)[ok] / h[ok] ** 3).sum()
+            # no cusps: consecutive control spans must not reverse direction,
+            # and must not bunch up (uneven spans are how splines form cusps)
+            d1a = ctrl[i + 1] - ctrl[i]
+            d1b = ctrl[i + 2] - ctrl[i + 1]
+            la = d1a.norm(dim=1) + 1e-6
+            lb = d1b.norm(dim=1) + 1e-6
+            cos = (d1a * d1b).sum(1) / (la * lb)
+            pen = pen + lam_cusp * (F.relu(-cos) ** 2)[ok].sum()
+            pen = pen + lam_even * (((lb - la) / h) ** 2)[ok].sum()
             r, s, a = self.profiles()
             for q in (r, s, a):
                 lq = torch.log(q)
@@ -464,9 +530,23 @@ class NetworkModel(torch.nn.Module):
             entries = self.vessel_entries()
         if pred is None:
             pred = self.predict(entries)
-        res = (self.logI - pred).view(-1)[self.e_pix]
+        # removing edge e changes the prediction by (1-h) m_e + h G*m_e.  With
+        # G symmetric, sum_x r (G*m) = sum_x (G*r) m, so the cross term is
+        # evaluated per entry using the halo-blurred residual; the small
+        # h^2 |G*m|^2 term is neglected.
+        hw, hs = (float(v) for v in self.halo())
+        st = self.stride
+        R = (self.logI - pred) * self.weight
+        if st > 1:
+            Rg = torch.zeros_like(R)
+            Rg[::st, ::st] = gaussian_blur(R[::st, ::st], hs / st)
+        else:
+            Rg = gaussian_blur(R, hs)
+        wr = R.view(-1)[self.e_pix]
+        wrh = Rg.view(-1)[self.e_pix]
         w = self.weight.view(-1)[self.e_pix]
-        g = 0.5 * w * (entries ** 2 - 2 * res * entries) * self.stride ** 2
+        c = (1 - hw) * entries
+        g = (0.5 * w * c ** 2 - (1 - hw) * wr * entries - hw * wrh * entries) * st ** 2
         out = torch.zeros(len(self.eids)).index_add(0, self.e_edge, g)
         cnt = torch.zeros(len(self.eids)).index_add(0, self.e_edge, torch.ones_like(g))
         return out.numpy(), cnt.numpy() * self.stride ** 2
