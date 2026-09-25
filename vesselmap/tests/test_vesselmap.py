@@ -408,3 +408,25 @@ def test_prepare_masks_uncovered_pixels_without_a_step():
     assert np.isfinite(P.logI).all() and np.isfinite(P.sigma).all()
     assert not P.valid[:, 68:].any() and P.valid[:, :60].all()
     assert np.allclose(P.intensity[:, 70:], 0.5)   # filled from the covered side: no edge
+
+
+def test_fast_flow_is_measured_despite_motion_smear():
+    """Fast flow smeared over v px per frame (exposure ~ frame period):
+    fine patterns vanish, large-scale flicker is carried along.  The fast
+    estimator recovers v and its sign; a static-only kymograph gives none."""
+    from scipy import ndimage as ndi
+    from vesselmap.flow import fast_flow
+    rng = np.random.default_rng(4)
+    T, S, v = 300, 360, 18.0
+    L = int(S + v * T + 200)
+    pat = ndi.gaussian_filter1d(rng.normal(0, 1, L), 6.0)
+    pat = ndi.uniform_filter1d(pat, int(v))            # motion smear over one frame
+    pat /= pat.std()
+    s = np.arange(S)
+    K = np.stack([0.02 * pat[(s - v * t + v * T + 100).astype(int)] for t in range(T)])
+    K += 0.6 + rng.normal(0, 0.02, K.shape)
+    f = fast_flow(K)
+    assert f["reliable"] and abs(f["v"] - v) < 1.5
+    assert fast_flow(K[::-1])["v"] < 0                   # time reversed: direction flips
+    static = 0.6 + 0.02 * np.tile(pat[:S], (T, 1)) + rng.normal(0, 0.02, K.shape)
+    assert not fast_flow(static)["reliable"]

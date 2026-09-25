@@ -95,9 +95,17 @@ class FlowConfig:
     lumen_frac: float = 0.5          # sample the central half of the lumen
     n_w: int = 5                     # samples across it
     min_diam: float = 2.0            # px, clamp of the sampled lumen width
-    max_diam: float = 8.0
+    max_diam: float = 40.0           # (large vessels are sampled across their lumen)
     min_length: float = 12.0         # px, shorter segments are not measured
     time_scales: tuple = (1, 3, 9)   # limbusflow time binning (slow flow)
+    fast_flow: bool = True           # fall back to the fast-flow estimator (see fast_flow)
+    fast_lags: tuple = (1, 2, 3)
+    fast_min_disp: float = 3.0       # px/frame: the fast estimator covers flow at least this fast
+    fast_null_ratio: float = 4.0     # score must beat time-shuffled copies by this factor
+    fast_min_score: float = 0.015
+    profile_null_ratio: float = 2.5  # bands search only near the vessel's velocity
+    profile_min_diam: float = 10.0   # px: vessels at least this wide get a velocity profile
+    profile_bands: int = 5
     speed_ratio: float = 1.6         # speeds of one vessel agree within this ratio
     reject_ratio: float = 3.0        # speeds this different are two vessels
     transit_len: float = 40.0        # px on each side of a joint for the transit test
@@ -121,29 +129,140 @@ def _diam(smp, fc):
     return float(np.clip(2.0 * np.median(smp["r"]), fc.min_diam, fc.max_diam))
 
 
+def fast_flow(K, grads=None, lags=(1, 2, 3), min_disp=3.0, max_shift=170, n_null=4,
+              null_ratio=4.0, min_score=0.015, seed=0, v_range=None):
+    """Velocity of fast flow, which limbusflow's defaults (tuned for slow
+    capillary flow) miss.
+
+    With an exposure of ~95 % of the frame period, a pattern moving v
+    px/frame is smeared over v px, so in fast flow only large-scale flicker
+    survives.  It is kept here: no spatial high-pass, only light smoothing.
+    The displacement search is wide (up to `max_shift` px), and the flow
+    line is found in the antisymmetric part of the correlation map,
+    A(lag, d) = (C(lag, d) - C(lag, -d)) / 2.  Static anatomy and jitter are
+    symmetric in d, directed flow is not.  Every line d = v * lag through
+    the origin is scored by the mean of A along it over `lags` (only where
+    |v| >= min_disp).  Significance: the best score must beat the best
+    score of `n_null` time-shuffled copies (motion destroyed, spatial
+    statistics kept) by `null_ratio`.  `v_range` (lo, hi) restricts the
+    search, e.g. to a band of a vessel whose overall velocity is known (the
+    null is searched over the same range).  Returns dict(v px/frame,
+    score, null, reliable)."""
+    ve = _limbusflow()
+    K2, _ = ve.preprocess(ve.remove_static(K, grads), 10.0, None, 2.0)
+    S = K2.shape[1]
+    ms = int(min(max_shift, S // 2))
+    if ms < min_disp * max(lags) + 4 or len(K2) < 30:
+        return dict(v=np.nan, score=np.nan, null=np.nan, reliable=False)
+
+    def best_line(K2):
+        Cm, sh = ve.correlation_map(K2, max(lags), max_shift=ms)
+        A = 0.5 * (Cm - Cm[:, ::-1])
+        vs = np.arange(-(ms - 3), ms - 3 + 1e-9, 0.25)
+        best = (np.nan, -np.inf)
+        for v in vs:
+            if abs(v) < min_disp or (v_range is not None and not v_range[0] <= v <= v_range[1]):
+                continue
+            use = [l for l in lags if abs(v) * l <= ms - 3]
+            if len(use) < 2:
+                continue
+            sc = float(np.mean([np.interp(v * l, sh, A[l - 1]) for l in use]))
+            if sc > best[1]:
+                best = (float(v), sc)
+        return best
+
+    v, sc = best_line(K2)
+    rng = np.random.default_rng(seed)
+    null = max(best_line(K2[rng.permutation(len(K2))])[1] for _ in range(n_null))
+    ok = bool(np.isfinite(v) and sc >= min_score and sc >= null_ratio * max(null, 1e-6))
+    return dict(v=v, score=sc, null=null, reliable=ok)
+
+
+def _lanes(smp, fc):
+    """Lateral offsets (px) sampled across the lumen: the central half is
+    the main kymograph (as limbusflow), and wide vessels get bands across
+    +-0.8 of the radius for a velocity profile."""
+    d = _diam(smp, fc)
+    n = fc.n_w if d < fc.profile_min_diam else max(fc.n_w, 2 * int(d / 4) + 1)
+    return np.linspace(-0.8, 0.8, n) * d / 2, d
+
+
+def _estimate(K, grads, fps, fc):
+    ve = _limbusflow()
+    est = ve.estimate(K, grads, fps, scales=fc.time_scales)
+    out = dict(v=float(est.get("v", np.nan)), v_time=float(est.get("v_time", np.nan)),
+               reliable=bool(est.get("reliable", False)), quality=float(est.get("quality", 0.0)),
+               n_agree=int(est.get("n_agree", 0)), scale=int(est.get("scale", 1)), method="limbusflow")
+    if not out["reliable"] and fc.fast_flow:
+        f = fast_flow(K, grads, fc.fast_lags, fc.fast_min_disp, null_ratio=fc.fast_null_ratio,
+                      min_score=fc.fast_min_score)
+        if f["reliable"]:
+            out.update(v=f["v"], v_time=f["v"], reliable=True, quality=f["score"], scale=1,
+                       method="fast", null=f["null"])
+    return out
+
+
+def _profile(KL, P, offs, r, video, fc):
+    """Velocity in bands across the lumen, searched near the vessel's own
+    velocity r["v"] (a band has less signal than the whole lumen)."""
+    ve = _limbusflow()
+    v0 = r["v"]
+    lo, hi = sorted((0.4 * v0, 1.6 * v0))
+    prof = []
+    for band in np.array_split(np.arange(len(offs)), fc.profile_bands):
+        Kb = np.nanmean([KL[i] for i in band], 0)
+        g = ve.static_regressors(video.ref, P[:, band])
+        vb = None
+        if r["method"] == "fast":
+            f = fast_flow(Kb, g, fc.fast_lags, fc.fast_min_disp, null_ratio=fc.profile_null_ratio,
+                          min_score=0.5 * fc.fast_min_score, v_range=(lo, hi))
+            vb = f["v"] if f["reliable"] else None
+        else:
+            est = ve.estimate(Kb, g, video.fps, scales=fc.time_scales)
+            if est.get("reliable") and lo <= est["v"] <= hi:
+                vb = float(est["v"])
+        prof.append(dict(offset_px=round(float(np.mean(offs[band])), 1),
+                         v=None if vb is None else round(float(vb), 3)))
+    return prof
+
+
 def measure_velocity(net: VesselNetwork, video: Video, fc: FlowConfig | None = None, eids=None,
                      progress=False):
-    """Signed velocity (px/frame, positive u -> v) of every edge.  Returns
-    {eid: dict(v, v_time, reliable, quality, n_agree, scale, length)}."""
+    """Signed velocity (px/frame, positive u -> v) of every edge, and for
+    wide vessels a velocity profile across the lumen.  Returns
+    {eid: dict(v, v_time, reliable, quality, n_agree, scale, method,
+    length[, profile])}.  limbusflow's estimator is tried first; where it
+    finds nothing, the fast-flow estimator (see fast_flow)."""
     fc = fc or FlowConfig()
     ve = _limbusflow()
     eids = [e for e in (eids if eids is not None else net.edges)
             if net.length(e) >= fc.min_length]
-    pts = []
+    lanes, meta = [], []
     for e in eids:
         smp = net.sample(e, 1.0)
-        pts.append(lumen_points(smp["xy"], smp["tan"], _diam(smp, fc), fc.lumen_frac, fc.n_w))
+        offs, d = _lanes(smp, fc)
+        t = smp["tan"] / np.maximum(np.linalg.norm(smp["tan"], axis=1, keepdims=True), 1e-9)
+        N = np.stack([-t[:, 1], t[:, 0]], 1)
+        a = len(lanes)
+        lanes += [(smp["xy"] + o * N)[:, None, :] for o in offs]
+        meta.append((e, a, offs, d))
     import warnings
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", RuntimeWarning)
-        Ks = ve.kymographs(video.frames, video.reg, video.idx, pts, progress=progress) if pts else []
+        Ks = ve.kymographs(video.frames, video.reg, video.idx, lanes, progress=progress) if lanes else []
         out = {}
-        for e, P, K in zip(eids, pts, Ks):
-            est = ve.estimate(K, ve.static_regressors(video.ref, P), video.fps, scales=fc.time_scales)
-            out[e] = dict(v=float(est.get("v", np.nan)), v_time=float(est.get("v_time", np.nan)),
-                          reliable=bool(est.get("reliable", False)),
-                          quality=float(est.get("quality", 0.0)), n_agree=int(est.get("n_agree", 0)),
-                          scale=int(est.get("scale", 1)), length=float(net.length(e)))
+        for e, a, offs, d in meta:
+            KL = Ks[a:a + len(offs)]
+            P = np.concatenate(lanes[a:a + len(offs)], 1)
+            central = np.abs(offs) <= fc.lumen_frac * d / 2 + 1e-9
+            K = np.nanmean([k for k, c in zip(KL, central) if c], 0)
+            grads = ve.static_regressors(video.ref, P[:, central])
+            r = _estimate(K, grads, video.fps, fc)
+            r["length"] = float(net.length(e))
+            r["diam"] = float(d)
+            if r["reliable"] and d >= fc.profile_min_diam:
+                r["profile"] = _profile(KL, P, offs, r, video, fc)
+            out[e] = r
     return out
 
 
@@ -212,7 +331,8 @@ def transit_ratio(K, i_join, v, scale=1, grads=None, skip=4, dmax=None, n=24):
         return np.nan, np.nan, np.nan
     Kr = ve.remove_static(K, grads)
     Kb = ve.bin_time(Kr, scale)
-    K2, _ = ve.preprocess(Kb)
+    # fast flow: only large-scale flicker survives the motion smear (see fast_flow)
+    K2, _ = ve.preprocess(Kb, 10.0, None, 2.0) if abs(v) * scale >= 3.0 else ve.preprocess(Kb)
     S = K2.shape[1]
     skip = int(math.ceil(skip))
     dmin = 2 * skip + 4
@@ -411,7 +531,7 @@ def _assign_flow(trial: VesselNetwork, base: VesselNetwork, flow, fps):
     for eid, e in trial.edges.items():
         src = e.info.get("consolidated_from", [eid])
         smp = trial.sample(eid, 2.0)
-        vals, wts = [], []
+        vals, wts, methods, prof = [], [], set(), None
         for s in src:
             f = flow.get(s)
             if not f or not f["reliable"] or s not in base.edges:
@@ -423,6 +543,11 @@ def _assign_flow(trial: VesselNetwork, base: VesselNetwork, flow, fps):
             same = i1 >= i0
             vals.append(f["v"] if same else -f["v"])
             wts.append(f["length"])
+            methods.add(f.get("method", "limbusflow"))
+            if f.get("profile") and len(src) == 1:
+                prof = [dict(p, v=None if p["v"] is None else (p["v"] if same else -p["v"]),
+                             offset_px=p["offset_px"] if same else -p["offset_px"])
+                        for p in f["profile"]]
         if vals:
             vals, wts = np.array(vals), np.array(wts)
             sgn = np.sign(np.sum(np.sign(vals) * wts))
@@ -430,11 +555,17 @@ def _assign_flow(trial: VesselNetwork, base: VesselNetwork, flow, fps):
             v = float(np.average(vals[ok], weights=wts[ok]))
             e.info["flow"] = dict(v_px_per_frame=round(v, 4), speed_px_per_s=round(abs(v) * fps, 2),
                                   reliable=True, n_segments=int(ok.sum()),
-                                  consistent=bool(ok.all()), direction="measured")
+                                  consistent=bool(ok.all()), direction="measured",
+                                  method="+".join(sorted(methods)))
+            if prof:
+                e.info["flow"]["profile"] = prof
             if v < 0:
                 trial.reverse_edge(eid)
                 e = trial.edges[eid]
                 e.info["flow"]["v_px_per_frame"] = round(-v, 4)
+                for p in e.info["flow"].get("profile", []):
+                    p["v"] = None if p["v"] is None else -p["v"]
+                    p["offset_px"] = -p["offset_px"]
             e.info["orientation"] = "flow"
         else:
             e.info["flow"] = dict(reliable=False, direction="unknown")
