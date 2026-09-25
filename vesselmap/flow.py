@@ -25,7 +25,9 @@ direction, calibre and blur.  Flow adds three tests:
 
 * *direction*: blood must run through the joint, into it along one segment
   and out of it along the other.  Two segments that both drain into the
-  joint (or both leave it) are a confluence (or a fork), never one vessel;
+  joint (or both leave it) are a confluence (or a fork), never one vessel
+  (unless the transit test below shows the pattern carrying across: then
+  the two measurements disagree and flow does not decide);
 * *speed*: along one vessel the red-cell speed is continuous, so the two
   speeds must agree (ratio <= ``speed_ratio``);
 * *transit*: the pattern of red-cell aggregates and plasma gaps leaving one
@@ -260,8 +262,11 @@ def judge(link, flow, transit, fc: FlowConfig):
         through = _into(enda, fa["v"]) != _into(endb, fb["v"])
         ratio = max(abs(fa["v"]), abs(fb["v"])) / max(min(abs(fa["v"]), abs(fb["v"])), 1e-9)
         rec.update(speed_ratio=ratio, through=through)
+        carries = tr is not None and np.isfinite(tr) and tr >= fc.transit_min
         if not through or ratio > fc.reject_ratio:
-            return "contradicts", rec
+            # the pattern carrying straight across the joint contradicts the
+            # conflict: the two measurements disagree, so flow cannot decide
+            return ("unknown" if carries else "contradicts"), rec
         if ratio <= fc.speed_ratio and (tr is None or not np.isfinite(tr) or tr >= fc.transit_min):
             return "confirms", rec
         if tr is not None and np.isfinite(tr) and tr < 0.5 * fc.transit_min:
