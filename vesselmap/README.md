@@ -288,7 +288,8 @@ of at least 256 px (202 px before), and 51 splines are longer than 300 px
 the frame slightly better than their pieces did.
 
 **Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
-harder than the intended use; `fit-frames --chain`):
+harder than the intended use; `fit-frames --chain`; this table was measured
+with the earlier map and renderer, so its NLLs are on that scale):
 
 | frame | global shift (px) | NLL | node adjustment after alignment, median / p95 | visible edges | time |
 |---|---|---|---|---|---|
