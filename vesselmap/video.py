@@ -146,7 +146,8 @@ def render(net: VesselNetwork, frames, reg, idx, fps, out_path, ref=None, scale=
     probe = np.nanmean([warped(i) for i in idx[:: max(1, len(idx) // 12)]], 0)
     a, b = np.nanpercentile(probe, [0.5, 99.5])
 
-    head = 44
+    (tw0, _), _ = cv2.getTextSize("x" * 70, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    head = 44 if Wp >= tw0 + 310 else 64
     Hout = 2 * Hp + head + 6
     cmd = [_ffmpeg(), "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr24",
            "-s", f"{Wp}x{Hout}", "-r", str(out_fps), "-i", "-", "-c:v", "libx264", "-preset", "medium",
@@ -184,7 +185,8 @@ def render(net: VesselNetwork, frames, reg, idx, fps, out_path, ref=None, scale=
         sd = np.sqrt(np.maximum(run_sq / np.maximum(run_cnt, 1) - mean ** 2, 1e-8))
         sd = cv2.GaussianBlur(sd, (0, 0), 3.0)
         # top: registered frame
-        g = np.clip((np.nan_to_num(cur, nan=a) - a) / (b - a), 0, 1)
+        g = np.clip((np.nan_to_num(cur, nan=a) - a) / (b - a), 0, 1).astype(np.float32)
+        g = cv2.medianBlur(g, 3)                                 # hot / specular pixels
         top = cv2.cvtColor((to_panel(g) * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR).astype(np.float32)
         top = top * (1 - alpha) + lay.astype(np.float32) * alpha
         # bottom: flicker, vessels bright, tissue dimmed
@@ -205,20 +207,25 @@ def render(net: VesselNetwork, frames, reg, idx, fps, out_path, ref=None, scale=
             for img in (top8, bot8):
                 cv2.circle(img, c, int(rr * 8 + 8), (20, 20, 20), -1, cv2.LINE_AA, shift=3)
                 cv2.circle(img, c, int(rr * 8), (80, 230, 255), -1, cv2.LINE_AA, shift=3)
-        # header
-        hdr = np.full((head, Wp, 3), 24, np.uint8)
+        # header: the colour bar gets its own line when the video is narrow
         t_s = (i - idx[0]) / fps
-        txt = (f"{label}frame {i}  t = {t_s:5.2f} s   played {fps / out_fps:.1f}x slower   "
-               f"dots move at the measured velocity")
-        cv2.putText(hdr, txt, (10, 18), font, 0.5, (235, 235, 235), 1, cv2.LINE_AA)
-        cv2.putText(hdr, "top: registered video, centrelines by speed   bottom: flicker (change from the running mean, z-score)",
-                    (10, 37), font, 0.45, (170, 170, 170), 1, cv2.LINE_AA)
-        if Wp > cb.shape[1] + 200:
-            xb = Wp - cb.shape[1] - 12
-            hdr[8:8 + cb.shape[0], xb:xb + cb.shape[1]] = cb
-            cv2.putText(hdr, f"{lo:.0f}", (xb - 4, 36), font, 0.4, (200, 200, 200), 1, cv2.LINE_AA)
-            cv2.putText(hdr, f"{hi:.0f} px/s", (xb + cb.shape[1] - 60, 36), font, 0.4, (200, 200, 200), 1,
-                        cv2.LINE_AA)
+        line1 = f"{label}frame {i}   t = {t_s:5.2f} s   played {fps / out_fps:.1f}x slower"
+        line2 = "dots move at the measured velocity   top: centrelines by speed   bottom: flicker (z-score)"
+        (tw, _), _ = cv2.getTextSize(line1, font, 0.5, 1)
+        wide = Wp >= tw + cb.shape[1] + 90
+        hdr = np.full((head, Wp, 3), 24, np.uint8)
+        cv2.putText(hdr, line1, (10, 18), font, 0.5, (235, 235, 235), 1, cv2.LINE_AA)
+        cv2.putText(hdr, line2, (10, 37), font, 0.42, (170, 170, 170), 1, cv2.LINE_AA)
+        if wide:
+            xb, yb = Wp - cb.shape[1] - 12, 8
+        else:
+            xb, yb = 46, 48
+        hdr[yb:yb + cb.shape[0], xb:xb + cb.shape[1]] = cb
+        cv2.putText(hdr, f"{lo:.0f}", (xb - 34 if not wide else xb - 4, yb + 10 if not wide else 36), font, 0.4,
+                    (200, 200, 200), 1, cv2.LINE_AA)
+        cv2.putText(hdr, f"{hi:.0f} px/s", (xb + cb.shape[1] + 6 if not wide else xb + cb.shape[1] - 60,
+                                            yb + 10 if not wide else 36), font, 0.4, (200, 200, 200), 1,
+                    cv2.LINE_AA)
         gap = np.full((6, Wp, 3), 24, np.uint8)
         frame = np.vstack([hdr, top8, gap, bot8])
         proc.stdin.write(frame.tobytes())
