@@ -329,9 +329,13 @@ def flow_consolidate(intensity: np.ndarray, net: VesselNetwork, video: Video,
                                             skip=max(fc.transit_skip, 0.75 * d))
             transit[key] = dict(ratio=ratio, cross=c_x, within=c_w)
 
+    def joint_xy(c):
+        return (0.5 * (ends[c["a"]]["xy"] + ends[c["b"]]["xy"])).round(1).tolist()
+
     verdicts, pool = {}, []
     for key, c in loose.items():
         verdict, rec = judge(c, flow, transit.get(key, {}), fc)
+        rec["xy"] = joint_xy(c)
         verdicts[key] = (verdict, rec)
         if verdict == "contradicts":
             continue
@@ -380,6 +384,11 @@ def flow_consolidate(intensity: np.ndarray, net: VesselNetwork, video: Video,
                   links_flow=ev("shape+flow"), links_shape=ev("shape"),
                   shape_links_failed_image=len(failed), edges_after=len(trial.edges),
                   vessels_from_several=n_multi, fps=video.fps, frames=len(video.idx))
+    clean = lambda d: {k: (None if x is None or (isinstance(x, float) and not np.isfinite(x)) else
+                           (round(float(x), 3) if isinstance(x, (float, np.floating)) else x))
+                       for k, x in d.items()}
+    report["rejected_by_flow"] = [dict(clean(rec), kind=loose[k]["kind"], shape_ok=k in strict)
+                                  for k, (v, rec) in verdicts.items() if v == "contradicts"]
     trial.meta["flow_consolidation"] = report
     log(f"flow consolidation: {n0} -> {len(trial.edges)} edges; links by shape+flow "
         f"{ev('shape+flow')}, by shape {ev('shape')}")
