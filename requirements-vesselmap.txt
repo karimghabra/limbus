@@ -7,3 +7,4 @@ tifffile>=2024.1
 torch>=2.1
 networkx>=3.0
 matplotlib>=3.7
+imageio-ffmpeg  # H.264 encoding for vesselmap video

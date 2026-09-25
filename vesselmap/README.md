@@ -33,6 +33,10 @@ python -m vesselmap faint out/map/map.json reference_data/burst_2026-09-16_15-50
 #     segments that flow shows to be one vessel; the map comes from one image
 python -m vesselmap flow out/faint/map.json --burst BURST_DIR --reference IMAGE -o out/flow
 
+# 2d. a video of the registered burst with the map, its measured flow, the
+#     flicker, and tracer dots moving at the measured velocity (add --crop to zoom)
+python -m vesselmap video out/flow/map.json --burst BURST_DIR --registration out/flow/registration.npz -o out/flow.mp4
+
 # 3. optional: one spline per vessel instead of one per segment
 python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/vessels
 
@@ -525,7 +529,7 @@ frame fits about as well as the frame the map was built from.
 `image.py` loading and the log domain · `ridges.py` proposals · `spline.py`
 B-splines · `network.py` graph and topology · `render.py` differentiable
 renderer and score · `fit.py` discovery and per-frame fitting ·
-`refine.py` fine detail · `faint.py` faint tier and search mask · `flow.py` velocity and flow-informed consolidation · `report.py` HTML report of a run ·
+`refine.py` fine detail · `faint.py` faint tier and search mask · `flow.py` velocity and flow-informed consolidation · `video.py` flow video · `report.py` HTML report of a run ·
 `consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the

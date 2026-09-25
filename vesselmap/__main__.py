@@ -5,6 +5,7 @@
     python -m vesselmap consolidate MAP.json IMAGE -o OUT
     python -m vesselmap faint MAP.json IMAGE -o OUT
     python -m vesselmap flow MAP.json --burst DIR --reference IMAGE -o OUT
+    python -m vesselmap video FLOWMAP.json --burst DIR --registration REG.npz -o OUT.mp4
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
     python -m vesselmap report RUN_DIR --image IMAGE [--frames FRAMES_DIR] -o OUT
@@ -185,6 +186,26 @@ def cmd_flow(a):
     print(f"flow-consolidated map written to {a.out} in {time.time() - t:.0f}s: {rep}")
 
 
+def cmd_video(a):
+    import numpy as np
+    from .flow import _limbusflow
+    from .network import VesselNetwork
+    from .video import render
+    _limbusflow()
+    from limbusflow import io as lio, register as rg
+    net = VesselNetwork.load(a.map)
+    burst = lio.load_burst(a.burst, cache_dir=a.cache)
+    reg = rg.Registration.load(a.registration)
+    if a.frames:
+        f0, f1 = map(int, a.frames.split("-"))
+    else:
+        f0, f1 = reg.good_runs()[0]
+    crop = tuple(map(int, a.crop.split(","))) if a.crop else None
+    render(net, burst.frames, reg, np.arange(f0, f1 + 1), burst.fps, a.out, scale=a.scale, crop=crop,
+           out_fps=a.fps, label=os.path.basename(os.path.normpath(a.burst)) + "  ")
+    print(f"video written to {a.out} (frames {f0}-{f1})")
+
+
 def cmd_consolidate(a):
     from .consolidate import ConsolidateConfig, consolidate_map
     from .fit import MapConfig
@@ -321,6 +342,18 @@ def main(argv=None):
     fl.add_argument("--set", nargs="*", help="FlowConfig overrides key=value")
     fl.add_argument("--quiet", action="store_true")
     fl.set_defaults(func=cmd_flow)
+    vd = sub.add_parser("video", help="video of a registered burst with the map, its measured flow "
+                                      "and tracers moving at the measured velocity")
+    vd.add_argument("map", help="a map with measured flow (from vesselmap flow)")
+    vd.add_argument("--burst", required=True)
+    vd.add_argument("--registration", required=True, help="limbusflow registration .npz")
+    vd.add_argument("--frames", help="first-last frame (default: the longest run of good frames)")
+    vd.add_argument("--crop", help="x0,y0,x1,y1 in reference px (a zoomed region)")
+    vd.add_argument("--scale", type=float, default=0.75)
+    vd.add_argument("--fps", type=int, default=30, help="playback frame rate")
+    vd.add_argument("--cache", default=None, help="folder for the burst's cached frame stack")
+    vd.add_argument("-o", "--out", required=True)
+    vd.set_defaults(func=cmd_video)
     f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
     f.add_argument("map")
     f.add_argument("frames", nargs="+")
