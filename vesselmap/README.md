@@ -128,11 +128,14 @@ gives off five branches is six edges. A vessel the detector lost for a
 stretch, or found twice, is several edges with free ends. Consolidation
 finds the edges that are one vessel and refits each group as a single edge:
 
-* *Switch cuts.* An edge whose blur or calibre steps by more than 1.6×
+* *Switch cuts.* An edge whose blur or calibre *steps* by more than 1.6×
   along it usually runs along one vessel and then switches to another at a
   different depth, where two vessels cross or touch. It is cut at the step
   (a two-segment change point in log blur and log width). Each piece can
-  then continue into its own vessel.
+  then continue into its own vessel. A gradual drift is not cut: blur
+  changes smoothly along a vessel that changes depth. The step must fit the
+  profile much better than a linear trend. On reference frame 20 this cuts
+  36 of 368 edges.
 * *Candidate continuations* between edge ends. Each end is described by the
   direction of the edge's body, its calibre, blur and contrast. The last
   few px next to a node are skipped, because fitted edges often hook into
@@ -154,13 +157,18 @@ finds the edges that are one vessel and refits each group as a single edge:
   renderer keeps the node on the vessel's centreline. Such a node counts as
   a bifurcation. Nodes left with nothing attached disappear.
 * *Verification.* Segments and vessels are fitted jointly under the same
-  priors, and every link is tested in its own neighbourhood. A link is kept
-  if the single spline explains the image there no worse than the pieces,
-  allowing for the MDL cost of the pair of ends it removes. A bridge across
-  a gap must also pay for its own length from the NLL drop of the bridged
-  stretch alone, so two different vessels that happen to line up are not
-  joined across empty tissue. Failed links are dropped and the matching is
-  re-run, up to three rounds.
+  priors, and every link is tested in its own neighbourhood. At a node the
+  pieces already explain the image, so the NLL can barely tell one vessel
+  from two there. The test only rejects a merge that clearly hurts the fit:
+  the single spline must keep 95 % of the evidence (NLL drop) in the link's
+  zone. The pieces' geometry and profiles, used when proposing the link,
+  are the real evidence of continuity. Across a gap nothing explained the
+  image before, so the data decide strictly. The fit there may not get
+  worse by more than the MDL cost of the removed pair of ends. The bridge
+  must also pay for its own length from the NLL drop of the bridged stretch
+  alone, so two different vessels that happen to line up are not joined
+  across empty tissue. Failed links are dropped and the matching is re-run,
+  up to three rounds.
 
 The calibre prior of these fits compares each width with the mean over
 ±4 profile knots (±120 px), not over the whole edge, so a long vessel
@@ -234,16 +242,18 @@ its single best spline, length-weighted; recall is its upper bound.
 Scenes are mapped with `build_map`, then `consolidate_map` is run with
 defaults:
 
-| scene | cover, segments → vessels | purity | recall | precision | links kept (node / gap) |
-|---|---|---|---|---|---|
-| seed 0 | 0.41 → 0.44 | 0.86 → 0.89 | 0.87 → 0.87 | 0.77 → 0.76 | 25 / 2 |
-| seed 1 | 0.57 → 0.62 | 0.86 → 0.90 | 0.93 → 0.94 | 0.75 → 0.74 | 32 / 3 |
-| seed 2 | 0.52 → 0.59 | 0.83 → 0.91 | 0.90 → 0.91 | 0.81 → 0.80 | 15 / 2 |
+| scene | splines | edges per vessel | cover | purity | recall | precision | links (node / gap) | time |
+|---|---|---|---|---|---|---|---|---|
+| seed 0 | 121 → 106 | 4.53 → 3.50 | 0.41 → 0.47 | 0.86 → 0.86 | 0.87 → 0.86 | 0.77 → 0.76 | 22 / 1 | 82 s |
+| seed 1 | 131 → 122 | 3.06 → 2.54 | 0.57 → 0.63 | 0.86 → 0.85 | 0.93 → 0.93 | 0.75 → 0.74 | 24 / 1 | 83 s |
+| seed 2 | 103 → 102 | 3.53 → 3.02 | 0.52 → 0.59 | 0.83 → 0.88 | 0.90 → 0.90 | 0.81 → 0.80 | 11 / 0 | 63 s |
 
-Purity rises mostly because of the switch cuts. Cover rises because of the
-links. Most of the remaining fragmentation in these scenes comes from
-tangled traces of tortuous capillaries. Their pieces turn by more than 40°
-or change calibre where they meet, so no link joins them.
+*Edges per vessel* is the number of splines that annotate each true vessel,
+length-weighted (1 is ideal). Most of the remaining fragmentation in these
+scenes comes from tangled traces of tortuous capillaries in the segment
+map. Their pieces turn by more than 40° or change calibre where they
+meet, so no link joins them. Consolidation cannot repair a trace that
+follows the wrong path.
 
 **LIMBUS reference burst 1, frame 20** (1920x1200, 12-bit). NLLs are
 from the arclength renderer, so they are comparable with each other, not
@@ -268,6 +278,14 @@ rather than explaining the image.
   to deep, strongly defocused vessels. Contrast 0.05–0.42 OD.
 * The rendered model reproduces the frame closely, and the residual has no
   wide vessels left in it (`map_model_residual.png`).
+
+*Consolidation* of a fresh `map` of this frame (without `refine`) took
+14.5 min. It merged 368 segments into 324 splines: 58 vessels from several
+pieces, with 77 node links and 3 bridged gaps. 16 of 97 matched links failed
+verification in the first round. Half of all centreline now lies in splines
+of at least 256 px (202 px before), and 51 splines are longer than 300 px
+(35 before). The data NLL fell from 1.627M to 1.620M, so the vessels fit
+the frame slightly better than their pieces did.
 
 **Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
 harder than the intended use; `fit-frames --chain`):
@@ -295,6 +313,11 @@ frame fits about as well as the frame the map was built from.
 * Widths below about 1.5 px are degenerate with blur: the product of
   contrast and width is well determined, but the split between them is not.
 * Direction is a structural convention, not a flow measurement.
+* Consolidation joins pieces only where they continue each other smoothly
+  (turn ≤ 40°) with similar calibre and blur. A vessel whose segments were
+  traced with kinks or along the wrong neighbour stays in pieces, and an
+  unambiguous but wrong continuation at a fork is still possible where a
+  branch leaves nearly straight.
 
 ## Files
 
