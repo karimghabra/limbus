@@ -248,6 +248,7 @@ of the velocities it is later used to measure.
 1. *Velocity per segment.* limbusflow registers the burst to the
    reference image. For every segment a kymograph is read along the
    centreline, averaged across the central half of the lumen.
+   The central half of the lumen is sampled at the fitted width.
    `limbusflow.velocity.estimate` gives the signed red-cell velocity:
    positive runs from the segment's node u to its node v. A result is
    reliable only when:
@@ -256,6 +257,19 @@ of the velocities it is later used to measure.
      flight) agree;
    * for slow flow, the result also persists across both halves of the
      recording.
+   limbusflow's defaults are tuned for slow capillary flow, so where they
+   find nothing, `fast_flow` takes over. At 74 fps with a 12.8 ms
+   exposure, a pattern moving v px/frame is smeared over v px, and in fast
+   flow only large-scale flicker survives. `fast_flow` therefore:
+   * keeps that flicker (no spatial high-pass);
+   * searches displacements up to 170 px;
+   * finds the flow line in the part of the correlation map that is
+     asymmetric in direction (static anatomy is symmetric);
+   * accepts it only when it beats time-shuffled copies of the kymograph
+     by ×4.
+
+   Vessels at least 10 px wide also get a **velocity profile**: five bands
+   across the lumen, each searched near the vessel's own velocity.
 2. *Candidates.* `consolidate.candidates` supplies the candidate joins:
    continuations through a node and across gaps, judged on direction,
    calibre and blur. At a fork, every feasible pairing is kept here, not
@@ -428,11 +442,23 @@ tests and is traced as vessels. The flow step took 4.8 min:
 
 | | count |
 |---|---|
-| segments measured / with a reliable velocity | 292 / 69 (median 176 px/s) |
+| segments measured / with a reliable velocity | 292 / 127 (69 before `fast_flow` and full-lumen sampling) |
+| edges with measured flow after joining, by limbusflow / fast / both | 97 of 227: 49 / 37 / 11 |
 | candidate joins by shape / including ambiguous forks | 84 / 96 |
-| flow confirms / contradicts / cannot tell | 26 / 1 / 69 |
-| joins made: by shape and flow / by shape alone | 24 / 53 (5 shape-only joins failed the image test) |
-| edges before → after | 278 → 225 |
+| flow confirms / contradicts / cannot tell | 27 / 2 / 67 |
+| joins made: by shape and flow / by shape alone | 26 / 49 (5 shape-only joins failed the image test) |
+| edges before → after | 278 → 227 |
+| velocity profiles with at least 4 of 5 bands measured | 22 |
+
+Large vessels do flicker. A 29 px vessel measures 20–25 px/frame
+(1500–1800 px/s), where nothing was measured before. Its profile runs
+17 · 23.5 · 27.5 · 17.5 · 16.5 px/frame from wall to wall. Against
+time-shuffled copies of its kymograph it scores 0.072 against at most
+0.007, and it flips sign when the video runs backwards. Most profiles peak
+near the centre (e.g. 213 · 228 · 249 · 234 · 220 px/s).
+
+limbusflow's own pipeline on the same frames measures 78 of its 150
+vessels, but only 17 of the 45 vessels wider than 16 px.
 
 Two rule refinements came from this burst:
 * **Transit is compared with the clearer side.** A side with no
@@ -477,10 +503,12 @@ frame fits about as well as the frame the map was built from.
 * Widths below about 1.5 px are degenerate with blur: the product of
   contrast and width is well determined, but the split between them is not.
 * Direction is a structural convention, not a flow measurement.
-* Flow evidence helps mostly with small vessels and capillaries. Large
-  vessels carry a dense red-cell column, and at 74 fps the 12.8 ms
-  exposure smears their fast flow, so they rarely show a trackable
-  pattern. There the shape rule decides.
+* In fast flow (about 20 px/frame in the largest vessels of burst
+  15-22-26) the 12.8 ms exposure smears fine patterns away. Only
+  large-scale flicker is left, so fast-flow estimates are coarser (steps of
+  0.25 px/frame, ±2–5 px/frame between runs). Per-band profile values are
+  noisier still. A band reaching the wall or a neighbouring vessel can
+  flatten or skew a profile.
 * The faint tier trades precision for recall by design. Its threshold
   admits a few paths per image from noise alone, and bright or dark
   banding next to badly fitted wide vessels can still produce a path.
