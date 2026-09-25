@@ -1,0 +1,10 @@
+# Everything regenerable, and anything that embeds subject images, stays local
+cache/
+outputs/
+*.html
+*.npy
+*.npz
+*.pkl
+burst_*/
+.venv/
+.ipynb_checkpoints/
