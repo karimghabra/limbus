@@ -275,3 +275,39 @@ def test_consolidated_map_roundtrip_and_frame_fit(tmp_path):
     xy = fitted.sample(trunk_id, 0.25)["xy"]
     assert np.linalg.norm(xy - fitted.nodes[n].xy, axis=1).min() < 0.2
     assert fitted.summary()["node_kinds"] == out.summary()["node_kinds"]
+
+
+def test_faint_tracking_finds_sub_threshold_line_and_joins_map():
+    """A line whose per-pixel contrast is below the noise is found by
+    integrating along it, joined to the mapped vessel it meets, and the
+    opposite polarity (the null) yields nothing comparable."""
+    from vesselmap.faint import FaintConfig, add_faint, map_zone, search_mask, trace_faint
+    rng = np.random.default_rng(3)
+    H, W = 240, 320
+    yy, xx = np.mgrid[0:H, 0:W].astype(float)
+    # faint vessel: y = 60 + 0.5 x for x in [40, 260], Gaussian profile sigma 1.5
+    d = np.abs(yy - 60 - 0.5 * xx) / np.sqrt(1.25)
+    on = (xx >= 40) & (xx <= 260)
+    noise = rng.normal(0, 1.0, (H, W))
+    res = noise - 0.8 * np.exp(-0.5 * (d / 1.5) ** 2) * on
+    net = VesselNetwork((H, W))
+    _line(net, (262, 20), (262, 230), r=2.0)          # mapped vessel the line runs into
+    zone = map_zone(net, (H, W))
+    cfg = FaintConfig(fit_profiles=False)
+    tracks = trace_faint(res, zone, cfg)
+    # the null: the same noise without the line, both polarities
+    null = trace_faint(noise, zone, cfg) + trace_faint(noise, zone, cfg, polarity=-1)
+    assert sum(t["L"] for t in null) < 40
+    assert tracks, "no track found"
+    xy = np.concatenate([t["xy"] for t in tracks])
+    err = np.abs(xy[:, 1] - 60 - 0.5 * xy[:, 0]) / np.sqrt(1.25)
+    assert np.median(err) < 2.0
+    covered = np.ptp(xy[err < 3, 0])
+    assert covered > 150
+    assert xy[:, 0].min() > 40 - 25                  # little overshoot
+    new = add_faint(net, tracks, cfg)
+    assert new and all(net.edges[e].info["tier"] == "faint" for e in new)
+    # the track that reached the mapped vessel is connected to it
+    assert any(net.degrees()[n] >= 3 for n in net.nodes)
+    m = search_mask(net, (H, W))
+    assert (m == 1).any() and (m == 2).any()

@@ -25,6 +25,10 @@ python -m vesselmap map reference_data/burst_2026-09-16_15-50-52/frame_000020.ti
 #    (about 40 min; can be repeated on its own output)
 python -m vesselmap refine out/map/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/refined
 
+# 2b. recall tier for the search mask: faint vessels traced along their length
+#    (about 3 min; writes map_search_mask.png)
+python -m vesselmap faint out/map/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/faint
+
 # 3. optional: one spline per vessel instead of one per segment
 python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/vessels
 
@@ -48,7 +52,9 @@ net, report = fit_frame(load_image("stab_000021.tif"), ref)
 `map` writes `map.json` (the full model), `map.graphml` and `map_edges.csv`
 (the graph), `map_digraph.html` (interactive viewer: hover for attributes,
 colour by diameter/blur/contrast), `map_digraph.png`, `map_overlay*.png` and
-`map_model_residual.png` (image | rendered model | residual).
+`map_model_residual.png` (image | rendered model | residual), and
+`map_search_mask.png`: 0 = background, 1 = within r + 3 px of a mapped
+vessel, 2 = within 5 px of a faint-tier path.
 
 ## The model
 
@@ -190,6 +196,43 @@ example, a capillary whose red cells have moved on may be only faintly
 visible. `fit_frames` / `--chain` starts each frame from the previous frame's
 result, while the prior stays on the map, so the fits cannot drift.
 
+**The faint tier** (`faint.py`, `vesselmap faint`) serves the map's purpose
+as a *search mask* for later velocity analysis. Recall matters more there
+than a strict per-segment evidence test. Many thin, defocused vessels are
+at the texture floor pixel by pixel. Along 42 hand-marked missed segments
+of frame 20, the median ridge z-score lies between the 75th and 95th
+percentiles of the background. No per-pixel threshold and no MDL test can
+accept them, but their evidence adds up along their length. The tier works
+on the residual of the map (what the map does not explain yet):
+
+1. Oriented line responses Z(θ, x). The filters are elongated
+   second-derivative filters (σ = 1.2, 2, 3 px; 6× longer than wide;
+   16 orientations), standardised by a robust (MAD) local scale.
+2. Seeds are local maxima with Z > 4 outside a zone of r + 2 px around
+   mapped centrelines.
+3. A tracker steps 2 px at a time. It turns by at most one orientation bin
+   and may shift ±1 px sideways. It stops when the mean Z of the last 16 px
+   drops below 1.2, when it reaches the map zone (a join) or when it reaches
+   an accepted path.
+4. The path is trimmed to its maximal-evidence stretch (maximum of
+   Σ(Z − 2)), smoothed, and re-scored along its own tangent. This removes
+   most of the bias of the greedy steps.
+5. A path is kept if its mean Z ≥ max(2.5, 2.0 + 12/√L). The bound is
+   calibrated on pure white and correlated noise: there it admits about 4
+   paths per 1920×1200 image (`sig_a=2.2`: fewer than 1).
+6. Paths that run parallel to a mapped vessel just outside its zone for
+   most of their length are misfit edges and are dropped.
+7. Ends that stopped at the map are bridged straight onto the nearest
+   centreline, if the bridge continues the path's direction. The mapped
+   edge is split there, so the tier is part of the graph.
+8. Width, blur and contrast are fitted with positions frozen.
+
+Faint edges carry `info["tier"] = "faint"` and the graph attribute
+`tier` ("mapped" or "faint"). They show orange in `map_overlay_tier.png`
+and under colour "tier" in the HTML viewer. `fit_frame` adjusts them like
+any other edge. They are candidates for the velocity search, not confirmed
+vessels: the velocity analysis decides.
+
 ## The graph
 
 Node kinds: `bifurcation` (degree 3), `junction` (degree ≥ 4), `endpoint`
@@ -307,6 +350,21 @@ of at least 256 px (202 px before), and 51 splines are longer than 300 px
 (35 before). The data NLL fell from 1.627M to 1.620M, so the vessels fit
 the frame slightly better than their pieces did.
 
+**Faint tier on frame 20.** Evaluated against 42 strokes drawn by hand
+along segments the map missed (5021 px). The strokes are rough guides, not
+centrelines, so coverage is measured with a tolerance:
+
+| map | centreline length | strokes within 6 px | within 8 px | inside the search mask | strokes > 80 % / < 20 % covered (6 px) |
+|---|---|---|---|---|---|
+| base `map` (the liked map) | 65.3k px | 21 % | 28 % | 36 % | 1 / 19 |
+| `refine` of a later base map | 68.9k px | 44 % | 50 % | 54 % | 10 / 10 |
+| base + `faint` | 74.7k px (+9.4k faint) | 72 % | 79 % | 83 % | 17 / 1 |
+
+`faint` took 2.5 min. A second `faint` pass on its own output adds only
+1.2k px (73 %). The segments still missed lie mostly within a few px of
+a mapped vessel, inside its zone. For the mask they are covered: 83 % of
+stroke length lies inside it.
+
 **Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
 harder than the intended use; `fit-frames --chain`; this table was measured
 with the earlier map and renderer, so its NLLs are on that scale):
@@ -339,6 +397,11 @@ frame fits about as well as the frame the map was built from.
 * Widths below about 1.5 px are degenerate with blur: the product of
   contrast and width is well determined, but the split between them is not.
 * Direction is a structural convention, not a flow measurement.
+* The faint tier trades precision for recall by design. Its threshold
+  admits a few paths per image from noise alone, and bright or dark
+  banding next to badly fitted wide vessels can still produce a path.
+  A faint vessel that runs within r + 2 px of a mapped vessel is not
+  traced separately; it is only covered by that vessel's mask.
 * Consolidation joins pieces only where they continue each other smoothly
   (turn ≤ 40°) with similar calibre and blur. A vessel whose segments were
   traced with kinks or along the wrong neighbour stays in pieces, and an
@@ -350,7 +413,8 @@ frame fits about as well as the frame the map was built from.
 `image.py` loading and the log domain · `ridges.py` proposals · `spline.py`
 B-splines · `network.py` graph and topology · `render.py` differentiable
 renderer and score · `fit.py` discovery and per-frame fitting ·
-`refine.py` fine detail · `consolidate.py` one spline per vessel · `draw.py`
+`refine.py` fine detail · `faint.py` faint tier and search mask ·
+`consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the
 fast ones).

@@ -770,7 +770,8 @@ class VesselNetwork:
         for eid, e in self.edges.items():
             st = self.edge_stats(eid)
             attrs = dict(eid=eid, vessel=int(e.info.get("vessel", eid)),
-                         orientation=e.info.get("orientation", "structural"), **st)
+                         orientation=e.info.get("orientation", "structural"),
+                         tier=e.info.get("tier", "mapped"), **st)
             if multi:
                 G.add_edge(e.u, e.v, key=eid, **attrs)
             else:

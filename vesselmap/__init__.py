@@ -14,6 +14,8 @@ from .image import load_image, prepare
 from .network import VesselNetwork
 from .fit import MapConfig, FrameFitConfig, build_map, fit_frame, fit_frames
 from .consolidate import ConsolidateConfig, consolidate_map
+from .faint import FaintConfig, add_faint_tier, search_mask
 
 __all__ = ["load_image", "prepare", "VesselNetwork", "MapConfig", "FrameFitConfig",
-           "ConsolidateConfig", "build_map", "consolidate_map", "fit_frame", "fit_frames"]
+           "ConsolidateConfig", "FaintConfig", "build_map", "consolidate_map", "add_faint_tier",
+           "search_mask", "fit_frame", "fit_frames"]

@@ -35,12 +35,16 @@ def overlay(net: VesselNetwork, intensity, color_by="diameter", scale=1.0,
     if scale != 1.0:
         base = cv2.resize(base, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     img = cv2.cvtColor((base * 0.75).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-    key = {"diameter": "r", "blur": "s", "contrast": "a", "vessel": None}[color_by]
-    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6), None: None}[key]
+    key = {"diameter": "r", "blur": "s", "contrast": "a", "vessel": None, "tier": "tier"}[color_by]
+    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6), None: None, "tier": None}[key]
     for eid in net.edges:
         smp = net.sample(eid, 1.0)
         xy = smp["xy"] * scale
-        if key is None:
+        if key == "tier":
+            # mapped vessels blue, the faint (recall) tier orange
+            faint = net.edges[eid].info.get("tier") == "faint"
+            cols = np.repeat(np.array([[0, 150, 255]] if faint else [[255, 170, 60]]), len(xy), 0)
+        elif key is None:
             # one colour per edge (after consolidation: per vessel)
             hue = np.uint8((eid * 47) % 180)
             c = cv2.cvtColor(np.array([[[hue, 220, 255]]], np.uint8), cv2.COLOR_HSV2BGR)[0, 0]
@@ -198,6 +202,7 @@ def export_html(net: VesselNetwork, path, intensity=None, max_width=1400, title=
                           gain=round(float(e.info.get("gain", float("nan"))), 1)
                           if e.info.get("gain") is not None else None,
                           orient=e.info.get("orientation", "structural"),
+                          tier=e.info.get("tier", "mapped"),
                           visible=e.info.get("visible", True)))
     nodes = [dict(id=k, x=round(n.x, 1), y=round(n.y, 1), kind=net.node_kind(k, deg[k]), deg=deg[k])
              for k, n in net.nodes.items()]
@@ -231,7 +236,7 @@ svg{display:block;width:100%;height:auto}
 </style></head><body>
 <header><h1>__TITLE__</h1>
 <label>colour <select id="cb"><option value="diam">diameter</option><option value="blur">blur (focus)</option>
-<option value="contrast">contrast</option></select></label>
+<option value="contrast">contrast</option><option value="tier">tier (mapped / faint)</option></select></label>
 <label><input type="checkbox" id="img" checked>image</label>
 <label><input type="checkbox" id="arr" checked>arrows</label>
 <label><input type="checkbox" id="nod" checked>nodes</label>
@@ -250,14 +255,14 @@ const turbo=t=>{t=Math.max(0,Math.min(1,t));const r=Math.round(34.61+t*(1172.33-
  const g=Math.round(23.31+t*(557.33+t*(1225.33-t*(3574.96-t*(1073.77+t*707.56)))));const b=Math.round(27.2+t*(3211.1-t*(15327.97-t*(27814-t*(22569.18-t*6838.66)))));
  return `rgb(${Math.max(0,Math.min(255,r))},${Math.max(0,Math.min(255,g))},${Math.max(0,Math.min(255,b))})`};
 const rng={diam:[1,40,true],blur:[0.6,12,true],contrast:[0,0.6,false]};
-const col=(k,v)=>{const [a,b,lg]=rng[k];return turbo(lg?Math.log(v/a)/Math.log(b/a):(v-a)/(b-a))};
+const col=(k,v)=>{if(k==='tier')return v==='faint'?'#ff9f1c':'#4aa8ff';const [a,b,lg]=rng[k];return turbo(lg?Math.log(v/a)/Math.log(b/a):(v-a)/(b-a))};
 const tip=document.getElementById('tip');
 const show=(ev,txt)=>{tip.style.display='block';tip.textContent=txt;tip.style.left=(ev.clientX+14)+'px';tip.style.top=(ev.clientY+10)+'px'};
 const hide=()=>tip.style.display='none';
 const paths=[];
 for(const e of D.edges){const p=mk('path',{class:'e',d:'M'+e.d.replace(/ /g,' L'),'stroke-width':Math.max(1.0,Math.min(e.diam*0.22,6))});
  if(!e.visible)p.setAttribute('stroke-dasharray','4 3');
- p.addEventListener('mousemove',ev=>show(ev,`edge ${e.id}: ${e.u} → ${e.v}  (${e.orient})\nlength ${e.length} px  tortuosity ${e.tort}\ndiameter ${e.diam} px  blur ${e.blur} px\ncontrast ${e.contrast} OD  gain ${e.gain}`));
+ p.addEventListener('mousemove',ev=>show(ev,`edge ${e.id}: ${e.u} → ${e.v}  (${e.orient}, ${e.tier})\nlength ${e.length} px  tortuosity ${e.tort}\ndiameter ${e.diam} px  blur ${e.blur} px\ncontrast ${e.contrast} OD  gain ${e.gain}`));
  p.addEventListener('mouseleave',hide);ge.appendChild(p);paths.push([p,e]);
  const pts=e.d.split(' ').map(q=>q.split(',').map(Number));if(pts.length>6){const i=pts.length>>1,a=pts[i-2],b=pts[i+1];
  ga.appendChild(mk('path',{d:`M${a[0]},${a[1]}L${b[0]},${b[1]}`,stroke:'#fff','stroke-width':1.2,'marker-end':'url(#ah)',fill:'none'}))}}

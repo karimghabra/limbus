@@ -3,6 +3,7 @@
     python -m vesselmap map IMAGE -o OUT [--set key=value ...]
     python -m vesselmap refine MAP.json IMAGE -o OUT
     python -m vesselmap consolidate MAP.json IMAGE -o OUT
+    python -m vesselmap faint MAP.json IMAGE -o OUT
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
     python -m vesselmap synth-eval [--seeds 0 1 2] -o OUT
@@ -50,6 +51,12 @@ def write_outputs(net, intensity, prepared, out, stem="map"):
     export_graphml(G, os.path.join(out, f"{stem}.graphml"))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay.png"), overlay(net, intensity))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay_blur.png"), overlay(net, intensity, color_by="blur"))
+    if any(e.info.get("tier") == "faint" for e in net.edges.values()):
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_tier.png"),
+                    overlay(net, intensity, color_by="tier", arrows=False))
+    # where to look for vessels: 0 nothing, 1 mapped vessel, 2 faint tier
+    from .faint import search_mask
+    cv2.imwrite(os.path.join(out, f"{stem}_search_mask.png"), search_mask(net, net.shape))
     if net.has_through() or "consolidation" in net.meta:
         cv2.imwrite(os.path.join(out, f"{stem}_overlay_vessels.png"),
                     overlay(net, intensity, color_by="vessel", arrows=False))
@@ -109,6 +116,24 @@ def cmd_refine(a):
     write_outputs(net, I, P, a.out)
     print(f"refined map written to {a.out} in {time.time() - t:.0f}s: "
           f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline; {net.summary()}")
+
+
+def cmd_faint(a):
+    from .faint import FaintConfig, add_faint_tier
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(FaintConfig(verbose=not a.quiet), a.set)
+    t = time.time()
+    L0 = net.summary()["total_length_px"]
+    add_faint_tier(I, net, cfg, prepared=P)
+    write_outputs(net, I, P, a.out)
+    print(f"map with faint tier written to {a.out} in {time.time() - t:.0f}s: "
+          f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline")
 
 
 def cmd_consolidate(a):
@@ -222,6 +247,14 @@ def main(argv=None):
     c.add_argument("--consolidate-set", nargs="*", help="ConsolidateConfig overrides key=value")
     c.add_argument("--quiet", action="store_true")
     c.set_defaults(func=cmd_consolidate)
+    fa = sub.add_parser("faint", help="add a recall tier of faint vessels traced along their "
+                                      "length (for the search mask)")
+    fa.add_argument("map")
+    fa.add_argument("image", help="the image the map was built from")
+    fa.add_argument("-o", "--out", required=True)
+    fa.add_argument("--set", nargs="*", help="FaintConfig overrides key=value")
+    fa.add_argument("--quiet", action="store_true")
+    fa.set_defaults(func=cmd_faint)
     f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
     f.add_argument("map")
     f.add_argument("frames", nargs="+")
