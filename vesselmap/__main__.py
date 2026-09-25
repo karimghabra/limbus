@@ -4,6 +4,7 @@
     python -m vesselmap refine MAP.json IMAGE -o OUT
     python -m vesselmap consolidate MAP.json IMAGE -o OUT
     python -m vesselmap faint MAP.json IMAGE -o OUT
+    python -m vesselmap flow MAP.json --burst DIR --reference IMAGE -o OUT
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
     python -m vesselmap report RUN_DIR --image IMAGE [--frames FRAMES_DIR] -o OUT
@@ -52,6 +53,19 @@ def write_outputs(net, intensity, prepared, out, stem="map"):
     export_graphml(G, os.path.join(out, f"{stem}.graphml"))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay.png"), overlay(net, intensity))
     cv2.imwrite(os.path.join(out, f"{stem}_overlay_blur.png"), overlay(net, intensity, color_by="blur"))
+    if any(e.info.get("flow") for e in net.edges.values()):
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_flow.png"), overlay(net, intensity, color_by="flow"))
+        with open(os.path.join(out, f"{stem}_flow.csv"), "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["eid", "u", "v", "length_px", "flow", "speed_px_per_frame", "speed_px_per_s",
+                        "segments", "joined_by", "links"])
+            for eid, e in net.edges.items():
+                fl = e.info.get("flow", {})
+                links = e.info.get("links", [])
+                w.writerow([eid, e.u, e.v, round(net.length(eid), 1), fl.get("direction", "unknown"),
+                            fl.get("v_px_per_frame", ""), fl.get("speed_px_per_s", ""),
+                            len(e.info.get("consolidated_from", [eid])),
+                            ",".join(sorted({L["evidence"] for L in links})), json.dumps(links)])
     if any(e.info.get("tier") == "faint" for e in net.edges.values()):
         cv2.imwrite(os.path.join(out, f"{stem}_overlay_tier.png"),
                     overlay(net, intensity, color_by="tier", arrows=False))
@@ -135,6 +149,40 @@ def cmd_faint(a):
     write_outputs(net, I, P, a.out)
     print(f"map with faint tier written to {a.out} in {time.time() - t:.0f}s: "
           f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline")
+
+
+def cmd_flow(a):
+    import numpy as np
+    from .consolidate import ConsolidateConfig
+    from .fit import MapConfig
+    from .flow import FlowConfig, Video, _limbusflow, flow_consolidate
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    _limbusflow()
+    from limbusflow import io as lio, register as rg
+    I = load_image(a.reference)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match the reference {P.shape}")
+    os.makedirs(a.out, exist_ok=True)
+    burst = lio.load_burst(a.burst, cache_dir=a.cache)
+    ref = (I * 4095.0).astype(np.float32)
+    if a.registration and os.path.exists(a.registration):
+        reg = rg.Registration.load(a.registration)
+    else:
+        print("registering the burst to the reference ...", flush=True)
+        reg = rg.Registrar(ref).register_burst(burst.frames)
+        reg.save(a.registration or os.path.join(a.out, "registration.npz"))
+    s0, s1 = reg.good_runs()[0]
+    video = Video(burst.frames, reg, np.arange(s0, s1 + 1), burst.fps, ref)
+    print(f"velocity from frames {s0}-{s1} ({s1 - s0 + 1} frames, {burst.fps:.1f} fps)", flush=True)
+    fc = _apply_sets(FlowConfig(verbose=not a.quiet), a.set)
+    t = time.time()
+    out, rep = flow_consolidate(I, net, video, MapConfig(verbose=not a.quiet), ConsolidateConfig(verbose=False),
+                                fc, prepared=P)
+    write_outputs(out, I, P, a.out)
+    print(f"flow-consolidated map written to {a.out} in {time.time() - t:.0f}s: {rep}")
 
 
 def cmd_consolidate(a):
@@ -262,6 +310,17 @@ def main(argv=None):
     fa.add_argument("--set", nargs="*", help="FaintConfig overrides key=value")
     fa.add_argument("--quiet", action="store_true")
     fa.set_defaults(func=cmd_faint)
+    fl = sub.add_parser("flow", help="measure red-cell velocity along every segment of a map and "
+                                     "join segments that flow shows to be one vessel")
+    fl.add_argument("map", help="a map of the reference image")
+    fl.add_argument("--burst", required=True, help="the burst folder (frame_*.tif, frames.csv)")
+    fl.add_argument("--reference", required=True, help="the image the map was built from")
+    fl.add_argument("--registration", help="limbusflow registration .npz (made and saved if missing)")
+    fl.add_argument("--cache", default=None, help="folder for the burst's cached frame stack")
+    fl.add_argument("-o", "--out", required=True)
+    fl.add_argument("--set", nargs="*", help="FlowConfig overrides key=value")
+    fl.add_argument("--quiet", action="store_true")
+    fl.set_defaults(func=cmd_flow)
     f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
     f.add_argument("map")
     f.add_argument("frames", nargs="+")

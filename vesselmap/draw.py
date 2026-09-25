@@ -35,12 +35,27 @@ def overlay(net: VesselNetwork, intensity, color_by="diameter", scale=1.0,
     if scale != 1.0:
         base = cv2.resize(base, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
     img = cv2.cvtColor((base * 0.75).astype(np.uint8), cv2.COLOR_GRAY2BGR)
-    key = {"diameter": "r", "blur": "s", "contrast": "a", "vessel": None, "tier": "tier"}[color_by]
-    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6), None: None, "tier": None}[key]
+    key = {"diameter": "r", "blur": "s", "contrast": "a", "vessel": None, "tier": "tier",
+           "flow": "flow"}[color_by]
+    vr = {"r": (0.5, 12.0), "s": (0.6, 8.0), "a": (0.0, 0.6), None: None, "tier": None,
+          "flow": None}[key]
+    if key == "flow":
+        sp = [e.info.get("flow", {}).get("speed_px_per_s") for e in net.edges.values()]
+        sp = [x for x in sp if x]
+        flo, fhi = (np.percentile(sp, 5), np.percentile(sp, 95)) if sp else (1.0, 10.0)
     for eid in net.edges:
         smp = net.sample(eid, 1.0)
         xy = smp["xy"] * scale
-        if key == "tier":
+        if key == "flow":
+            # measured red-cell speed (log scale); grey where flow is unknown
+            fl = net.edges[eid].info.get("flow", {})
+            spd = fl.get("speed_px_per_s")
+            if spd:
+                cols = _colormap(np.full(len(xy), math.log(max(spd, 1e-3))), math.log(max(flo, 1e-3)),
+                                 math.log(max(fhi, flo * 1.01, 1e-3)))
+            else:
+                cols = np.repeat(np.array([[110, 110, 110]]), len(xy), 0)
+        elif key == "tier":
             # mapped vessels blue, the faint (recall) tier orange
             faint = net.edges[eid].info.get("tier") == "faint"
             cols = np.repeat(np.array([[0, 150, 255]] if faint else [[255, 170, 60]]), len(xy), 0)
@@ -59,7 +74,9 @@ def overlay(net: VesselNetwork, intensity, color_by="diameter", scale=1.0,
         for i in range(0, len(pts) - 1):
             cv2.line(img, tuple(pts[i]), tuple(pts[i + 1]), tuple(int(c) for c in cols[i]),
                      th, cv2.LINE_AA, shift=3)
-        if arrows and len(xy) > 12:
+        if arrows and key == "flow" and not net.edges[eid].info.get("flow", {}).get("speed_px_per_s"):
+            pass
+        elif arrows and len(xy) > 12:
             i = len(xy) // 2
             p, q = xy[i - 3], xy[i + 3]
             cv2.arrowedLine(img, tuple(np.round(p).astype(int)), tuple(np.round(q).astype(int)),
@@ -203,6 +220,8 @@ def export_html(net: VesselNetwork, path, intensity=None, max_width=1400, title=
                           if e.info.get("gain") is not None else None,
                           orient=e.info.get("orientation", "structural"),
                           tier=e.info.get("tier", "mapped"),
+                          speed=e.info.get("flow", {}).get("speed_px_per_s"),
+                          joined=",".join(sorted({L["evidence"] for L in e.info.get("links", [])})),
                           visible=e.info.get("visible", True)))
     nodes = [dict(id=k, x=round(n.x, 1), y=round(n.y, 1), kind=net.node_kind(k, deg[k]), deg=deg[k])
              for k, n in net.nodes.items()]
@@ -236,7 +255,7 @@ svg{display:block;width:100%;height:auto}
 </style></head><body>
 <header><h1>__TITLE__</h1>
 <label>colour <select id="cb"><option value="diam">diameter</option><option value="blur">blur (focus)</option>
-<option value="contrast">contrast</option><option value="tier">tier (mapped / faint)</option></select></label>
+<option value="contrast">contrast</option><option value="tier">tier (mapped / faint)</option><option value="speed">flow speed</option></select></label>
 <label><input type="checkbox" id="img" checked>image</label>
 <label><input type="checkbox" id="arr" checked>arrows</label>
 <label><input type="checkbox" id="nod" checked>nodes</label>
@@ -255,14 +274,16 @@ const turbo=t=>{t=Math.max(0,Math.min(1,t));const r=Math.round(34.61+t*(1172.33-
  const g=Math.round(23.31+t*(557.33+t*(1225.33-t*(3574.96-t*(1073.77+t*707.56)))));const b=Math.round(27.2+t*(3211.1-t*(15327.97-t*(27814-t*(22569.18-t*6838.66)))));
  return `rgb(${Math.max(0,Math.min(255,r))},${Math.max(0,Math.min(255,g))},${Math.max(0,Math.min(255,b))})`};
 const rng={diam:[1,40,true],blur:[0.6,12,true],contrast:[0,0.6,false]};
-const col=(k,v)=>{if(k==='tier')return v==='faint'?'#ff9f1c':'#4aa8ff';const [a,b,lg]=rng[k];return turbo(lg?Math.log(v/a)/Math.log(b/a):(v-a)/(b-a))};
+{const sp=D.edges.map(e=>e.speed).filter(v=>v>0).sort((a,b)=>a-b);
+ rng.speed=sp.length?[sp[Math.floor(sp.length*0.05)],Math.max(sp[Math.floor(sp.length*0.95)],sp[0]*1.01),true]:[1,10,true];}
+const col=(k,v)=>{if(k==='tier')return v==='faint'?'#ff9f1c':'#4aa8ff';if(k==='speed'&&!v)return '#777';const [a,b,lg]=rng[k];return turbo(lg?Math.log(v/a)/Math.log(b/a):(v-a)/(b-a))};
 const tip=document.getElementById('tip');
 const show=(ev,txt)=>{tip.style.display='block';tip.textContent=txt;tip.style.left=(ev.clientX+14)+'px';tip.style.top=(ev.clientY+10)+'px'};
 const hide=()=>tip.style.display='none';
 const paths=[];
 for(const e of D.edges){const p=mk('path',{class:'e',d:'M'+e.d.replace(/ /g,' L'),'stroke-width':Math.max(1.0,Math.min(e.diam*0.22,6))});
  if(!e.visible)p.setAttribute('stroke-dasharray','4 3');
- p.addEventListener('mousemove',ev=>show(ev,`edge ${e.id}: ${e.u} → ${e.v}  (${e.orient}, ${e.tier})\nlength ${e.length} px  tortuosity ${e.tort}\ndiameter ${e.diam} px  blur ${e.blur} px\ncontrast ${e.contrast} OD  gain ${e.gain}`));
+ p.addEventListener('mousemove',ev=>show(ev,`edge ${e.id}: ${e.u} → ${e.v}  (${e.orient}, ${e.tier})\nlength ${e.length} px  tortuosity ${e.tort}\ndiameter ${e.diam} px  blur ${e.blur} px\ncontrast ${e.contrast} OD  gain ${e.gain}`+(e.speed?`\nflow ${e.speed} px/s (measured)`:'')+(e.joined?`\njoined by ${e.joined}`:'')));
  p.addEventListener('mouseleave',hide);ge.appendChild(p);paths.push([p,e]);
  const pts=e.d.split(' ').map(q=>q.split(',').map(Number));if(pts.length>6){const i=pts.length>>1,a=pts[i-2],b=pts[i+1];
  ga.appendChild(mk('path',{d:`M${a[0]},${a[1]}L${b[0]},${b[1]}`,stroke:'#fff','stroke-width':1.2,'marker-end':'url(#ah)',fill:'none'}))}}

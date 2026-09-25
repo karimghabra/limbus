@@ -330,3 +330,71 @@ def test_report_from_run_outputs(tmp_path):
     assert "h-frames" not in page                 # no frames given: no frames section
     for name in ("overlay_tier", "search_mask", "frame", "digraph"):
         assert (tmp_path / "rep" / "img" / f"{name}.jpg").exists()
+
+
+def _flow_scene(T=240, seed=0):
+    """A synthetic video: one vessel mapped as two segments (A, B) with a
+    branch C leaving at their joint, and a straight line whose halves (D, E)
+    both flow into the middle (a confluence that shape alone would join)."""
+    import types
+    rng = np.random.default_rng(seed)
+    H, W = 160, 320
+    yy, xx = np.mgrid[0:H, 0:W].astype(float)
+    frames = np.full((T, H, W), 2000.0)
+    def pattern(n):  # smooth random aggregates / gaps
+        from scipy.ndimage import gaussian_filter1d
+        p = gaussian_filter1d(rng.normal(0, 1, n), 2.0); return p / p.std()
+    L = 4000
+    pm = pattern(L); pb_own = pattern(L); pc = pattern(L); pd = pattern(L)
+    def add(fr, t, x0, y0, x1, y1, v, pat, shift=0.0, r=2.0, c=0.35):
+        d = np.array([x1 - x0, y1 - y0], float); Ls = np.linalg.norm(d); u = d / Ls
+        s = (xx - x0) * u[0] + (yy - y0) * u[1]; n = -(xx - x0) * u[1] + (yy - y0) * u[0]
+        inside = (s >= 0) & (s <= Ls)
+        prof = np.exp(-0.5 * (n / r) ** 2) * inside
+        q = np.clip((s - v * t + shift + 1000).astype(int), 0, L - 1)
+        fr *= np.exp(-c * prof * (1 + 0.6 * pat[q]))
+    for t in range(T):
+        f = frames[t]
+        # main vessel A (10,60)->(150,60) continuing as B (150,60)->(300,60), flow +x at 2 px/frame
+        add(f, t, 10, 60, 300, 60, 2.0, pm)
+        # branch C from the joint (150,60) down to (215,150), flow away at 1.2 px/frame, own pattern
+        add(f, t, 150, 60, 215, 150, 1.2, 0.4 * pm + 0.9 * pb_own, shift=-150 * 1.0)
+        # confluence: D (10,120)->(120,120) flows +x, E (120,120)->(150,120)... use a separate straight
+        # line where left part flows +x and right part flows -x, both into the middle x=160
+        add(f, t, 10, 130, 160, 130, 1.5, pc, c=0.3)
+        add(f, t, 310, 130, 160, 130, 1.5, pd, c=0.3)
+        f += rng.normal(0, 15, f.shape)
+    frames = np.clip(frames, 0, 3500).astype(np.float32)
+    net = VesselNetwork((H, W))
+    def line(p, q, u=None, v=None, n=60):
+        xy = np.linspace(p, q, n)
+        return net.add_edge_dense(xy, np.full(n, 2.0), np.full(n, 1.0), np.full(n, 0.3), u=u, v=v)
+    a = line((10, 60), (150, 60)); j = net.edges[a].v
+    b = line((150, 60), (300, 60), u=j)
+    c = line((150, 60), (215, 150), u=j)
+    d = line((10, 130), (160, 130)); k = net.edges[d].v
+    e = line((160, 130), (310, 130), u=k)
+    reg = types.SimpleNamespace(M=np.repeat(np.array([[[1, 0, 0], [0, 1, 0]]], float), T, 0), shape=(H, W))
+    return frames, reg, net, dict(a=a, b=b, c=c, d=d, e=e)
+
+
+def test_flow_consolidation_joins_continuation_and_rejects_confluence():
+    from vesselmap.flow import FlowConfig, Video, flow_consolidate
+    frames, reg, net, ids = _flow_scene()
+    ref = frames.mean(0)
+    vid = Video(frames, reg, np.arange(len(frames)), 74.0, ref)
+    out, rep = flow_consolidate((ref / 4095).astype(np.float32), net, vid,
+                                fc=FlowConfig(verify_shape_links=False, verbose=False))
+    assert rep["reliable"] == 5 and rep["contradicts"] >= 1
+    merged = [e for e in out.edges.values() if len(e.info.get("consolidated_from", [])) > 1]
+    assert len(merged) == 1
+    m = merged[0]
+    assert sorted(m.info["consolidated_from"]) == sorted([ids["a"], ids["b"]])
+    link = m.info["links"][0]
+    assert link["evidence"] == "shape+flow" and link["transit"] > 0.8
+    # the branch still leaves the joined vessel where it did
+    assert m.info.get("through") and out.edges[ids["c"]].u in m.info["through"]
+    # the confluence stays two vessels, both oriented along their flow into the middle
+    d, e = out.edges[ids["d"]], out.edges[ids["e"]]
+    assert d.v == e.v
+    assert abs(m.info["flow"]["v_px_per_frame"] - 2.0) < 0.1

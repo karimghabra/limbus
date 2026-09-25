@@ -39,12 +39,16 @@ def load_image(path: str) -> np.ndarray:
     if a.ndim == 3:
         a = a[..., :3].mean(axis=2)
     a = np.asarray(a)
+    if np.issubdtype(a.dtype, np.floating) and not np.isfinite(a).all():
+        # a registered mean is NaN where no frame covered it
+        a = np.where(np.isfinite(a), a, np.nanmedian(a))
     if a.dtype == np.uint8:
         scale = 255.0
     elif a.dtype == np.uint16:
         scale = FULL_SCALE_12BIT if a.max() <= 4095 else 65535.0
     else:
-        scale = float(max(a.max(), 1e-6)) if a.max() > 1.0 else 1.0
+        # float images in sensor DN (e.g. a registered 12-bit mean) keep the 12-bit scale
+        scale = (FULL_SCALE_12BIT if a.max() <= FULL_SCALE_12BIT else float(a.max())) if a.max() > 1.0 else 1.0
     return (a.astype(np.float32) / scale).clip(0.0, 1.0)
 
 

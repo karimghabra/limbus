@@ -772,6 +772,11 @@ class VesselNetwork:
             attrs = dict(eid=eid, vessel=int(e.info.get("vessel", eid)),
                          orientation=e.info.get("orientation", "structural"),
                          tier=e.info.get("tier", "mapped"), **st)
+            fl = e.info.get("flow")
+            if fl is not None:
+                attrs.update(flow=fl.get("direction", "unknown"),
+                             speed_px_per_s=float(fl.get("speed_px_per_s", float("nan"))),
+                             joined_by=",".join(sorted({L["evidence"] for L in e.info.get("links", [])})))
             if multi:
                 G.add_edge(e.u, e.v, key=eid, **attrs)
             else:
