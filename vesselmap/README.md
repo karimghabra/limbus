@@ -233,6 +233,26 @@ synthetic background texture. This is the one ambiguity that intensity alone
 cannot resolve completely. A wide edge must therefore also beat a smooth
 background explanation (see step 5), which removes most of them.
 
+**Refinement on the same scenes** (current code, `build_map` then
+`refine_map` with `max_reps=6`):
+
+| scene | recall, map → refined | recall at radius < 1 px | recall at radius 1–2 px | precision |
+|---|---|---|---|---|
+| seed 0 | 0.875 → 0.904 | 0.80 → 0.85 | 0.87 → 0.88 | 0.79 → 0.73 |
+| seed 1 | 0.862 → 0.890 | 0.63 → 0.73 | 0.88 → 0.89 | 0.73 → 0.69 |
+| seed 2 | 0.871 → 0.914 | 0.73 → 0.81 | 0.74 → 0.82 | 0.83 → 0.79 |
+
+Refinement mostly adds the thinnest vessels. It costs 4–6 points of
+precision, because some faint proposals are texture.
+
+These `map` numbers are lower than the table above, which was measured
+before the arclength renderer. On seed 0, repeated runs give recall 0.85–0.89
+now against 0.93–0.95 then, with precision about 0.80 now against 0.76 then.
+The recall now lost is mostly short stretches of wide, blurred vessels where
+they cross others. Single runs vary by a few points: builds are not
+bit-for-bit deterministic, because multithreaded sums change the order of
+discrete decisions.
+
 **Consolidation on the same scenes.** `synthetic.vessel_metrics` measures
 how completely single splines annotate single vessels. In the ground truth a
 vessel keeps its identity through a fork: the parent runs on and the branch
@@ -305,6 +325,11 @@ The NLL of the map on its own frame is the scale to compare against: every
 frame fits about as well as the frame the map was built from.
 
 ## Limitations
+
+* Since the switch to the arclength renderer, the base `map` finds fewer
+  short stretches of wide, blurred vessels where they cross others on
+  synthetic scenes (see *Refinement on the same scenes*). `refine` adds fine
+  vessels but does not re-examine coarse bands.
 
 * The densest region, with several vessels overlapping at different depths,
   still has a few traced paths that switch between neighbouring vessels.
