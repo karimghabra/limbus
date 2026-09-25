@@ -398,3 +398,13 @@ def test_flow_consolidation_joins_continuation_and_rejects_confluence():
     d, e = out.edges[ids["d"]], out.edges[ids["e"]]
     assert d.v == e.v
     assert abs(m.info["flow"]["v_px_per_frame"] - 2.0) < 0.1
+
+
+def test_prepare_masks_uncovered_pixels_without_a_step():
+    from vesselmap.image import prepare
+    I = np.full((80, 100), 0.5, np.float32)
+    I[:, 70:] = np.nan                         # outside the registered frame
+    P = prepare(I)
+    assert np.isfinite(P.logI).all() and np.isfinite(P.sigma).all()
+    assert not P.valid[:, 68:].any() and P.valid[:, :60].all()
+    assert np.allclose(P.intensity[:, 70:], 0.5)   # filled from the covered side: no edge

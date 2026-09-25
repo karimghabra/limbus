@@ -167,7 +167,7 @@ def cmd_flow(a):
         raise SystemExit(f"map shape {net.shape} does not match the reference {P.shape}")
     os.makedirs(a.out, exist_ok=True)
     burst = lio.load_burst(a.burst, cache_dir=a.cache)
-    ref = (I * 4095.0).astype(np.float32)
+    ref = (P.intensity * 4095.0).astype(np.float32)      # gaps filled
     if a.registration and os.path.exists(a.registration):
         reg = rg.Registration.load(a.registration)
     else:

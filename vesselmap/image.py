@@ -39,17 +39,17 @@ def load_image(path: str) -> np.ndarray:
     if a.ndim == 3:
         a = a[..., :3].mean(axis=2)
     a = np.asarray(a)
-    if np.issubdtype(a.dtype, np.floating) and not np.isfinite(a).all():
-        # a registered mean is NaN where no frame covered it
-        a = np.where(np.isfinite(a), a, np.nanmedian(a))
+    # a registered image is NaN where no frame covered it: the NaNs are kept
+    # (``prepare`` treats them as invalid pixels)
     if a.dtype == np.uint8:
         scale = 255.0
     elif a.dtype == np.uint16:
         scale = FULL_SCALE_12BIT if a.max() <= 4095 else 65535.0
     else:
-        # float images in sensor DN (e.g. a registered 12-bit mean) keep the 12-bit scale
-        scale = (FULL_SCALE_12BIT if a.max() <= FULL_SCALE_12BIT else float(a.max())) if a.max() > 1.0 else 1.0
-    return (a.astype(np.float32) / scale).clip(0.0, 1.0)
+        # float images in sensor DN (e.g. a registered 12-bit frame) keep the 12-bit scale
+        mx = float(np.nanmax(a))
+        scale = (FULL_SCALE_12BIT if mx <= FULL_SCALE_12BIT else mx) if mx > 1.0 else 1.0
+    return np.clip(a.astype(np.float32) / scale, 0.0, 1.0)
 
 
 @dataclass
@@ -102,9 +102,17 @@ def prepare(intensity: np.ndarray, sat_level: float = 0.995,
             dark_level: float = 1e-3) -> Prepared:
     """Convert a [0,1] intensity image to the log domain with noise weights."""
     I = np.asarray(intensity, np.float32)
+    covered = np.isfinite(I)
+    if not covered.all():
+        # no data (e.g. outside a registered frame): fill from the nearest
+        # covered pixel, so there is no step for the detectors to see, and
+        # mark it (plus a margin) invalid
+        _, (iy, ix) = ndi.distance_transform_edt(~covered, return_indices=True)
+        I = I[iy, ix]
+        covered = ~ndi.binary_dilation(~covered, iterations=3)
     valid = (I < sat_level) & (I > dark_level)
     # grow the saturated specular spots a little: their surroundings bloom
-    valid = ~ndi.binary_dilation(~valid, iterations=2)
+    valid = ~ndi.binary_dilation(~valid, iterations=2) & covered
     logI = np.log(np.maximum(I, dark_level)).astype(np.float32)
     sigma = robust_noise_map(logI)
     return Prepared(I, logI, sigma, valid)

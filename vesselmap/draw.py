@@ -18,8 +18,9 @@ NODE_COLORS = {  # BGR for OpenCV, RGB hex for matplotlib
 
 
 def to_u8(intensity, lo=0.5, hi=99.5):
-    a, b = np.percentile(intensity, [lo, hi])
-    return (np.clip((intensity - a) / max(b - a, 1e-9), 0, 1) * 255).astype(np.uint8)
+    """8-bit display of an image; NaN (no data) shows black."""
+    a, b = np.nanpercentile(intensity, [lo, hi])
+    return (np.nan_to_num(np.clip((intensity - a) / max(b - a, 1e-9), 0, 1)) * 255).astype(np.uint8)
 
 
 def _colormap(values, vmin, vmax, cmap=cv2.COLORMAP_TURBO):
