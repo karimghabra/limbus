@@ -202,7 +202,7 @@ def transit_ratio(K, i_join, v, scale=1, grads=None, skip=4, dmax=None, n=24):
     K: kymograph along a joint path (a -> b), i_join: first index of b,
     v: expected signed velocity along the path (px/frame).  Pairs of points
     D px apart are correlated at the delay D / v; pairs straddling the joint
-    are compared with pairs on either side of it.  Points within `skip` px
+    are compared with pairs within the side whose pattern is clearer.  Points within `skip` px
     of the joint are left out: a branch leaving there overlaps the lumen.  Returns (ratio, c_cross,
     c_within) or NaNs if the path is too short or v unknown."""
     ve = _limbusflow()
@@ -219,7 +219,7 @@ def transit_ratio(K, i_join, v, scale=1, grads=None, skip=4, dmax=None, n=24):
         return np.nan, np.nan, np.nan
     vb = v * scale                                      # px per bin
     Ds = np.unique(np.linspace(dmin, dmax, 5).astype(int)) if dmax > dmin else np.array([dmin])
-    cross, within = [], []
+    cross, wa_c, wb_c = [], [], []
     for D in Ds:
         tau = D / vb
         # straddling pairs: s1 <= i_join - skip, s1 + D >= i_join + skip
@@ -229,13 +229,18 @@ def transit_ratio(K, i_join, v, scale=1, grads=None, skip=4, dmax=None, n=24):
         wb = np.arange(i_join, max(i_join, S - D))
         pick = lambda arr: arr[np.linspace(0, len(arr) - 1, min(n, len(arr))).astype(int)] if len(arr) else arr
         cross += [_pair_corr(K2, s, s + D, tau) for s in pick(s1s)]
-        within += [_pair_corr(K2, s, s + D, tau) for s in np.r_[pick(wa), pick(wb)]]
-    cross = np.array([c for c in cross if np.isfinite(c)])
-    within = np.array([c for c in within if np.isfinite(c)])
-    if len(cross) < 3 or len(within) < 3:
+        wa_c += [_pair_corr(K2, s, s + D, tau) for s in pick(wa)]
+        wb_c += [_pair_corr(K2, s, s + D, tau) for s in pick(wb)]
+    fin = lambda x: np.array([c for c in x if np.isfinite(c)])
+    cross, wa_c, wb_c = fin(cross), fin(wa_c), fin(wb_c)
+    sides = [float(np.median(w)) for w in (wa_c, wb_c) if len(w) >= 3]
+    if len(cross) < 3 or not sides:
         return np.nan, np.nan, np.nan
-    cc, cw = float(np.median(cross)), float(np.median(within))
-    return (cc / cw if cw > 0.02 else np.nan), cc, cw
+    # compare with the side that carries the clearer pattern: one vessel
+    # carries it across the joint; noise on the other side must not
+    # inflate the ratio
+    cc, cw = float(np.median(cross)), max(sides)
+    return (cc / cw if cw > 0.05 else np.nan), cc, cw
 
 
 def _into(end, v):
