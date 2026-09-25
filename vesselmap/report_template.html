@@ -199,7 +199,7 @@ function makeViewer(id){
   const fit=()=>{const r=stage.getBoundingClientRect(); const s=Math.min(r.width/nat.w, r.height/nat.h); v={s, x:(r.width-nat.w*s)/2, y:(r.height-nat.h*s)/2}; apply()};
   const zoomAt=(px,py,f)=>{const r=stage.getBoundingClientRect(); const fitS=Math.min(r.width/nat.w, r.height/nat.h);
     const s=Math.min(Math.max(v.s*f, fitS*0.8), 16); v.x=px-(px-v.x)*s/v.s; v.y=py-(py-v.y)*s/v.s; v.s=s; apply()};
-  const load=(src,keep)=>{const prev={...v}, prevNat={...nat}; img.onload=()=>{nat={w:img.naturalWidth,h:img.naturalHeight};
+  const load=(src,keep)=>{const prev={...v}, prevNat={...nat}; img.onload=()=>{nat={w:img.naturalWidth,h:img.naturalHeight}; if(!stage.dataset.ar){stage.dataset.ar='1'; stage.style.aspectRatio=String(Math.min(3,Math.max(1.2,nat.w/nat.h)));}
       if(keep && nat.w===prevNat.w && nat.h===prevNat.h){v=prev; apply()} else fit()}; img.src=src};
   stage.addEventListener('wheel',e=>{e.preventDefault(); const r=stage.getBoundingClientRect(); zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0015))},{passive:false});
   const ptr=new Map(); let last=null, pinch=null;
@@ -230,7 +230,7 @@ function showRef(L){ v1.load(L.src, true); document.getElementById('v1-cap').tex
   document.getElementById('v1-file').textContent='file: '+L.file;
   const leg=document.getElementById('v1-leg'); leg.textContent='';
   for(const [c,t] of (L.leg||[])){const s=document.createElement('span'); const i=document.createElement('i'); i.className='sw'; i.style.background=c; s.append(i,t); leg.append(s)} }
-segButtons(document.getElementById('v1-seg'), REF_LAYERS, showRef, 'tier'); showRef(REF_LAYERS[0]);
+segButtons(document.getElementById('v1-seg'), REF_LAYERS, showRef, REF_LAYERS[0].k); showRef(REF_LAYERS[0]);
 // per-frame viewer
 const v2=FRAMES.length?makeViewer('v2'):null; let curF=FRAMES[0], curS='fit';
 const STATES=[{k:'fit',label:'Fitted map'},{k:'raw',label:'Map before fitting'}];

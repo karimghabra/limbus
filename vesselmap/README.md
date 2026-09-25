@@ -418,6 +418,33 @@ centrelines, so coverage is measured with a tolerance:
 a mapped vessel, inside its zone. For the mask they are covered: 83 % of
 stroke length lies inside it.
 
+**Flow-informed consolidation on burst 15-22-26** (1105 frames at 74 fps,
+1920×500). limbusflow registered the burst in two passes: 942 frames are
+good, and the longest unbroken run is frames 503–880 (378 frames, 5.1 s).
+The map was built from one registered frame, 611, chosen as the sharpest
+in that run. The registered mean of all frames is the wrong input: it has
+almost no noise, so tissue texture passes the mapper's noise-relative
+tests and is traced as vessels. The flow step took 4.8 min:
+
+| | count |
+|---|---|
+| segments measured / with a reliable velocity | 292 / 69 (median 176 px/s) |
+| candidate joins by shape / including ambiguous forks | 84 / 96 |
+| flow confirms / contradicts / cannot tell | 26 / 1 / 69 |
+| joins made: by shape and flow / by shape alone | 24 / 53 (5 shape-only joins failed the image test) |
+| edges before → after | 278 → 225 |
+
+Two rule refinements came from this burst:
+* **Transit is compared with the clearer side.** A side with no
+  measurable pattern had inflated the ratio when the two sides were
+  pooled.
+* **Conflicting measurements don't rule out a join.** A large vessel
+  whose two segments got opposite signs, while the pattern carried
+  straight across, is left to the shape rule.
+
+The one rejection is a crossing where two segments flow in from opposite
+sides.
+
 **Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
 harder than the intended use; `fit-frames --chain`; this table was measured
 with the earlier map and renderer, so its NLLs are on that scale):
