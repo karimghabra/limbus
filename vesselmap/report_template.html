@@ -1,0 +1,245 @@
+<title>Vesselmap Pipeline Outputs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+:root{
+  --bg:#f2f5f4; --panel:#ffffff; --ink:#14201c; --muted:#56655f; --line:#d5dcd9; --soft:#e8eeec;
+  --accent:#0e7c66; --mapped:#2b95d6; --faint:#e8840e; --stage:#0b100f;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#0d1312; --panel:#151d1b; --ink:#e1e9e6; --muted:#93a39d; --line:#27332f; --soft:#1b2523;
+    --accent:#3fcfae; --mapped:#55b4ee; --faint:#ffa23d; --stage:#060909; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0d1312; --panel:#151d1b; --ink:#e1e9e6; --muted:#93a39d; --line:#27332f; --soft:#1b2523;
+  --accent:#3fcfae; --mapped:#55b4ee; --faint:#ffa23d; --stage:#060909; color-scheme:dark;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:15px/1.55 var(--sans);padding-inline:16px;padding-block:28px 64px}
+.wrap{max-width:1180px;margin:0 auto;display:grid;gap:44px}
+h1,h2,h3{text-wrap:balance;margin:0;line-height:1.2}
+h1{font-size:28px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:20px;font-weight:600}
+h3{font-size:15px;font-weight:600}
+p{margin:0;max-width:68ch}
+code,.mono{font-family:var(--mono);font-size:.88em}
+.eyebrow{font:500 12px/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+.muted{color:var(--muted)}
+header{display:grid;gap:12px}
+section{display:grid;gap:16px}
+.lede{font-size:16px}
+
+/* pipeline strip: a real sequence, so it is numbered */
+.steps{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px;margin:0;padding:0;list-style:none;counter-reset:s}
+.steps li{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 16px;display:grid;gap:6px;counter-increment:s;align-content:start}
+.steps li h3::before{content:counter(s) "  ";font-family:var(--mono);color:var(--accent)}
+.steps pre{margin:0;font:12px/1.5 var(--mono);white-space:pre-wrap;word-break:break-all;background:var(--soft);padding:8px 10px;border-radius:6px}
+.steps .t{font:12px var(--mono);color:var(--muted)}
+
+/* viewer */
+.viewer{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:grid}
+.vbar{display:flex;flex-wrap:wrap;gap:8px 12px;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+.seg{display:flex;flex-wrap:wrap;gap:4px}
+.seg button,.btn{font:500 13px var(--sans);color:var(--ink);background:var(--soft);border:1px solid var(--line);border-radius:6px;padding:5px 10px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--panel);border-color:var(--ink)}
+.seg button:focus-visible,.btn:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.zoomctl{margin-left:auto;display:flex;gap:4px}
+.stage{position:relative;background:var(--stage);aspect-ratio:16/10;max-width:100%;overflow:hidden;touch-action:none;cursor:grab}
+.stage.drag{cursor:grabbing}
+.stage img{position:absolute;left:0;top:0;transform-origin:0 0;user-select:none;-webkit-user-drag:none;max-width:none;image-rendering:auto}
+.stage img.px{image-rendering:pixelated}
+.coords{position:absolute;left:8px;bottom:8px;font:12px var(--mono);color:#e5ece9;background:rgba(0,0,0,.55);padding:2px 7px;border-radius:4px;font-variant-numeric:tabular-nums}
+.cap{padding:12px 14px;display:grid;gap:6px;border-top:1px solid var(--line)}
+.cap .file{font:12px var(--mono);color:var(--muted)}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:13px;color:var(--muted)}
+.sw{display:inline-block;width:14px;height:4px;border-radius:2px;vertical-align:middle;margin-right:6px}
+
+/* numbers */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:grid;gap:2px}
+.stat b{font:600 22px var(--sans);font-variant-numeric:tabular-nums}
+.stat span{font-size:13px;color:var(--muted)}
+
+/* tables and files */
+.tablebox{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px}
+table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{font:500 12px var(--mono);color:var(--muted);letter-spacing:.02em;background:var(--soft)}
+td.num,th.num{text-align:right}
+tr:last-child td{border-bottom:0}
+.tier{display:inline-block;font:500 11px var(--mono);padding:1px 7px;border-radius:10px;border:1px solid}
+.tier.mapped{color:var(--mapped);border-color:var(--mapped)}
+.tier.faint{color:var(--faint);border-color:var(--faint)}
+.files{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:start}
+.file-card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;display:grid;gap:6px;align-content:start}
+.file-card h3{font:500 14px var(--mono)}
+pre.snip{margin:0;font:12px/1.5 var(--mono);background:var(--soft);padding:10px;border-radius:6px;overflow-x:auto;white-space:pre}
+a{color:var(--accent)}
+.callout{background:var(--panel);border:1px solid var(--line);border-left:3px solid var(--faint);border-radius:6px;padding:12px 14px;display:grid;gap:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+@media (max-width:600px){h1{font-size:23px}.zoomctl{margin-left:0}}
+</style>
+
+<div class="wrap">
+<header>
+  <div class="eyebrow">__EYEBROW__</div>
+  <h1>Vesselmap pipeline outputs</h1>
+  <p class="lede">__LEDE__</p>
+</header>
+
+<section aria-labelledby="h-pipe">
+  <h2 id="h-pipe">The runs behind this page</h2>
+  <ol class="steps">__STEPS__</ol>
+</section>
+
+<section aria-labelledby="h-ref">
+  <h2 id="h-ref">__REFNAME__: the map and its images</h2>
+  <div class="viewer" id="v1">
+    <div class="vbar">
+      <div class="seg" role="group" aria-label="Layer" id="v1-seg"></div>
+      <div class="zoomctl">
+        <button class="btn" data-z="in" aria-label="Zoom in">+</button>
+        <button class="btn" data-z="out" aria-label="Zoom out">−</button>
+        <button class="btn" data-z="fit">Fit</button>
+      </div>
+    </div>
+    <div class="stage" id="v1-stage"><img id="v1-img" alt=""><div class="coords" id="v1-xy">scroll or pinch to zoom · drag to pan</div></div>
+    <div class="cap"><div id="v1-cap"></div><div class="file" id="v1-file"></div><div class="legend" id="v1-leg"></div></div>
+  </div>
+</section>
+
+<section aria-labelledby="h-num">
+  <h2 id="h-num">What the map contains</h2>
+  <div class="stats">
+    <div class="stat"><b>__NEDGES__</b><span>edges (vessel segments)</span></div>
+    <div class="stat"><b>__NNODES__</b><span>nodes</span></div>
+    <div class="stat"><b>__LMAP__ px</b><span>mapped centreline, <span class="tier mapped">mapped</span></span></div>
+    <div class="stat"><b>__LFAINT__ px</b><span>faint centreline, <span class="tier faint">faint</span></span></div>
+    <div class="stat"><b>__KINDS__</b><span>bifurcations · endpoints · image-border ends</span></div>
+    <div class="stat"><b>__MASK__</b><span>of the image in the search mask (mapped · faint)</span></div>
+  </div>
+  __CALLOUT__
+</section>
+
+<section aria-labelledby="h-files">
+  <h2 id="h-files">Files and their contents</h2>
+  <p class="muted">Each run writes the same set of files to its output folder . The graph files hold one row per edge; <code>map.json</code> holds the full spline model.</p>
+  <div class="files">
+    <div class="file-card"><h3>map_digraph.html</h3><p class="muted">Interactive viewer: hover an edge or node for its attributes, colour edges by diameter, blur, contrast or tier.</p><p><a href="map_digraph.html" target="_blank" rel="noopener">Open the interactive graph</a></p></div>
+    <div class="file-card"><h3>map.graphml · map_edges.csv</h3><p class="muted">The directed graph: nodes carry x, y and kind (bifurcation, endpoint, border, joint, junction). Edges carry the attributes in the table below.</p></div>
+    <div class="file-card"><h3>map.json</h3><p class="muted">The full model: nodes, per-edge spline control points and width / blur / contrast profiles, the background grid, and the fitting metadata. <code>VesselNetwork.load()</code> reads it back; <code>fit-frames</code> starts from it.</p>
+      <pre class="snip">__EDGEJSON__</pre></div>
+    <div class="file-card"><h3>map_search_mask.png</h3><p class="muted">uint8 labels, 1920 × 1200: 0 = background, 1 = mapped vessel tube (radius r + 3 px), 2 = faint-tier tube (radius 5 px). The viewer above shows it coloured.</p></div>
+    <div class="file-card"><h3>map_summary.json</h3><p class="muted">Counts, node kinds, total length, and every setting used for the map and the faint tier.</p></div>
+    <div class="file-card"><h3>frames/frame_*.json · frames.csv</h3><p class="muted">One fitted map per frame (same ids as the reference) and a row per frame: alignment, how far nodes moved, fit quality, and which edges are visible in that frame.</p></div>
+  </div>
+  <h3>map_edges.csv: first rows of each tier</h3>
+  <div class="tablebox"><table>
+    <thead><tr><th>eid</th><th>u → v</th><th>tier</th><th class="num">length px</th><th class="num">diameter px</th><th class="num">blur σ px</th><th class="num">contrast OD</th><th class="num">tortuosity</th></tr></thead>
+    <tbody>__ROWS__</tbody>
+  </table></div>
+</section>
+
+<!--FRAMES--><section aria-labelledby="h-frames">
+  <h2 id="h-frames">The map fitted to other frames</h2>
+  <p>Each fit first aligns the whole map to the frame, then lets every node and profile move a little (3 px prior). Compare the map as it lands on the frame before fitting with the fitted map.</p>
+  <div class="tablebox"><table>
+    <thead><tr><th>frame</th><th class="num">global shift x, y px</th><th class="num">node move after alignment, median / p95 px</th><th class="num">visible edges</th><th class="num">time</th></tr></thead>
+    <tbody>__FRAMEROWS__</tbody>
+  </table></div>
+  <div class="viewer" id="v2">
+    <div class="vbar">
+      <div class="seg" role="group" aria-label="Frame" id="v2-frame"></div>
+      <div class="seg" role="group" aria-label="Map state" id="v2-seg"></div>
+      <div class="zoomctl">
+        <button class="btn" data-z="in" aria-label="Zoom in">+</button>
+        <button class="btn" data-z="out" aria-label="Zoom out">−</button>
+        <button class="btn" data-z="fit">Fit</button>
+      </div>
+    </div>
+    <div class="stage" id="v2-stage"><img id="v2-img" alt=""><div class="coords" id="v2-xy">scroll or pinch to zoom · drag to pan</div></div>
+    <div class="cap"><div id="v2-cap"></div><div class="legend"><span><i class="sw" style="background:var(--mapped)"></i>mapped</span><span><i class="sw" style="background:var(--faint)"></i>faint tier</span><span>dashed: not visible in this frame</span></div></div>
+  </div>
+</section><!--/FRAMES-->
+</div>
+
+<script>
+const REF_LAYERS = [
+  {k:'tier', label:'Map by tier', src:'img/overlay_tier.jpg', file:'map_overlay_tier.png',
+   cap:'The map on the reference frame. Blue: vessels that passed the fitting test (the map you liked). Orange: the faint tier, traced along vessels too faint to pass it.',
+   leg:[['var(--mapped)','mapped'],['var(--faint)','faint tier']]},
+  {k:'mask', label:'Search mask', src:'img/search_mask.jpg', file:'map_search_mask.png',
+   cap:'Where to search for flow: blue tubes around mapped vessels, orange tubes around faint-tier paths.',
+   leg:[['var(--mapped)','1 · mapped tube'],['var(--faint)','2 · faint tube']]},
+  {k:'diam', label:'By diameter', src:'img/overlay.jpg', file:'map_overlay.png',
+   cap:'Centrelines coloured by fitted diameter. Arrows show the structural direction (wide to narrow), not flow. Dots mark bifurcations, endpoints and border ends.'},
+  {k:'blur', label:'By blur (focus)', src:'img/overlay_blur.jpg', file:'map_overlay_blur.png',
+   cap:'Centrelines coloured by fitted blur σ: in-focus vessels are sharp, deeper or defocused vessels are blurred.'},
+  {k:'graph', label:'Digraph', src:'img/digraph.jpg', file:'map_digraph.png',
+   cap:'The directed graph drawn on its own. Line width follows diameter, colour follows blur; the legend counts node kinds and crossings.'},
+  {k:'graphimg', label:'Digraph on image', src:'img/digraph_on_image.jpg', file:'map_digraph_on_image.png',
+   cap:'The same graph drawn over the frame.'},
+  {k:'model', label:'Model | residual', src:'img/model_residual.jpg', file:'map_model_residual.png',
+   cap:'Left to right: the frame, the rendered model (background + every vessel), and the residual (frame − model). The residual is what no spline explains yet.'},
+  {k:'frame', label:'Frame only', src:'img/frame.jpg', file:'__REFFILE__',
+   cap:'The reference frame, contrast-stretched, without any overlay.'},
+];
+const FRAMES = __FRAMES__;
+
+function makeViewer(id){
+  const stage=document.getElementById(id+'-stage'), img=document.getElementById(id+'-img'), xy=document.getElementById(id+'-xy');
+  let v={s:1,x:0,y:0}, nat={w:1920,h:1200};
+  const apply=()=>{img.style.transform=`translate(${v.x}px,${v.y}px) scale(${v.s})`; img.classList.toggle('px', v.s>2.5)};
+  const fit=()=>{const r=stage.getBoundingClientRect(); const s=Math.min(r.width/nat.w, r.height/nat.h); v={s, x:(r.width-nat.w*s)/2, y:(r.height-nat.h*s)/2}; apply()};
+  const zoomAt=(px,py,f)=>{const r=stage.getBoundingClientRect(); const fitS=Math.min(r.width/nat.w, r.height/nat.h);
+    const s=Math.min(Math.max(v.s*f, fitS*0.8), 16); v.x=px-(px-v.x)*s/v.s; v.y=py-(py-v.y)*s/v.s; v.s=s; apply()};
+  const load=(src,keep)=>{const prev={...v}, prevNat={...nat}; img.onload=()=>{nat={w:img.naturalWidth,h:img.naturalHeight};
+      if(keep && nat.w===prevNat.w && nat.h===prevNat.h){v=prev; apply()} else fit()}; img.src=src};
+  stage.addEventListener('wheel',e=>{e.preventDefault(); const r=stage.getBoundingClientRect(); zoomAt(e.clientX-r.left,e.clientY-r.top,Math.exp(-e.deltaY*0.0015))},{passive:false});
+  const ptr=new Map(); let last=null, pinch=null;
+  stage.addEventListener('pointerdown',e=>{stage.setPointerCapture(e.pointerId); ptr.set(e.pointerId,[e.clientX,e.clientY]); stage.classList.add('drag');
+    if(ptr.size===2){const [a,b]=[...ptr.values()]; pinch={d:Math.hypot(a[0]-b[0],a[1]-b[1])}} last=[e.clientX,e.clientY]});
+  stage.addEventListener('pointermove',e=>{const r=stage.getBoundingClientRect();
+    const ix=(e.clientX-r.left-v.x)/v.s, iy=(e.clientY-r.top-v.y)/v.s;
+    if(ix>=0&&iy>=0&&ix<nat.w&&iy<nat.h) xy.textContent=`x ${ix.toFixed(0)} · y ${iy.toFixed(0)}`;
+    if(!ptr.has(e.pointerId)) return; ptr.set(e.pointerId,[e.clientX,e.clientY]);
+    if(ptr.size===2&&pinch){const [a,b]=[...ptr.values()]; const d=Math.hypot(a[0]-b[0],a[1]-b[1]);
+      zoomAt((a[0]+b[0])/2-r.left,(a[1]+b[1])/2-r.top,d/pinch.d); pinch.d=d; return}
+    if(last){v.x+=e.clientX-last[0]; v.y+=e.clientY-last[1]; last=[e.clientX,e.clientY]; apply()}});
+  const up=e=>{ptr.delete(e.pointerId); if(ptr.size<2) pinch=null; if(!ptr.size){last=null; stage.classList.remove('drag')}};
+  stage.addEventListener('pointerup',up); stage.addEventListener('pointercancel',up);
+  document.querySelectorAll(`#${id} [data-z]`).forEach(b=>b.onclick=()=>{const r=stage.getBoundingClientRect();
+    b.dataset.z==='fit'?fit():zoomAt(r.width/2,r.height/2,b.dataset.z==='in'?1.6:1/1.6)});
+  new ResizeObserver(()=>{ if(img.complete) fit() }).observe(stage);
+  return {load};
+}
+function segButtons(el, items, onPick, current){
+  el.textContent='';
+  for(const it of items){const b=document.createElement('button'); b.textContent=it.label; b.setAttribute('aria-pressed',String(it.k===current));
+    b.onclick=()=>{for(const c of el.children) c.setAttribute('aria-pressed','false'); b.setAttribute('aria-pressed','true'); onPick(it)}; el.append(b)}
+}
+// reference-frame viewer
+const v1=makeViewer('v1');
+function showRef(L){ v1.load(L.src, true); document.getElementById('v1-cap').textContent=L.cap;
+  document.getElementById('v1-file').textContent='file: '+L.file;
+  const leg=document.getElementById('v1-leg'); leg.textContent='';
+  for(const [c,t] of (L.leg||[])){const s=document.createElement('span'); const i=document.createElement('i'); i.className='sw'; i.style.background=c; s.append(i,t); leg.append(s)} }
+segButtons(document.getElementById('v1-seg'), REF_LAYERS, showRef, 'tier'); showRef(REF_LAYERS[0]);
+// per-frame viewer
+const v2=FRAMES.length?makeViewer('v2'):null; let curF=FRAMES[0], curS='fit';
+const STATES=[{k:'fit',label:'Fitted map'},{k:'raw',label:'Map before fitting'}];
+function showFrame(){ const f=curF; v2.load(curS==='fit'?f.fit:f.raw, true);
+  document.getElementById('v2-cap').textContent = curS==='fit'
+    ? `${f.name}: the map after alignment and fitting to this frame. ${f.note}`
+    : `${f.name}: the reference map drawn where it was found on the reference frame, before any alignment. The frame has drifted by (${f.shift}) px.`; }
+if(FRAMES.length){
+  segButtons(document.getElementById('v2-frame'), FRAMES.map(f=>({k:f.name,label:f.name,f})), it=>{curF=it.f; showFrame()}, FRAMES[0].name);
+  segButtons(document.getElementById('v2-seg'), STATES, it=>{curS=it.k; showFrame()}, 'fit');
+  showFrame();
+}
+</script>

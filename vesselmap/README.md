@@ -35,6 +35,9 @@ python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-0
 # 4. adjust it to other (stabilised) frames: same ids, small moves
 python -m vesselmap fit-frames out/vessels/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
 
+# 5. one HTML page of a run's outputs (images, graph files, per-frame fits)
+python -m vesselmap report out/faint --image reference_data/burst_2026-09-16_15-50-52/frame_000020.tif --frames out/frames -o out/report
+
 # score the mapper on synthetic images with known ground truth
 python -m vesselmap synth-eval --seeds 0 1 2 -o out/synth
 ```
@@ -413,7 +416,7 @@ frame fits about as well as the frame the map was built from.
 `image.py` loading and the log domain · `ridges.py` proposals · `spline.py`
 B-splines · `network.py` graph and topology · `render.py` differentiable
 renderer and score · `fit.py` discovery and per-frame fitting ·
-`refine.py` fine detail · `faint.py` faint tier and search mask ·
+`refine.py` fine detail · `faint.py` faint tier and search mask · `report.py` HTML report of a run ·
 `consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the

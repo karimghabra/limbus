@@ -311,3 +311,22 @@ def test_faint_tracking_finds_sub_threshold_line_and_joins_map():
     assert any(net.degrees()[n] >= 3 for n in net.nodes)
     m = search_mask(net, (H, W))
     assert (m == 1).any() and (m == 2).any()
+
+
+def test_report_from_run_outputs(tmp_path):
+    import cv2
+    from vesselmap.__main__ import write_outputs
+    from vesselmap.report import build_report
+    net = VesselNetwork((120, 160))
+    _line(net, (10, 60), (150, 60))
+    e = _line(net, (80, 60), (80, 110), a=0.1)
+    net.edges[e].info["tier"] = "faint"
+    img = (np.random.default_rng(0).uniform(0.4, 0.6, (120, 160)) * 255).astype(np.uint8)
+    cv2.imwrite(str(tmp_path / "frame.png"), img)
+    write_outputs(net, img.astype(np.float32) / 255, None, str(tmp_path / "run"))
+    path = build_report(str(tmp_path / "run"), str(tmp_path / "frame.png"), str(tmp_path / "rep"))
+    page = open(path).read()
+    assert "__" not in page.replace("__proto__", "")
+    assert "h-frames" not in page                 # no frames given: no frames section
+    for name in ("overlay_tier", "search_mask", "frame", "digraph"):
+        assert (tmp_path / "rep" / "img" / f"{name}.jpg").exists()

@@ -6,6 +6,7 @@
     python -m vesselmap faint MAP.json IMAGE -o OUT
     python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
     python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
+    python -m vesselmap report RUN_DIR --image IMAGE [--frames FRAMES_DIR] -o OUT
     python -m vesselmap synth-eval [--seeds 0 1 2] -o OUT
 """
 from __future__ import annotations
@@ -200,6 +201,12 @@ def cmd_draw(a):
         write_outputs(net, I, prepare(I), a.out)
 
 
+def cmd_report(a):
+    from .report import build_report
+    path = build_report(a.run, a.image, a.out, frames_dir=a.frames)
+    print(f"report written to {path}")
+
+
 def cmd_synth_eval(a):
     from .fit import MapConfig, build_map
     from .image import prepare
@@ -269,6 +276,12 @@ def main(argv=None):
     d.add_argument("--image")
     d.add_argument("-o", "--out", required=True)
     d.set_defaults(func=cmd_draw)
+    rp = sub.add_parser("report", help="HTML page of a run's outputs (and its per-frame fits)")
+    rp.add_argument("run", help="output folder of map / refine / faint / consolidate")
+    rp.add_argument("--image", required=True, help="the image the map was built from")
+    rp.add_argument("--frames", help="output folder of fit-frames")
+    rp.add_argument("-o", "--out", required=True)
+    rp.set_defaults(func=cmd_report)
     s = sub.add_parser("synth-eval", help="score the mapper on synthetic scenes")
     s.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     s.add_argument("-o", "--out", required=True)
