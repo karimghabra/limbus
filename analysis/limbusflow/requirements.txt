@@ -1,0 +1,17 @@
+numpy
+scipy
+scikit-image
+opencv-python-headless
+tifffile
+networkx
+matplotlib
+pandas
+plotly
+anywidget
+ipywidgets
+jupyterlab
+nbformat
+nbconvert
+ipykernel
+imageio
+imageio-ffmpeg
