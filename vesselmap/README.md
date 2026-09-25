@@ -29,6 +29,10 @@ python -m vesselmap refine out/map/map.json reference_data/burst_2026-09-16_15-5
 #    (about 3 min; writes map_search_mask.png)
 python -m vesselmap faint out/map/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/faint
 
+# 2c. measure red-cell velocity along every segment (limbusflow) and join the
+#     segments that flow shows to be one vessel; the map comes from one image
+python -m vesselmap flow out/faint/map.json --burst BURST_DIR --reference IMAGE -o out/flow
+
 # 3. optional: one spline per vessel instead of one per segment
 python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/vessels
 
@@ -236,6 +240,52 @@ and under colour "tier" in the HTML viewer. `fit_frame` adjusts them like
 any other edge. They are candidates for the velocity search, not confirmed
 vessels: the velocity analysis decides.
 
+**Flow-informed consolidation** (`flow.py`, `vesselmap flow`) is the one
+part of vesselmap that uses velocity. It comes after the map and never
+changes how vessels are detected, so the structural map stays independent
+of the velocities it is later used to measure.
+
+1. *Velocity per segment.* limbusflow registers the burst to the
+   reference image. For every segment a kymograph is read along the
+   centreline, averaged across the central half of the lumen.
+   `limbusflow.velocity.estimate` gives the signed red-cell velocity:
+   positive runs from the segment's node u to its node v. A result is
+   reliable only when:
+   * there is a clear correlation ridge;
+   * two of three estimators (LSPIV ridge, structure tensor, time of
+     flight) agree;
+   * for slow flow, the result also persists across both halves of the
+     recording.
+2. *Candidates.* `consolidate.candidates` supplies the candidate joins:
+   continuations through a node and across gaps, judged on direction,
+   calibre and blur. At a fork, every feasible pairing is kept here, not
+   only the unambiguous one.
+3. *Flow tests at each joint*:
+   * **direction**: blood runs into the joint along one segment and out
+     along the other. Both in (a confluence) or both out (a fork) is
+     never one vessel;
+   * **speed**: the speeds agree within ×1.6. Beyond ×3 they are two
+     vessels;
+   * **transit**: the red-cell pattern leaving one segment reappears in
+     the other, at a delay of distance / speed. The temporal correlation
+     across the joint is compared with the correlation within the side
+     whose pattern is clearer, over the same distances. Points within a
+     few px of the joint are left out, because a branch leaving there
+     overlaps the lumen. On synthetic flow the ratio is 1.07 for a
+     continuation and 0.22 for a branch; the threshold is 0.6.
+4. *Decision.*
+   * A join that flow **confirms** is made even at an ambiguous fork.
+   * One it **contradicts** is not made, even when shape agrees.
+   * Where flow is unknown (too slow, too short, out of focus), the shape
+     rule and image test of `consolidate` apply.
+   * Segments not joined stay attached where they meet the vessel.
+
+Each joined vessel lists the evidence for each link in `info["links"]`.
+Each edge carries its measured flow in `info["flow"]`, and edges with a
+reliable measurement point along the flow (`orientation = "flow"`).
+Outputs: `map_overlay_flow.png` (speed on a log scale, grey = unknown) and
+`map_flow.csv`. In the HTML viewer, "flow speed" is a colour option.
+
 ## The graph
 
 Node kinds: `bifurcation` (degree 3), `junction` (degree ≥ 4), `endpoint`
@@ -400,6 +450,10 @@ frame fits about as well as the frame the map was built from.
 * Widths below about 1.5 px are degenerate with blur: the product of
   contrast and width is well determined, but the split between them is not.
 * Direction is a structural convention, not a flow measurement.
+* Flow evidence helps mostly with small vessels and capillaries. Large
+  vessels carry a dense red-cell column, and at 74 fps the 12.8 ms
+  exposure smears their fast flow, so they rarely show a trackable
+  pattern. There the shape rule decides.
 * The faint tier trades precision for recall by design. Its threshold
   admits a few paths per image from noise alone, and bright or dark
   banding next to badly fitted wide vessels can still produce a path.
@@ -416,7 +470,7 @@ frame fits about as well as the frame the map was built from.
 `image.py` loading and the log domain · `ridges.py` proposals · `spline.py`
 B-splines · `network.py` graph and topology · `render.py` differentiable
 renderer and score · `fit.py` discovery and per-frame fitting ·
-`refine.py` fine detail · `faint.py` faint tier and search mask · `report.py` HTML report of a run ·
+`refine.py` fine detail · `faint.py` faint tier and search mask · `flow.py` velocity and flow-informed consolidation · `report.py` HTML report of a run ·
 `consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the
