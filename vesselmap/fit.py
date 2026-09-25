@@ -35,7 +35,7 @@ import torch
 from scipy.spatial import cKDTree
 
 from .image import Prepared, prepare
-from .network import S_MIN, R_MIN, VesselNetwork, pos_spacing_for
+from .network import PROFILE_SPACING, S_MIN, R_MIN, VesselNetwork, pos_spacing_for
 from .render import NetworkModel, profile_peak
 from .ridges import detect
 
@@ -479,10 +479,12 @@ def n_params(net: VesselNetwork, eid, L=None) -> float:
     Control points are tied together by the bending/cusp priors, so the
     centreline counts as ~2 dof per 15 px of length (not 2 per control
     point, which would make finely parameterised thin vessels artificially
-    expensive), plus its two ends and three profiles."""
-    e = net.edges[eid]
+    expensive), plus its two ends and three profiles (one dof per 30 px
+    each)."""
     L = net.length(eid) if L is None else L
-    return 4.0 + 2.0 * L / 15.0 + 3.0 * len(e.r)
+    # profiles likewise by length (faithful re-fits of split / joined edges
+    # carry denser profile knots, which must not make them look costlier)
+    return 4.0 + 2.0 * L / 15.0 + 3.0 * max(2.0, L / PROFILE_SPACING + 1.0)
 
 
 def score_and_prune(net, model: NetworkModel, cfg: MapConfig, protect=()):

@@ -456,10 +456,13 @@ class VesselNetwork:
         if n_far1 == n_far2 and e1 != e2:
             # joining would create a loop from a node to itself; keep it
             pass
-        # the bridge may create a hook: despike explicitly, then fit faithfully
-        xy_j, r_j, s_j, a_j = despike(parts["xy"], parts["r"], parts["s"], parts["a"])
-        eid = self.add_edge_dense(xy_j, r_j, s_j, a_j, u=n_far1, v=n_far2, spacing=spacing,
-                                  info=info, faithful=True)
+        # a join contains a straight bridge between the two ends: it is fitted
+        # with the usual smoothing (and despiking), because a near-exact fit
+        # rings around the bridge's corners (measured: -4 points of recall on
+        # synthetic scenes).  Splits, whose input is a clean spline, are
+        # fitted faithfully.
+        eid = self.add_edge_dense(parts["xy"], parts["r"], parts["s"], parts["a"],
+                                  u=n_far1, v=n_far2, spacing=spacing, info=info)
         for n in join_nodes:
             if n in self.nodes and not self.incident(n):
                 del self.nodes[n]

@@ -245,21 +245,29 @@ links. Most of the remaining fragmentation in these scenes comes from
 tangled traces of tortuous capillaries. Their pieces turn by more than 40°
 or change calibre where they meet, so no link joins them.
 
-**LIMBUS reference burst 1, frame 20** (1920x1200, 12-bit):
+**LIMBUS reference burst 1, frame 20** (1920x1200, 12-bit). NLLs are
+from the arclength renderer, so they are comparable with each other, not
+with numbers from before that change.
 
-* 524 vessel edges and 65,300 px of centreline. Nodes: 201 bifurcations,
-  56 endpoints, 50 border exits and 170 joints. 214 crossings of vessels at
-  different depths. Built in 34 min on 4 CPU cores.
-* Fitted calibre: diameter 4.7–35 px (5th–95th percentile, median 11 px).
-  Blur σ 1.3–11.5 px, spanning sharp capillaries to deep, strongly
-  defocused vessels. Contrast 0.08–0.42 OD. Global scattering halo: weight
-  0.55, σ 3.9 px.
+| | `map` | `map` + `refine` |
+|---|---|---|
+| edges / centreline | 443 / 57,800 px | 578 / 68,900 px |
+| centreline of vessels < 6 px in diameter | 3,900 px | 12,000 px |
+| parallel-vessel splits kept | – | 31 |
+| crossings of vessels at different depths | 158 | 283 |
+| data NLL | 1.566M | 1.474M |
+| unexplained ridges in the residual, finest band | 10,000 px | 7,600 px |
+| time on 4 CPU cores | 41 min | +64 min |
+
+The earlier map made before the arclength renderer (65,300 px) scores
+1.694M under it. It carried centreline that exploited sampling gaps
+rather than explaining the image.
+
+* Fitted calibre after refinement: diameter 3.8–30 px (5th–95th
+  percentile, median 9.8 px). Blur σ 1.7–16 px, spanning sharp capillaries
+  to deep, strongly defocused vessels. Contrast 0.05–0.42 OD.
 * The rendered model reproduces the frame closely, and the residual has no
   wide vessels left in it (`map_model_residual.png`).
-* Development history on this frame, measured by the final data NLL
-  (lower is better): 1.66M in an early version, with 32 self-loops and 236
-  kinked edges. Then 1.81M after the anti-cusp fixes, before recall was
-  restored. Then 1.71M, then 1.65M, and finally 1.585M, with no self-loops.
 
 **Per-frame fitting on the same burst** (raw, *unstabilised* frames, so
 harder than the intended use; `fit-frames --chain`):
