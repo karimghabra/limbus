@@ -123,6 +123,7 @@ a{color:var(--accent)}
     <div class="stat"><b>__KINDS__</b><span>bifurcations · endpoints · image-border ends</span></div>
     <div class="stat"><b>__MASK__</b><span>of the image in the search mask (mapped · faint)</span></div>
   </div>
+  __FLOWBOX__
   __CALLOUT__
 </section>
 
@@ -169,7 +170,7 @@ a{color:var(--accent)}
 </div>
 
 <script>
-const REF_LAYERS = [
+const REF_LAYERS = [__FLOW_LAYER__
   {k:'tier', label:'Map by tier', src:'img/overlay_tier.jpg', file:'map_overlay_tier.png',
    cap:'The map on the reference frame. Blue: vessels that passed the fitting test (the map you liked). Orange: the faint tier, traced along vessels too faint to pass it.',
    leg:[['var(--mapped)','mapped'],['var(--faint)','faint tier']]},

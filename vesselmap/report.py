@@ -23,7 +23,7 @@ from .image import load_image
 from .network import VesselNetwork
 
 _BLUE, _ORANGE = (214, 149, 43), (14, 132, 232)     # BGR, matching the page's colours
-_REF_IMAGES = ("overlay_tier", "overlay", "overlay_blur", "digraph_on_image", "digraph",
+_REF_IMAGES = ("overlay_flow", "overlay_tier", "overlay", "overlay_blur", "digraph_on_image", "digraph",
                "model_residual")
 
 
@@ -87,10 +87,13 @@ def build_report(run_dir: str, image: str, out: str, frames_dir: str | None = No
     n_fr = 0
     if frames_dir and os.path.exists(os.path.join(frames_dir, "frames.csv")):
         n_fr = len(list(csv.DictReader(open(os.path.join(frames_dir, "frames.csv")))))
+    uses_flow = bool(net.meta.get("flow_consolidation"))
     rep["__LEDE__"] = html.escape(
-        "Everything the pipeline wrote for one reference frame"
+        "Everything the pipeline wrote for one reference image"
         + (f", plus the same map fitted to {n_fr} other frame{'s' if n_fr != 1 else ''}" if n_fr else "")
-        + ". Only still images are used: no velocities or kymographs.")
+        + (". The map is built from the still image alone; velocities measured afterwards "
+           "decide which segments are one vessel." if uses_flow
+           else ". Only still images are used: no velocities or kymographs."))
 
     # ---------------------------------------------------------------- steps
     meta = net.meta
@@ -112,6 +115,13 @@ def build_report(run_dir: str, image: str, out: str, frames_dir: str | None = No
                            "Traces faint vessels along their length in what the map leaves "
                            "unexplained, and writes the search mask.",
                            f"{_minutes(f['seconds'])} · +{f['edges']} edges · +{f['length'] / 1000:.1f}k px"))
+    fcm = meta.get("flow_consolidation")
+    if fcm:
+        steps.append(_step("Measure flow and join segments",
+                           "python -m vesselmap flow out/faint/map.json --burst BURST --reference REF -o out/flow",
+                           "Measures red-cell velocity along every segment (limbusflow) and joins "
+                           "segments where shape and flow agree they are one vessel.",
+                           f"{_minutes(fcm['seconds'])} · {fcm['frames']} frames at {fcm['fps']:.0f} fps"))
     if "consolidation" in meta:
         steps.append(_step("Consolidate", f"python -m vesselmap consolidate MAP.json {img_name} -o out/vessels",
                            "Merges the segments of each vessel into one spline.", ""))
@@ -158,6 +168,25 @@ def build_report(run_dir: str, image: str, out: str, frames_dir: str | None = No
         f'(median {np.median(radii):.1f} px), so {np.mean(mask > 0) * 100:.0f}% of the image is '
         'inside the mask. A tube based on the apparent width, or a fixed width around the '
         'centreline, would be tighter.</p></div>')
+
+    rep["__FLOW_LAYER__"] = ""
+    rep["__FLOWBOX__"] = ""
+    if fcm and os.path.exists(os.path.join(out, "img", "overlay_flow.jpg")):
+        rep["__FLOW_LAYER__"] = (
+            "{k:'flow', label:'By flow', src:'img/overlay_flow.jpg', file:'map_overlay_flow.png', "
+            "cap:'Segments coloured by measured red-cell speed (log scale), arrows along the flow. Grey: "
+            "no reliable measurement (too slow, too short or out of focus).'},")
+        sp = [e.info["flow"]["speed_px_per_s"] for e in net.edges.values()
+              if e.info.get("flow", {}).get("reliable")]
+        rep["__FLOWBOX__"] = (
+            '<div class="stats">'
+            f'<div class="stat"><b>{fcm["reliable"]} / {fcm["measured"]}</b><span>segments with a reliable velocity</span></div>'
+            f'<div class="stat"><b>{np.median(sp) if sp else float("nan"):.0f} px/s</b><span>median red-cell speed</span></div>'
+            f'<div class="stat"><b>{fcm["links_flow"]}</b><span>joins confirmed by flow</span></div>'
+            f'<div class="stat"><b>{fcm["contradicts"]}</b><span>shape-plausible joins flow ruled out</span></div>'
+            f'<div class="stat"><b>{fcm["links_shape"]}</b><span>joins by shape alone (flow unknown)</span></div>'
+            f'<div class="stat"><b>{fcm["segments"]} → {fcm["edges_after"]}</b><span>edges before → after</span></div>'
+            '</div>')
 
     # ---------------------------------------------------------------- files
     d = json.load(open(p(".json")))
