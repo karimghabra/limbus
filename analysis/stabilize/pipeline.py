@@ -13,8 +13,9 @@ import cv2
 import numpy as np
 import tifffile
 
-from . import __version__
+from . import __version__, gpu_stages
 from .bursts import has_image_data, load_burst, read_frame
+from .gpu import describe
 from .metrics import (closure_error, mask_consensus, motion_metrics,
                       residual_motion, rotation_diagnostic)
 from .quality import frame_stats, gate
@@ -47,8 +48,11 @@ def _skip(out_dir, burst, reason, started, params, method="translation"):
 
 
 def process_burst(path, out_root, params, log=print, keep_work=False,
-                  method="translation"):
+                  method="translation", gpu=None):
     """Translation stabilization of one burst into <out_root>/<burst>.
+
+    gpu (from gpu.select) runs the per-frame image work on a CUDA GPU; None
+    runs everything on the CPU (§14).
 
     keep_work leaves the working vessel maps (V, M, O memmaps) on disk and
     returns their folder as record['_work_dir'], so a later stage — the
@@ -74,7 +78,7 @@ def process_burst(path, out_root, params, log=print, keep_work=False,
     os.makedirs(work_dir, exist_ok=True)
     record = None
     try:
-        record = _process(burst, out_dir, work_dir, scale, params, log, started, method)
+        record = _process(burst, out_dir, work_dir, scale, params, log, started, method, gpu)
         if keep_work and record.get("status") == "ok":
             record["_work_dir"] = work_dir
         return record
@@ -84,18 +88,22 @@ def process_burst(path, out_root, params, log=print, keep_work=False,
             shutil.rmtree(work_dir, ignore_errors=True)
 
 
-def _process(burst, out_dir, work_dir, scale, params, log, started, method="translation"):
+def _process(burst, out_dir, work_dir, scale, params, log, started, method="translation",
+             gpu=None):
     n = len(burst)
     fs = burst.full_scale
 
     # ---- pass 1: frame statistics and the quality gate (§3) -----------------
     t0 = time.time()
-    log_sharp = np.zeros(n)
-    means = np.zeros(n)
-    clipped = np.zeros(n)
-    for i, f in enumerate(burst.files):
-        log_sharp[i], means[i], clipped[i] = frame_stats(
-            to_working(read_frame(f), scale), fs, params)
+    if gpu is None:
+        log_sharp = np.zeros(n)
+        means = np.zeros(n)
+        clipped = np.zeros(n)
+        for i, f in enumerate(burst.files):
+            log_sharp[i], means[i], clipped[i] = frame_stats(
+                to_working(read_frame(f), scale), fs, params)
+    else:
+        log_sharp, means, clipped = gpu_stages.frame_stats(gpu, burst, scale, params)
     good, reasons, z_sharp, z_mean = gate(log_sharp, means, params)
     frames = np.flatnonzero(good)
     log(f"  gate: kept {frames.size}/{n} frames ({time.time() - t0:.0f}s)")
@@ -111,12 +119,15 @@ def _process(burst, out_dir, work_dir, scale, params, log, started, method="tran
     c = contrast_constant(ref_img, sigmas, params)
     sample = frames[np.linspace(0, frames.size - 1,
                                 min(params.threshold_sample_frames, frames.size)).astype(int)]
-    sample_v = []
-    for i in sample:
-        img = to_working(read_frame(burst.files[i]), scale)
-        v = vesselness(img, sigmas, c, params)
-        v[glare_mask(img, fs, params, scale)] = 0
-        sample_v.append(v)
+    if gpu is None:
+        sample_v = []
+        for i in sample:
+            img = to_working(read_frame(burst.files[i]), scale)
+            v = vesselness(img, sigmas, c, params)
+            v[glare_mask(img, fs, params, scale)] = 0
+            sample_v.append(v)
+    else:
+        sample_v = gpu_stages.sample_vesselness(gpu, burst, sample, scale, sigmas, c, params)
     threshold = float(np.percentile(np.stack(sample_v), params.envelope_percentile))
 
     # ---- pass 2: vesselness and envelope for every frame, on disk ----------
@@ -130,14 +141,17 @@ def _process(burst, out_dir, work_dir, scale, params, log, started, method="tran
     # alignment its hole falls on different tissue in every frame (§4, §9)
     O = np.lib.format.open_memmap(os.path.join(work_dir, "O.npy"), "w+",
                                   np.uint8, (n,) + hw)
-    for i, f in enumerate(burst.files):
-        img = to_working(read_frame(f), scale)
-        v = vesselness(img, sigmas, c, params)
-        glare = glare_mask(img, fs, params, scale)
-        v[glare] = 0
-        V[i] = v
-        M[i] = envelope(v, threshold)
-        O[i] = ~glare
+    if gpu is None:
+        for i, f in enumerate(burst.files):
+            img = to_working(read_frame(f), scale)
+            v = vesselness(img, sigmas, c, params)
+            glare = glare_mask(img, fs, params, scale)
+            v[glare] = 0
+            V[i] = v
+            M[i] = envelope(v, threshold)
+            O[i] = ~glare
+    else:
+        maps = gpu_stages.vessel_maps(gpu, burst, scale, sigmas, c, threshold, params, V, M, O)
     V.flush()
     M.flush()
     O.flush()
@@ -146,7 +160,10 @@ def _process(burst, out_dir, work_dir, scale, params, log, started, method="tran
 
     # ---- registration (§8) ---------------------------------------------------
     t0 = time.time()
-    reg = register_groupwise(V, M, good, params, scale, O=O, log=log)
+    if gpu is None:
+        reg = register_groupwise(V, M, good, params, scale, O=O, log=log)
+    else:
+        reg = gpu_stages.register_groupwise(gpu, maps, good, params, scale, log=log)
     traj_ws = reg["traj"]
     traj_px = traj_ws / scale
     registered = reg["registered"] & good
@@ -157,35 +174,50 @@ def _process(burst, out_dir, work_dir, scale, params, log, started, method="tran
     # ---- metrics (§9, §10) ---------------------------------------------------
     t0 = time.time()
     motion = motion_metrics(traj_px, burst.times_s, registered, params)
-    before, _ = mask_consensus(M, traj_ws, used, params, aligned=False, O=O)
-    after, consensus = mask_consensus(M, traj_ws, used, params, aligned=True, O=O)
-    _, template_v, _ = build_templates(V, M, traj_ws, used, O)
-    residual = residual_motion(V, traj_ws, used, scale, params)
-    closure = closure_error(V, used, scale, params)
-    rotation = rotation_diagnostic(V, traj_ws, template_v, used, scale, params)
+    if gpu is None:
+        before, _ = mask_consensus(M, traj_ws, used, params, aligned=False, O=O)
+        after, consensus = mask_consensus(M, traj_ws, used, params, aligned=True, O=O)
+        _, template_v, _ = build_templates(V, M, traj_ws, used, O)
+        residual = residual_motion(V, traj_ws, used, scale, params)
+        closure = closure_error(V, used, scale, params)
+        rotation = rotation_diagnostic(V, traj_ws, template_v, used, scale, params)
+    else:
+        align = gpu_stages.ShiftWarp(gpu, traj_ws)
+        before, _ = gpu_stages.mask_consensus(gpu, maps, used, params, aligned=False)
+        after, consensus = gpu_stages.mask_consensus(gpu, maps, used, params, aligned=True,
+                                                     warp=align)
+        _, template_v, _ = gpu_stages.build_templates(gpu, maps, align, used)
+        residual = gpu_stages.residual_motion(gpu, maps, used, scale, params, align)
+        closure = gpu_stages.closure_error(gpu, maps, used, scale, params)
+        rotation = gpu_stages.rotation_diagnostic(gpu, maps, template_v, used, scale, params,
+                                                  align)
     log(f"  metrics: vessel overlap {before['overlap']:.3f} -> {after['overlap']:.3f}, "
         f"Dice {before['dice']:.3f} -> {after['dice']:.3f} ({time.time() - t0:.0f}s)")
 
     # ---- pass 3: raw and stabilized projections at full resolution ----------
     t0 = time.time()
     shape = (burst.height, burst.width)
-    raw_sum = np.zeros(shape, np.float64)
-    st_sum = np.zeros(shape, np.float64)
-    st_sq = np.zeros(shape, np.float64)
-    cover = np.zeros(shape, np.float64)
-    for i in used:
-        img = read_frame(burst.files[i]).astype(np.float32)
-        raw_sum += img
-        # a single resampling pass from the original frame: warping repeatedly
-        # would blur the fine detail vessel analysis needs
-        w = shift(img, traj_px[i]).astype(np.float64)
-        # leave glare out: fixed to the camera, it would otherwise be smeared
-        # across the tissue by the alignment (§4)
-        seen = (shift((~glare_mask(img, fs, params, 1.0)).astype(np.float32),
-                      traj_px[i]) >= 0.5)
-        st_sum += w * seen
-        st_sq += w * w * seen
-        cover += seen
+    if gpu is None:
+        raw_sum = np.zeros(shape, np.float64)
+        st_sum = np.zeros(shape, np.float64)
+        st_sq = np.zeros(shape, np.float64)
+        cover = np.zeros(shape, np.float64)
+        for i in used:
+            img = read_frame(burst.files[i]).astype(np.float32)
+            raw_sum += img
+            # a single resampling pass from the original frame: warping repeatedly
+            # would blur the fine detail vessel analysis needs
+            w = shift(img, traj_px[i]).astype(np.float64)
+            # leave glare out: fixed to the camera, it would otherwise be smeared
+            # across the tissue by the alignment (§4)
+            seen = (shift((~glare_mask(img, fs, params, 1.0)).astype(np.float32),
+                          traj_px[i]) >= 0.5)
+            st_sum += w * seen
+            st_sq += w * w * seen
+            cover += seen
+    else:
+        raw_sum, st_sum, st_sq, cover = gpu_stages.projections(
+            gpu, burst, used, gpu_stages.ShiftWarp(gpu, traj_px), params)
     valid = cover >= params.coverage_min_fraction * max(used.size, 1)
     mean_raw = (raw_sum / max(used.size, 1)).astype(np.float32)
     mean_st = np.full(shape, np.nan, np.float32)
@@ -252,6 +284,7 @@ def _process(burst, out_dir, work_dir, scale, params, log, started, method="tran
             "finished_utc": datetime.now(timezone.utc).isoformat(),
             "stabilize_version": __version__,
             "params_hash": params.params_hash(),
+            "backend": describe(gpu),
             "python": platform.python_version(),
             "numpy": np.__version__,
             "opencv": cv2.__version__,

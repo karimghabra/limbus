@@ -4,3 +4,6 @@
 numpy>=2.0
 opencv-python>=4.8
 tifffile>=2024.1
+# Optional: with an NVIDIA GPU, a CUDA build of PyTorch runs the per-frame image
+# work there (METHODS.md §14; tested: torch 2.11.0+cu128 on an RTX 3080):
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128

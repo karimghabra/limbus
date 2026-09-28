@@ -396,6 +396,8 @@ Passing criteria and results (stabilize 0.2.0):
 | rough | 35 × 45 px + saccade | 0.064 | 0.738 | 0.739 |
 | rough + blinks + glare | same | 0.116 | 0.755 | 0.756 |
 
+The GPU backend (§14) gives the same four rows to every printed digit.
+
 The **ceiling** is the overlap of the same masks aligned with the *true*
 motion. It is the right yardstick; a motionless burst's score is not, because
 the generator creates motion with bilinear warps, making moving frames ~12%
@@ -513,3 +515,88 @@ deformation, that a 0.6° pose change is recovered and removes the doubling,
 and that strips fall back. What is *not* yet done is the ground-truth
 validation translation has (§12): known, spatially varying deformations with
 flicker, noise, blinks and glare, and the accuracy of the recovered fields.
+
+## §14 GPU backend
+
+**What moves.** Stabilization repeats a few operations for every frame:
+filtering and vesselness (§5), the glare and envelope masks (§4, §6), phase
+correlation and the sub-pixel refinement (§7–§8), warps (§8, §13) and the
+metrics' correlations (§9). With an NVIDIA GPU and a CUDA build of PyTorch
+these run on the GPU, a batch of frames at a time (`gpu.py` holds the
+primitives, `gpu_stages.py` the stages built from them). Everything decided
+from their results — the quality gate, which candidate a frame keeps, the
+registered flags, medians, and the robust affine fits and field composition
+of §13 — runs in NumPy exactly as before, on the numbers the GPU returns. The
+CPU path is unchanged and remains the reference.
+
+`--device auto`, the default (also for the Review tab), uses a GPU when
+PyTorch finds one; `--device cpu`, or `STABILIZE_DEVICE=cpu`, keeps
+everything on the CPU. `metrics.json` records which produced a result
+(`processing.backend`). A burst the GPU runs out of memory on — another
+program may be using it — is re-run on the CPU. Each batch is sized to fit
+30% of the GPU's free memory (from each stage's measured peak use), and a
+burst's working-scale vessel maps stay on the card when they fit in another
+30%; otherwise they are read from the on-disk arrays batch by batch.
+
+**Same arithmetic.** Each GPU primitive reproduces the OpenCV or NumPy
+function it replaces, conventions included:
+
+- filters: OpenCV's Gaussian kernel and kernel size, its reflect-101 border,
+  the 3×3 Sobel and Laplacian kernels. Glare dilation counts the disc's
+  pixels, which is exact for a binary mask; the envelope's opening lets the
+  border neither erode nor dilate, as OpenCV's defaults do;
+- phase correlation (§7): zero padding to OpenCV's optimal DFT size, the
+  Hanning window, the FLT_EPSILON guard in the normalisation, the unscaled
+  inverse transform, the first maximum and the 5×5 weighted centroid.
+  **OpenCV 5 recentres the correlation surface with a true `fftshift` for
+  every size**, where earlier versions swapped quadrants — which differs for
+  odd sizes, such as the 125-row quadrants of a 1920×500 burst. Found while
+  building this backend; now matched to < 10⁻⁴ px;
+- the sub-pixel refinement in float64, like the NumPy original;
+- warps: **OpenCV 5 interpolates `remap` and `warpAffine` exactly**, where
+  earlier versions rounded positions to 1/32 px, so bilinear and bicubic
+  sampling are reproduced directly;
+- full float32 precision: on Ampere and later GPUs PyTorch runs float32
+  convolutions as TF32 by default — a 10-bit mantissa — which is turned off.
+
+**How close.** Given the *same* vessel maps, GPU registration reproduces the
+CPU trajectory exactly (0.000 px, with the same flags, iterations and
+convergence history), the vessel-mask metrics are identical, and the other
+diagnostics agree within 2·10⁻⁵ px. From raw frames, vesselness differs by
+float32 rounding: second derivatives of heavily blurred images lose most of
+their float32 digits to cancellation, differently in each implementation,
+and 0.001% of envelope pixels come out differently. That moves the template
+by a fraction of the refinement step (1/20 working-scale px, §7), and every
+frame's estimate, rounded to that grid, then either agrees exactly or lands
+one step away: 0.1 px at full resolution for full-width frames (working
+scale ½), 0.05 px for strips. Separately, a phase-correlation peak that is a
+near-tie — two adjacent maxima within 3·10⁻⁴ of each other — can resolve
+either way and move one non-rigid patch estimate by ~0.15 px. That is a
+property of the method, and the robust fit and median smoothing absorb it.
+
+Reference bursts, CPU vs GPU. Trajectories are compared after removing the
+constant offset between them, since a trajectory is defined only up to one;
+frames not identical differ by exactly one refinement step in x and/or y.
+Times on an AMD Ryzen 5 5600 (6 cores; OpenCV uses all 12 threads) against
+an NVIDIA GeForce RTX 3080 (10 GB) with PyTorch 2.11 / CUDA 12.8:
+
+| Burst | Frames | Translation trajectories identical | Max difference (px) | Stability index, translation CPU / GPU | Non-rigid CPU / GPU | Translation (s) | Non-rigid (s) |
+|---|---|---|---|---|---|---|---|
+| `15-50-52` | 140 × 1920×1200 | 98.6% | 0.10 | 0.905 / 0.905 | 0.917 / 0.917 | 50 → 5 | 108 → 12 |
+| `15-45-12` | 84 × 1920×1200 | 98.7% | 0.10 | 0.731 / 0.731 | 0.874 / 0.872 | 46 → 4 | 92 → 9 |
+| `15-40-55` | 63 × 1920×1200 | 100% | 0.00 | 0.433 / 0.433 | skipped / skipped | 58 → 4 | 64 → 4 |
+| `15-31-37` | 160 × 1920×500 | 94.9% | 0.14 | 0.937 / 0.937 | 0.947 / 0.947 | 22 → 3 | 47 → 6 |
+| `12-57-20` | 296 × 1920×100 | 55.7% | 0.07 | 0.883 / 0.883 | 0.883 / 0.883 | 22 → 3 | 22 → 3 |
+| `15-22-26` | 1105 × 1920×500 | 50.8% | 0.14 | 0.808 / 0.808 | 0.813 / 0.812 | 312 → 17 | 470 → 34 |
+
+Non-rigid stability indices differ by at most 0.002: on `15-45-12` the
+template-agreement test (§13) keeps one more frame on the GPU, and on
+`15-22-26` both use the same 626 frames. Registration, the slowest stage on
+the CPU, gains most: 266 s → 9 s on `15-22-26`.
+
+**Validated on both.** `tests/test_synthetic.py` and
+`tests/test_nonrigid_smoke.py` run every case on both backends with the same
+pass criteria, and the GPU matches the CPU there to every printed digit (the
+tables of §12 and §13 hold for both). `tests/test_gpu.py` checks the
+primitives against OpenCV, the stages on identical inputs, and the
+end-to-end agreement above.

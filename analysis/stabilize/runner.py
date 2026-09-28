@@ -9,10 +9,10 @@ import os
 import traceback
 
 
-def run_one(burst_path, out_base, method, log):
+def run_one(burst_path, out_base, method, log, device=None):
     from .methods import run
     try:
-        return run(method, burst_path, out_base, log=log)
+        return run(method, burst_path, out_base, log=log, device=device)
     except Exception as exc:                     # keep the rest of the run going
         log(traceback.format_exc())
         return {"status": "error", "method": method,
@@ -21,11 +21,11 @@ def run_one(burst_path, out_base, method, log):
                           "path": burst_path}}
 
 
-def process_one(burst_path, out_base, method):
+def process_one(burst_path, out_base, method, device=None):
     # one OpenCV thread per process: parallelism comes from running bursts
     # side by side, and nested thread pools would just oversubscribe the CPU
     import cv2
     cv2.setNumThreads(1)
     lines = []
-    record = run_one(burst_path, out_base, method, lines.append)
+    record = run_one(burst_path, out_base, method, lines.append, device)
     return record, lines

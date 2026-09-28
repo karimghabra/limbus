@@ -51,13 +51,37 @@ def is_current(burst_path, out_base, method):
     return os.path.getmtime(path) >= os.path.getmtime(burst_path)
 
 
-def run(method, burst_path, out_base, log=print):
-    """Stabilize one burst with the named method; returns its metrics record."""
+def run(method, burst_path, out_base, log=print, device=None):
+    """Stabilize one burst with the named method; returns its metrics record.
+    device: 'auto', 'cuda' or 'cpu' (see gpu.select); None reads the
+    STABILIZE_DEVICE environment variable, default 'auto'. A burst the GPU
+    runs out of memory on — another program may be using it — is re-run on
+    the CPU, and metrics.json records which one produced the result."""
+    import gc
+
+    from .gpu import select
+    gpu = select(device)
+    try:
+        return _run(method, burst_path, out_base, log, gpu)
+    except Exception as exc:
+        if gpu is None or not gpu.out_of_memory(exc):
+            raise
+    # Retry outside the handler: until it ends, the traceback keeps the failed
+    # attempt's frames alive, and with them its open vessel-map files, which
+    # Windows won't let the retry reopen.
+    gc.collect()
+    gpu.release()
+    log(f"  the GPU ran out of memory ({gpu.name}); running this burst on the CPU instead")
+    return _run(method, burst_path, out_base, log, None)
+
+
+def _run(method, burst_path, out_base, log, gpu):
     if method == "translation":
         from .pipeline import process_burst
         return process_burst(burst_path, os.path.join(out_base, method), Params(), log=log,
-                             method=method)
+                             method=method, gpu=gpu)
     if method == "nonrigid":
         from .nonrigid import process_burst_nonrigid
-        return process_burst_nonrigid(burst_path, out_base, Params(), NonrigidParams(), log=log)
+        return process_burst_nonrigid(burst_path, out_base, Params(), NonrigidParams(), log=log,
+                                      gpu=gpu)
     raise ValueError(f"unknown method {method!r}")

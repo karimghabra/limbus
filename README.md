@@ -135,9 +135,11 @@ The **Stabilization** panel runs the offline stabilization in
   vessels toward the corners of wide frames; it is not yet validated the
   same way.
 - **Stabilize** runs it in a separate process, so the window stays
-  responsive; progress appears underneath, and **Cancel** stops it. A
-  burst takes from under a minute (short strips) to a few minutes (full
-  frames).
+  responsive; progress appears underneath, and **Cancel** stops it. On the
+  CPU a burst takes from under a minute (short strips) to several minutes
+  (long bursts); with an NVIDIA GPU (see *Analysis on another computer*) it
+  takes seconds — 5 s for a 140-frame full-frame burst, 17 s for 1105
+  frames — and the log's first line says which was used.
 - **View** — *Raw*, *Stabilized* (every frame warped by its correction,
   with frames the result didn't use labelled) or *Stabilized mean* (the
   average of the frames used; **magenta** marks regions too few frames
@@ -177,6 +179,18 @@ python tools/fetch_reference_data.py
 They land in `reference_data/`; [`reference_data/README.md`](reference_data/README.md)
 describes what each burst exercises.
 
+**GPU (optional).** With an NVIDIA GPU, install the CUDA build of PyTorch
+and stabilization runs its per-frame image work there, 7–19× faster on the
+reference bursts, with the same results to the method's own resolution
+(METHODS.md §14):
+
+```bash
+venv/Scripts/pip install torch --index-url https://download.pytorch.org/whl/cu128
+```
+
+It is used automatically when found; `--device cpu` (or the environment
+variable `STABILIZE_DEVICE=cpu`) keeps everything on the CPU.
+
 **Command line.** From the `analysis` folder:
 
 ```bash
@@ -188,12 +202,15 @@ python -m stabilize ../reference_data/burst_2026-09-16_15-50-52 --method nonrigi
 Results go to `stabilization/<method>/<burst>/` beside the input folder
 (or `--out DIR`), with `summary.html` ranking every burst. Re-running skips
 results that are already current — same code version and parameters.
+`--device auto|cuda|cpu` chooses where the image work runs (default `auto`:
+the GPU when there is one).
 
 **Tests.** From the repository root:
 
 ```bash
-python analysis/tests/test_synthetic.py       # translation vs known motion
-python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks
+python analysis/tests/test_synthetic.py       # translation vs known motion (CPU and GPU)
+python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks (CPU and GPU)
+python analysis/tests/test_gpu.py             # GPU backend vs the CPU path
 ```
 
 ## Repository layout

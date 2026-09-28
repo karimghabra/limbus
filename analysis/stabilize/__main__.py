@@ -12,6 +12,9 @@ resumes. Raw burst folders are only ever read.
 
 Bursts run one at a time by default: OpenCV then uses every core within a
 burst, which measured ~11x faster than one single-threaded worker per core.
+
+With an NVIDIA GPU and PyTorch (CUDA build), the per-frame image work runs on
+the GPU, many frames at a time (METHODS.md §14); --device cpu turns that off.
 """
 import argparse
 import glob
@@ -58,6 +61,7 @@ def write_method_summary(out_base, method):
 
 def main(argv=None):
     from .bursts import discover
+    from .gpu import describe, select
     from .methods import METHODS, is_current
     from .runner import process_one, run_one
 
@@ -69,6 +73,9 @@ def main(argv=None):
                     help="results folder (default: 'stabilization' beside the recordings folder)")
     ap.add_argument("--workers", type=int, default=1,
                     help="bursts processed in parallel (default 1; see above)")
+    ap.add_argument("--device", choices=("auto", "cuda", "cpu"), default=None,
+                    help="where the image work runs: 'auto' (default) uses a CUDA GPU "
+                         "when PyTorch finds one; also set by STABILIZE_DEVICE")
     ap.add_argument("--only", default="", help="process only bursts whose name contains this")
     ap.add_argument("--force", action="store_true", help="reprocess even if current")
     args = ap.parse_args(argv)
@@ -82,25 +89,33 @@ def main(argv=None):
         sys.exit("--out must not be inside the recordings folder: raw bursts are never written to.")
     os.makedirs(out_base, exist_ok=True)
 
+    try:
+        backend = describe(select(args.device))
+    except (RuntimeError, ValueError) as exc:
+        sys.exit(str(exc))
+    device = args.device or ("cpu" if backend == "cpu" else "cuda")
+
     bursts = [b for b in discover(root) if args.only in os.path.basename(b)]
     todo = [b for b in bursts if args.force or not is_current(b, out_base, args.method)]
     label = METHODS[args.method]["label"]
     print(f"{label}: {len(bursts)} bursts found, {len(todo)} to process "
           f"({len(bursts) - len(todo)} already current) -> {os.path.join(out_base, args.method)}",
           flush=True)
+    print(f"device: {backend}", flush=True)
 
     started = time.time()
     errors = 0
     if args.workers <= 1:
         for n, b in enumerate(todo, 1):
             print(f"\n[{n}/{len(todo)}]", flush=True)
-            record = run_one(b, out_base, args.method, lambda s: print(s, flush=True))
+            record = run_one(b, out_base, args.method, lambda s: print(s, flush=True), device)
             errors += record.get("status") == "error"
             _report(record)
     else:
         from concurrent.futures import ProcessPoolExecutor, as_completed
         with ProcessPoolExecutor(max_workers=args.workers) as pool:
-            futures = [pool.submit(process_one, b, out_base, args.method) for b in todo]
+            futures = [pool.submit(process_one, b, out_base, args.method, device)
+                       for b in todo]
             for n, fut in enumerate(as_completed(futures), 1):
                 record, lines = fut.result()
                 print(f"\n[{n}/{len(todo)}] " + "\n".join(lines), flush=True)
