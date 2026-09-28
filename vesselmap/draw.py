@@ -231,7 +231,7 @@ def export_html(net: VesselNetwork, path, intensity=None, max_width=1400, title=
                             summary=net.summary()))
     page = _HTML.replace("__TITLE__", html.escape(title)).replace("__IMG__", img_uri) \
         .replace("__DATA__", data)
-    with open(path, "w") as f:
+    with open(path, "w", encoding="utf-8") as f:
         f.write(page)
 
 
