@@ -95,6 +95,7 @@ class SearchConfig:
     hot_steps: float = 0.5          # annealing steps (x number of input edges) before T = 0
     hopeless: float = 10.0          # a move scored worse than this (x tau * lam_vessel) is
                                     # not re-fitted while its vessels exist
+    sens_budget: float = 0.5        # nats a cached score's correction may lose to sparsity
     refit_tol: float = 0.05         # a cached score is corrected for changes around the move
                                     # (exact for the fitted vessels); beyond this (x tau *
                                     # lam_vessel) the move is re-fitted, as its fit may adapt
@@ -270,25 +271,26 @@ def _dedup_links(links):
     return out
 
 
-def _links_on(links, xy, tol=8.0):
-    """The link records whose position lies on a vessel with samples xy
-    (records without a position stay with every piece)."""
-    out, tree = [], None
+def _split_links(links, pieces, cut, tol=8.0):
+    """Link records of a vessel cut into pieces (sample arrays) at the point
+    cut: a record within tol of the cut records the link the cut undoes and
+    is dropped; every other record goes to the one piece nearest to it
+    (records without a position go to the first piece)."""
+    out = [[] for _ in pieces]
+    trees = [cKDTree(xy) for xy in pieces]
     for L in links:
         p = _link_pos(L)
         if p is None:
-            out.append(L)
+            out[0].append(L)
             continue
-        tree = tree or cKDTree(xy)
-        if tree.query(p)[0] <= tol:
-            out.append(L)
+        if np.linalg.norm(p - np.asarray(cut, float)) <= tol:
+            continue
+        out[int(np.argmin([t.query(p)[0] for t in trees]))].append(L)
     return out
 
 
-def _piece_info(info, xy):
-    """Info of a piece cut from a vessel: its link records only."""
+def _with_links(info, links):
     out = dict(info)
-    links = _links_on(info.get("links", []), xy)
     if links:
         out["links"] = links
     else:
@@ -645,10 +647,21 @@ class VesselSearch:
         Ap = np.zeros((Y1 - Y0, X1 - X0), np.float32)
         Ap[y0 - Y0:y1 - Y0, x0 - X0:x1 - X0] = A
         Ap = (1 - self.hw) * Ap + self.hw * _cv_blur(Ap, self.hs)
-        m = float(np.abs(Ap).max()) if Ap.size else 0.0
-        ys, xs = np.nonzero(np.abs(Ap) > 1e-3 * m) if m > 0 else (np.zeros(0, int),) * 2
+        # keep all but the smallest entries: those dropped change a corrected
+        # dE by at most sum|dropped| * max V <= sens_budget nats
+        flat = np.abs(Ap).ravel()
+        nz = np.flatnonzero(flat)
+        if len(nz):
+            o = nz[np.argsort(flat[nz], kind="stable")]
+            vmax = max(float(self.V.max()), 1e-3)
+            cut = int(np.searchsorted(np.cumsum(flat[o], dtype=np.float64),
+                                      self.cfg.sens_budget / vmax, side="right"))
+            keep = o[cut:]
+        else:
+            keep = nz
+        ys, xs = np.divmod(keep, X1 - X0)
         idx = ((ys + Y0) * self.W + xs + X0).astype(np.int64)
-        vals = Ap[ys, xs].astype(np.float32)
+        vals = Ap.ravel()[keep].astype(np.float32)
         return idx, vals, float(vals @ self.V[idx]) if len(idx) else 0.0
 
     def _compute(self, move):
@@ -910,13 +923,16 @@ class VesselSearch:
             s = edge_samples(e, 0.7)
             i = int(np.searchsorted(s["s_arc"], s_cut))
             out = []
-            for sl in (slice(0, i + 1), slice(i, None)):
+            sls = (slice(0, i + 1), slice(i, None))
+            links = _split_links(e.info.get("links", []), [s["xy"][sl] for sl in sls],
+                                 s["xy"][min(i, len(s["xy"]) - 1)])
+            for sl, lk in zip(sls, links):
                 if len(s["xy"][sl]) < 4:
                     return None
                 ctrl, r, s_, a = _fit_edge_params(s["xy"][sl], s["r"][sl], s["s"][sl],
                                                   s["a"][sl], e.info.get("spacing", 12.0),
                                                   faithful=True)
-                out.append(Edge(-1, -1, ctrl, r, s_, a, _piece_info(e.info, s["xy"][sl])))
+                out.append(Edge(-1, -1, ctrl, r, s_, a, _with_links(e.info, lk)))
             return [k], out
         return build
 
@@ -972,12 +988,13 @@ class VesselSearch:
             path = join_path(A, cont, self.cfg.trim_max, self.cfg.max_turn_deg)
             if path is None:
                 return None
-            info = _piece_info(_merge_info([e.info, v.info]), path[0])
+            info = _merge_info([e.info, v.info])
+            lk = _split_links(info.get("links", []), [path[0], stay["xy"]], s["xy"][i])
             ctrl, r, s_, a = fit_vessel(*path, info["spacing"])
             c2, r2, s2, a2 = _fit_edge_params(stay["xy"], stay["r"], stay["s"], stay["a"],
                                               v.info.get("spacing", 12.0), faithful=True)
-            return [k, j], [Edge(-1, -1, ctrl, r, s_, a, info),
-                            Edge(-1, -1, c2, r2, s2, a2, _piece_info(v.info, stay["xy"]))]
+            return [k, j], [Edge(-1, -1, ctrl, r, s_, a, _with_links(info, lk[0])),
+                            Edge(-1, -1, c2, r2, s2, a2, _with_links(v.info, lk[1]))]
         return build
 
     def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive")):
@@ -1122,32 +1139,62 @@ def _evaluate_chunk(idx):
     return [(i, C._compute(moves[i])) for i in idx]
 
 
-def _move_end(net: VesselNetwork, k, a, p) -> bool:
-    """Move end a of edge k to the point p along the edge's own course: the
-    edge is cut at its sample nearest p (or extended to p) and re-fitted
-    faithfully, so it never folds back on itself as it would if only its
-    end node moved.  Returns False (and changes nothing) if too little of
-    the edge would remain."""
-    e = net.edges[k]
-    smp = net.sample(k, 0.5)
+def _cut_slice(smp, a, p):
+    """The samples an edge keeps when end a is brought to p along its own
+    course: cut at the sample nearest p, which becomes p."""
     i = int(np.argmin(np.linalg.norm(smp["xy"] - p, axis=1)))
     sl = slice(i, None) if a == 0 else slice(0, i + 1)
-    xy = smp["xy"][sl].copy()
-    if len(xy) < 3:
-        return False
-    xy[0 if a == 0 else -1] = p
-    nid = e.u if a == 0 else e.v
+    return sl, len(smp["xy"][sl]) >= 3
+
+
+def _move_node(net: VesselNetwork, nid, p):
+    """Move node nid to p, bringing every edge that ends there along its own
+    course: each is cut at its sample nearest p (or extended to p) and
+    re-fitted faithfully, so no edge folds back as it would if only the node
+    moved.  Through nodes left off a cut edge (they were on the
+    cut-away stub) are dropped from its through list.  Returns (ok, the ids
+    of the edges changed, the through nodes dropped); nothing changes when
+    ok is False."""
+    inc = net.incident(nid)
+    p = np.asarray(p, float)
+    cuts = []
+    for f, end in inc:                       # sampled before the node moves (sampling
+        smp = net.sample(f, 0.5)             # syncs the ends to the nodes)
+        sl, ok = _cut_slice(smp, end, p)
+        if not ok:                           # every edge must keep enough of itself
+            return False, [], []
+        cuts.append((f, end, smp, sl))
     net.nodes[nid].x, net.nodes[nid].y = float(p[0]), float(p[1])
-    net.refit_edge(k, xy, smp["r"][sl], smp["s"][sl], smp["a"][sl], faithful=True)
-    for kk, _ in net.incident(nid):
-        net.sync_ends(kk)
-    return True
+    for f, end, smp, sl in cuts:
+        xy = smp["xy"][sl].copy()
+        xy[0 if end == 0 else -1] = p
+        net.refit_edge(f, xy, smp["r"][sl], smp["s"][sl], smp["a"][sl], faithful=True)
+    dropped = []
+    for f, _ in inc:
+        e = net.edges[f]
+        if not e.through:
+            continue
+        smp = net.sample(f, 1.0)
+        keep = []
+        for t in e.through:
+            d = np.linalg.norm(smp["xy"] - net.nodes[t].xy, axis=1)
+            j = int(np.argmin(d))
+            if d[j] <= smp["r"][j] + smp["s"][j] + 2.0 and 0 < j < len(d) - 1:
+                keep.append(t)
+            else:
+                dropped.append(t)
+        if keep:
+            e.info["through"] = keep
+        else:
+            e.info.pop("through", None)
+    net._touch()
+    return True, [f for f, _ in inc], dropped
 
 
 def _can_merge(net: VesselNetwork, keep, drop) -> bool:
     """Whether node drop may be merged into keep without breaking the
-    representation: no edge ending at both (a loop), no edge ending at a node
-    it passes through, no vessel attached to the image border."""
+    representation: no edge ending at both (a loop), no edge ending at a
+    node it passes through, nothing attached to an image-border node."""
     if keep == drop or keep not in net.nodes or drop not in net.nodes:
         return False
     if "border" in (net.node_kind(keep, 1), net.node_kind(drop, 1)):
@@ -1166,114 +1213,188 @@ def _can_merge(net: VesselNetwork, keep, drop) -> bool:
     return True
 
 
-def _merge_ends(net: VesselNetwork, keep, drop, k=None, a=None) -> bool:
-    """Merge node drop into keep if _can_merge allows it; first, if given,
-    end a of edge k (which ends at drop) is moved along its course onto
-    keep.  Through lists that named drop name keep.  Returns whether the
-    nodes were merged."""
+def _merge_ends(net: VesselNetwork, keep, drop):
+    """Merge node drop into keep, if _can_merge allows it: the edges ending
+    at drop are first brought along their own course onto keep.  Through
+    lists that named drop name keep.  Returns (ok, edges changed, through
+    nodes dropped)."""
     if not _can_merge(net, keep, drop):
-        return False
-    if "border" in (net.node_kind(keep, 1), net.node_kind(drop, 1)):
-        return False
-    for f_id, end in net.incident(drop):
-        f = net.edges[f_id]
-        other = f.v if end == 0 else f.u
-        if other == keep or keep in f.through:
-            return False
-    if k is not None and not _move_end(net, k, a, net.nodes[keep].xy):
-        return False
+        return False, [], []
+    ok, changed, dropped = _move_node(net, drop, net.nodes[keep].xy)
+    if not ok:
+        return False, [], []
     for f_id in net.passing(drop):
         f = net.edges[f_id]
         f.info["through"] = [keep if n == drop else n for n in f.through]
     net.merge_nodes(keep, drop)
-    return True
+    return True, changed, dropped
 
 
-def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
+def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
     """Branch points in the map's representation (network.py), from vessel
-    ends lying on other vessels (within that vessel's r + s + tol):
+    ends that lie on another vessel (within its r + s + tol).  The ends are
+    settled one at a time, closest contact first, each against the current
+    geometry (every change re-samples the edges it touched):
 
-    * two ends that lie on each other's vessel (the vessels overlap at their
-      ends, however long the overlap) become one shared node, a joint,
-      midway between them;
-    * an end on another vessel's own end (within end_tol px of arclength)
-      shares that end's node;
-    * an end on another vessel's interior becomes a node that vessel passes
-      through (``info["through"]``), moved onto its centreline, or joins a
-      through node already within 3 px.
+    * continuation: the other vessel has an end lying on this vessel's
+      centreline (within half their calibre, as this end lies on the
+      other's) that faces this end (their outward directions oppose): the
+      vessels overlap at their ends, however long the overlap.  Both ends are brought along
+      their own course to the point midway between them and share one node,
+      a joint;
+    * side by side: the end runs (nearly) parallel to the other vessel and
+      is no continuation of it: two vessels next to each other, not a branch
+      point; nothing is recorded;
+    * on the other vessel's own end (within end_tol px of arclength): the
+      end shares that end's node;
+    * otherwise a branch: the end becomes a node the other vessel passes
+      through (``info["through"]``), brought along its own course onto the
+      other's centreline, or joins a through node already within 3 px.
 
-    Closest contacts are settled first, and a merge that would make an edge
-    end at a node it passes through, form a loop, or attach to the image
-    border is not made (see _merge_ends)."""
-    smp = {k: net.sample(k, 1.0) for k in net.edges}
-    if len(smp) < 2:
-        return
-    ids = list(smp)
-    X = np.concatenate([smp[k]["xy"] for k in ids])
-    lab = np.concatenate([np.full(len(smp[k]["xy"]), k) for k in ids])
-    idx = np.concatenate([np.arange(len(smp[k]["xy"])) for k in ids])
-    tree = cKDTree(X)
+    A vessel never attaches both its ends to the same vessel (a stub lying
+    along it is no branch), no merge may make an edge end at a node it
+    passes through, form a loop or touch the image border (_can_merge), and
+    ends whose through node is dropped by a later cut are settled again."""
+    import heapq
+    geo, index = {}, [None]
     node_of = lambda k, a: net.edges[k].u if a == 0 else net.edges[k].v
-    contact = {}                       # (edge, end) -> (distance, other edge, sample on it)
-    for k, e in net.edges.items():
-        for a, nid in ((0, e.u), (1, e.v)):
-            if net.node_kind(nid, 1) == "border":
+
+    def smp(k):
+        if k not in geo:
+            geo[k] = net.sample(k, 1.0)
+        return geo[k]
+
+    def changed(ks):
+        for k in ks:
+            geo.pop(k, None)
+        index[0] = None
+
+    def tree():
+        if index[0] is None:
+            ids = list(net.edges)
+            X = np.concatenate([smp(k)["xy"] for k in ids])
+            lab = np.concatenate([np.full(len(smp(k)["xy"]), k) for k in ids])
+            idx = np.concatenate([np.arange(len(smp(k)["xy"])) for k in ids])
+            index[0] = (cKDTree(X), X, lab, idx)
+        return index[0]
+
+    def end_geom(k, a):
+        xy = smp(k)["xy"]
+        if a == 0:
+            return xy[0], -_direction(xy, 0, True)
+        return xy[-1], _direction(xy, len(xy) - 1, False)
+
+    def dist_to(p, k):
+        s = smp(k)
+        d = np.linalg.norm(s["xy"] - p, axis=1)
+        i = int(np.argmin(d))
+        return float(d[i]), i
+
+    def contact(k, a):
+        if len(net.edges) < 2 or net.node_kind(node_of(k, a), 1) == "border":
+            return None
+        p, _ = end_geom(k, a)
+        T, X, lab, idx = tree()
+        best = None
+        for c in T.query_ball_point(p, 30.0):
+            j, i = int(lab[c]), int(idx[c])
+            if j == k:
                 continue
-            p = net.nodes[nid].xy
-            best = None
-            for c in tree.query_ball_point(p, 30.0):
-                j, i = int(lab[c]), int(idx[c])
-                if j == k:
-                    continue
-                d = float(np.linalg.norm(X[c] - p))
-                if d <= smp[j]["r"][i] + smp[j]["s"][i] + tol and (best is None or d < best[0]):
-                    best = (d, j, i)
-            if best is not None:
-                contact[(k, a)] = best
-    near_end = lambda j, i: 0 if smp[j]["s_arc"][i] < 0.5 * smp[j]["s_arc"][-1] else 1
-    # 1. mutual contacts: k's end a lies on j near j's end b, and b lies on k near a
-    mutual = []
-    for (k, a), (d, j, i) in contact.items():
-        b = near_end(j, i)
-        c = contact.get((j, b))
-        if c is None or c[1] != k or near_end(k, c[2]) != a or (k, a) > (j, b):
+            s = smp(j)
+            d = float(np.linalg.norm(X[c] - p))
+            if d <= s["r"][i] + s["s"][i] + tol and (best is None or d < best[0]):
+                best = (d, j, i)
+        return best
+
+    heap, attached = [], {}
+    for k in list(net.edges):
+        for a in (0, 1):
+            c = contact(k, a)
+            if c is not None:
+                heap.append((c[0], k, a))
+    heapq.heapify(heap)
+    cos_par = math.cos(math.radians(parallel_deg))
+    guard = 0
+    while heap and guard < 20 * len(net.edges) + 100:
+        guard += 1
+        _, k, a = heapq.heappop(heap)
+        if k not in net.edges or (k, a) in attached:
             continue
-        mutual.append((d + c[0], k, a, j, b))
-    settled = set()
-    for _, k, a, j, b in sorted(mutual):
-        if k not in net.edges or j not in net.edges:
+        c = contact(k, a)
+        if c is None:
             continue
-        n1, n2 = node_of(k, a), node_of(j, b)
-        mid = 0.5 * (net.nodes[n1].xy + net.nodes[n2].xy)
-        if n1 != n2 and _can_merge(net, n2, n1) and _move_end(net, j, b, mid):
-            _merge_ends(net, n2, n1, k, a)
-        settled |= {(k, a), (j, b)}
-    # 2. every other contact, closest first
-    for (k, a), (d, j, i) in sorted(contact.items(), key=lambda t: t[1][0]):
-        if (k, a) in settled or k not in net.edges or j not in net.edges:
+        d, j, i = c
+        if attached.get((k, 1 - a)) == j:          # a stub along j, not a branch
             continue
-        nid, ej = node_of(k, a), net.edges[j]
-        s = smp[j]
-        L, sa = float(s["s_arc"][-1]), float(s["s_arc"][i])
-        if min(sa, L - sa) < end_tol:                  # on j's own end: share its node
-            _merge_ends(net, ej.u if sa < 0.5 * L else ej.v, nid, k, a)
-            continue
-        p = s["xy"][i]
-        near = [t for t in ej.through if t in net.nodes and
-                np.linalg.norm(net.nodes[t].xy - p) < 3.0]
-        if near:                                        # two branches leave at one point
-            _merge_ends(net, near[0], nid, k, a)
-            continue
-        if nid in ej.through or nid in (ej.u, ej.v) or not _move_end(net, k, a, p):
-            continue
-        ej.info["through"] = list(ej.through) + [nid]
-        net._touch()
+        nid = node_of(k, a)
+        p, t = end_geom(k, a)
+        sj = smp(j)
+        done = None
+        # continuation: an end of j lies on k and faces this end
+        cont = []
+        sk = smp(k)
+        for b in (0, 1):
+            nb = node_of(j, b)
+            if nb == nid or net.node_kind(nb, 1) == "border" or attached.get((j, 1 - b)) == k:
+                continue
+            pb, tb = end_geom(j, b)
+            db, ib = dist_to(pb, k)
+            # one vessel traced twice: the centrelines coincide (within half
+            # the calibre); farther apart they are two vessels side by side
+            lat = max(1.5, 0.5 * (sk["r"][ib] + sj["r"][i]))
+            if np.dot(t, tb) < -0.5 and max(d, db) <= lat:
+                cont.append((float(np.linalg.norm(pb - p)), b, nb, pb))
+        if cont:
+            _, b, nb, pb = min(cont)
+            if _can_merge(net, nb, nid):
+                ok, ch1, dr1 = _move_node(net, nb, 0.5 * (p + pb))
+                if ok:
+                    ok2, ch2, dr2 = _merge_ends(net, nb, nid)
+                    done = (ch1 + ch2, dr1 + dr2)
+                    if ok2:
+                        attached[(k, a)], attached[(j, b)] = j, k
+        elif abs(float(np.dot(t, sj["tan"][i]))) > cos_par:
+            continue                                # side by side: no branch point
+        else:
+            L, sa = float(sj["s_arc"][-1]), float(sj["s_arc"][i])
+            if min(sa, L - sa) < end_tol:           # on j's own end: share its node
+                ok, ch, dr = _merge_ends(net, net.edges[j].u if sa < 0.5 * L else net.edges[j].v, nid)
+                done = (ch, dr)
+                if ok:
+                    attached[(k, a)] = j
+            else:
+                q = sj["xy"][i]
+                ej = net.edges[j]
+                near = [x for x in ej.through if x in net.nodes and
+                        np.linalg.norm(net.nodes[x].xy - q) < 3.0]
+                if near:                            # two branches leave at one point
+                    ok, ch, dr = _merge_ends(net, near[0], nid)
+                    done = (ch, dr)
+                    if ok:
+                        attached[(k, a)] = j
+                elif nid not in ej.through and nid not in (ej.u, ej.v) and not net.passing(nid):
+                    ok, ch, dr = _move_node(net, nid, q)
+                    done = (ch, dr)
+                    if ok:
+                        ej.info["through"] = list(ej.through) + [nid]
+                        net._touch()
+                        attached[(k, a)] = j
+        if done:
+            ch, dr = done
+            changed(set(ch) | {j})
+            for x in dr:                            # branches whose through node was dropped
+                if x in net.nodes:
+                    for f, end in net.incident(x):
+                        attached.pop((f, end), None)
+                        cc = contact(f, end)
+                        if cc is not None:
+                            heapq.heappush(heap, (cc[0], f, end))
     # an edge never passes through its own end, nor twice through a node
     for e in net.edges.values():
         if e.through:
-            t = [n for n in dict.fromkeys(e.through) if n in net.nodes and n not in (e.u, e.v)]
-            if t:
-                e.info["through"] = t
+            keep = [n for n in dict.fromkeys(e.through) if n in net.nodes and n not in (e.u, e.v)]
+            if keep:
+                e.info["through"] = keep
             else:
                 e.info.pop("through", None)
     net._touch()

@@ -205,8 +205,27 @@ def _valid_through(net):
                             (smp["xy"][-1], smp["s_arc"] < smp["s_arc"][-1] - 5.0)):
             d = np.linalg.norm(smp["xy"][far] - end_xy, axis=1)
             assert not len(d) or d.min() > 1.0, ("fold-back", k, float(d.min()))
+    for k in net.edges:                            # no end hooks back past itself
+        smp = net.sample(k, 0.5)
+        xy, s = smp["xy"], smp["s_arc"]
+        L = float(s[-1])
+        for end, near in ((xy[0], s <= min(10.0, L)), (xy[-1], s >= max(L - 10.0, 0.0))):
+            pts = xy[near]
+            back = pts[-1] if end is xy[0] else pts[0]
+            t = end - back
+            if np.linalg.norm(t) < 1e-6:
+                continue
+            over = float(((pts - end) @ (t / np.linalg.norm(t))).max())
+            assert over < 0.5, ("hook", k, over)
+    for k, e in net.edges.items():                 # a through node lies on its edge
+        xy = net.sample(k, 0.5)["xy"]
+        for n in e.through:
+            d = float(np.linalg.norm(xy - net.nodes[n].xy, axis=1).min())
+            assert d < 1.0, ("through node off its edge", k, n, d)
     segs = net.to_segments()
     assert all(e.u != e.v for e in segs.edges.values())
+    pairs = [frozenset((e.u, e.v)) for e in segs.edges.values()]
+    assert len(pairs) == len(set(pairs)), "two segments between one pair of nodes"
     return segs
 
 
@@ -221,13 +240,13 @@ def test_to_through_never_ends_an_edge_at_its_own_through_node():
 
 
 @pytest.mark.parametrize("overlap, rk, rj", [(6, 2.5, 2.5), (15, 2.5, 2.5), (7, 4.0, 1.5),
-                                             (7, 1.5, 4.0)])
+                                             (7, 1.5, 4.0), (25, 2.5, 2.5)])
 def test_to_through_overlapping_ends_share_one_joint(overlap, rk, rj):
     """However long the overlap and whatever the widths, two vessel ends
     lying on each other become one shared joint, never mutual through nodes."""
     from vesselmap.search import to_through
     net = VesselNetwork((200, 200))
-    k = _straight(net, (60, 100), (120, 100), r=rk)
+    k = _straight(net, (60, 100), (100 if overlap > 20 else 120, 100), r=rk)
     j = _straight(net, (10, 100.3), (60 + overlap, 100.3), r=rj)
     to_through(net, 1.5)
     segs = _valid_through(net)
@@ -269,17 +288,24 @@ def test_to_through_keeps_border_ends():
 
 
 def test_split_and_rejoin_keeps_link_records_once():
-    from vesselmap.search import _merge_info, _piece_info
+    from vesselmap.search import _merge_info, _split_links, _with_links
     xy = np.stack([np.linspace(0, 100, 101), np.zeros(101)], 1)
     info = dict(links=[dict(kind="join", evidence="energy", xy=[20.0, 0.0]),
                        dict(kind="join", evidence="energy", xy=[80.0, 0.0])],
                 consolidated_from=[1, 2], spacing=6.0)
-    a, b = _piece_info(info, xy[:51]), _piece_info(info, xy[50:])
+
+    def split(info, at):
+        pieces = [xy[:at + 1], xy[at:]]
+        return [_with_links(info, lk) for lk in _split_links(info.get("links", []), pieces, xy[at])]
+
+    a, b = split(info, 50)
     assert len(a["links"]) == 1 and len(b["links"]) == 1
     merged = info
     for _ in range(5):              # repeated split / join cycles
-        merged = _merge_info([_piece_info(merged, xy[:51]), _piece_info(merged, xy[50:])])
+        merged = _merge_info(split(merged, 50))
     assert len(merged["links"]) == 2
+    a, b = split(info, 21)          # a cut at a recorded link undoes it: the record goes
+    assert "links" not in a and len(b["links"]) == 1
 
 
 def test_cached_join_score_follows_changes_around_it():
@@ -309,3 +335,76 @@ def test_cached_join_score_follows_changes_around_it():
     change = C.energy_total()["total"] - E0
     assert abs(change - stale) > 30, (change, stale)          # the context mattered
     assert abs(change - dE) < 0.005 * abs(dE) + 3.0, (change, dE)
+
+
+def test_to_through_branch_attaches_to_the_geometry_after_earlier_merges():
+    """k and j overlap and are joined first (their ends move); m's end, on
+    the old overlap, must then land on the vessels as they are now."""
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (60, 100), (160, 100))
+    _straight(net, (10, 100.3), (90, 100.3))
+    m = _straight(net, (64, 60), (64, 96))
+    to_through(net, 1.5)
+    _valid_through(net)
+    end = net.edges[m].v
+    assert any(end in e.through or end in (e.u, e.v) for k, e in net.edges.items() if k != m)
+
+
+def test_to_through_side_by_side_vessels_stay_apart():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    k = _straight(net, (60, 100), (160, 100))
+    j = _straight(net, (60, 104.5), (160, 104.5))
+    to_through(net, 1.5)
+    _valid_through(net)
+    assert not {net.edges[k].u, net.edges[k].v} & {net.edges[j].u, net.edges[j].v}
+    assert not net.edges[k].through and not net.edges[j].through
+
+
+def test_to_through_drops_through_nodes_a_cut_removes():
+    """m first becomes a branch of k near k's end; k's end is then cut back
+    onto j, taking m's branch point with it.  m must be settled again, not
+    left passing through a node off k."""
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (40, 100), (160, 100), r=5.0, s=2.0)
+    _straight(net, (100, 40), (100, 108), r=2.0, s=1.0)
+    _straight(net, (130, 140), (101.5, 104), r=1.0, s=0.8)
+    to_through(net, 1.5)
+    _valid_through(net)
+
+
+def test_to_through_moving_a_shared_node_moves_no_end_by_its_node_alone():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (40, 100), (160, 100), r=2.5, s=1.0)
+    _straight(net, (100, 40), (100, 95.5), r=4.0, s=1.5)
+    _straight(net, (97, 130), (97, 93.5), r=0.5, s=0.6)
+    to_through(net, 1.5)
+    _valid_through(net)
+
+
+def test_cached_score_is_refitted_when_the_sparse_correction_would_mislead():
+    """A faint vessel next to a strong one: deleting the strong one changes
+    the faint one's cached delete score by more than the refit tolerance,
+    in pixels far from the faint vessel's peak.  The lookup must either
+    re-fit or return the energy change applying the move then makes."""
+    H, W = 120, 360
+    vA = _vessel(_line((-10, 50), (370, 50)), r=2.0, amp=0.12)
+    vB = _vessel(_line((-10, 68), (370, 68)), r=3.5, amp=0.6)
+    I, P = _scene([vA, vB], (H, W))
+    net = VesselNetwork((H, W))
+    kA = _edge(net, _line((0, 50), (359, 50)), r=2.0, a=0.12)
+    kB = _edge(net, _line((0, 68), (359, 68)), r=3.5, a=0.6)
+    C = VesselSearch(net, P, _cfg(workers=1))
+    dels = {m["anchor"][0]: m for m in C.delete_moves()}
+    C.evaluate(dels[kA])
+    C.apply(C.evaluate(dels[kB])[1])
+    hit, res = C._lookup(dels[kA])
+    dE, prop = res if hit else C.evaluate(dels[kA])
+    E0 = C.energy_total()["total"]
+    C.apply(prop)
+    change = C.energy_total()["total"] - E0
+    tol = C.cfg.refit_tol * C.tau * C.cfg.lam_vessel
+    assert abs(change - dE) < tol, (hit, change, dE, tol)
