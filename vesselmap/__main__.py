@@ -265,8 +265,9 @@ def cmd_consolidate_eval(a):
             m = NetworkModel(net0, P.logI, P.weight, stride=1, bg_spacing=cfg.bg_spacing)
             optimize(m, 200, cfg.lr_pos * 0.5, cfg.lr_prof, cfg.lr_bg, priors=cfg.priors())
             m.write_back()
+            net0.meta["final_nll"] = float(m.data_nll(m.predict()).detach())
         else:
-            cache = os.path.join(a.out, f"seed{seed}_map.json")
+            cache = os.path.join(a.out, f"seed{seed}_{a.shape[0]}x{a.shape[1]}_map.json")
             if os.path.exists(cache):
                 net0 = VesselNetwork.load(cache)
             else:

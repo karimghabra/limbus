@@ -160,3 +160,57 @@ def test_truth_panels_draw(tmp_path):
     import cv2
     img = cv2.imread(str(p))
     assert img.shape[0] == 3 * 2 * 128 and img.shape[1] == 2 * 192
+
+
+def test_join_dE_is_the_energy_change_apply_makes():
+    """The score of a join covers the whole footprint: after apply() the
+    global energy changes by exactly the scored dE (up to the halo's
+    truncation at the window edge), even where the joined vessel differs
+    from its pieces far from the junction."""
+    H, W = 120, 320
+    x = np.linspace(-10, 330, 400)
+    v = dict(xy=np.stack([x, 60 + 3 * np.sin(x / 40)], 1),
+             r=1.8 + 0.4 * np.sin(x / 25), blur=1.0, amp=0.3)
+    I, P = _scene([v], (H, W))
+    net = VesselNetwork((H, W))
+    xs = np.linspace(0, 319, 400)
+    ys = 60 + 3 * np.sin(xs / 40)
+    left, right = xs < 158, xs > 162
+    _edge(net, np.stack([xs[left], ys[left]], 1), r=2.0)
+    _edge(net, np.stack([xs[right], ys[right]], 1), r=2.0)
+    C = VesselSearch(net, P, _cfg(init_iters=80, workers=1))
+    (move,) = [m for m in C.join_moves()]
+    dE, prop = C.evaluate(move)
+    E0 = C.energy_total()["total"]
+    C.apply(prop)
+    E1 = C.energy_total()["total"]
+    assert abs((E1 - E0) - dE) < 0.02 * abs(dE) + 25.0, (E1 - E0, dE)
+
+
+def _straight(net, p, q, r=2.5, s=1.0, n=60):
+    xy = np.linspace(p, q, n)
+    return net.add_edge_dense(xy, np.full(n, r), np.full(n, s), np.full(n, 0.3))
+
+
+def test_to_through_never_ends_an_edge_at_its_own_through_node():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    k = _straight(net, (60, 100), (120, 100))
+    j = _straight(net, (64, 140), (64, 100.5))      # ends just inside k, near k's end
+    to_through(net, 1.5)
+    for e in net.edges.values():
+        assert not set(e.through) & {e.u, e.v}, (e.u, e.v, e.through)
+    kinds = net.summary()["node_kinds"]
+    assert "junction" not in kinds, kinds
+
+
+def test_to_through_overlapping_ends_share_a_joint():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    k = _straight(net, (60, 100), (120, 100))
+    j = _straight(net, (10, 100.3), (66, 100.3))    # ends overlap by 6 px
+    to_through(net, 1.5)
+    assert not net.edges[k].through and not net.edges[j].through
+    shared = {net.edges[k].u, net.edges[k].v} & {net.edges[j].u, net.edges[j].v}
+    assert len(shared) == 1
+    assert net.to_segments().summary()["n_edges"] == 2

@@ -35,12 +35,14 @@ Moves.  Each move is followed by a short gradient fit of what it changes:
     revive   a vessel deleted earlier (so every move can be undone)
 
 Exact local energy.  A move changes the image only near the vessels it
-touches, so its energy change is computed on a window, rendering only
-those vessels over the fixed rest of the model (the other vessels' optical
-density, halo included, and the background).  A join, split or reroute
-changes a vessel only near the junction: its fit frees the parameters
-within ``focus_radius`` of it and scores the pixels around it, whatever
-the vessel's length.
+touches, so its energy change is computed on their footprint, rendering
+only those vessels over the fixed rest of the model (the other vessels'
+optical density, halo included, and the background).  A join, split or
+reroute is fitted cheaply: only the parameters within ``focus_radius`` of
+the junction, on a window around it (joined vessels are rebuilt
+faithfully, so elsewhere they render as their pieces did).  The fitted
+result is then scored on the whole footprint, so dE is exactly the change
+the move makes.
 
 Search.  Rejection-free annealing: at every step every candidate move is
 scored and one is drawn with probability proportional to exp(-dE / T),
@@ -199,22 +201,24 @@ def join_path(A: dict, B: dict, trim_max: float, max_turn_deg: float, spacing=0.
 
 
 def fit_vessel(xy, r, s, a, spacing):
-    """Spline parameters of a vessel assembled from pieces: the centreline
-    follows the pieces faithfully, the profiles are fitted with the map's
-    usual knot spacing and smoothing, in the log domain, after dropping the
-    values within one vessel width of each piece's free end, where the end
-    cap makes them unreliable (see `_join_profiles`)."""
+    """Spline parameters of a vessel assembled from pieces.  Everything is
+    fitted faithfully (the centreline, and the profiles in the log domain
+    on the dense knots of a faithful re-fit), so that away from the
+    junction the vessel renders as its pieces did: a join changes the image
+    only near the junction.  The profile values within one vessel width of
+    each piece's free end are replaced beforehand, because the end cap makes
+    them unreliable (see `_join_profiles`)."""
     ctrl, _, _, _ = _fit_edge_params(xy, r, s, a, spacing, faithful=True)
     arc = sp.arclength(np.asarray(xy, float))
     L = float(arc[-1])
-    n_p = sp.n_ctrl_for_length(L, PROFILE_SPACING, minimum=2)
+    n_p = sp.n_ctrl_for_length(L, PROFILE_SPACING / 2.5, minimum=2)
     m = max(4 * n_p, int(np.ceil(L / 0.5)) + 1)
     q = np.linspace(0, L, m) if L > 0 else np.zeros(m)
     out = []
     for vals, lo in ((r, R_MIN), (s, S_MIN), (a, A_MIN)):
         lv = np.log(np.maximum(np.asarray(vals, float), lo))
         vu = np.interp(q, arc, lv) if L > 0 else np.full(m, lv.mean())
-        c = sp.fit_ctrl(vu, n_p, smooth=1e-2, pin_ends=False)[:, 0]
+        c = sp.fit_ctrl(vu, n_p, smooth=1e-4, pin_ends=False)[:, 0]
         out.append(np.maximum(np.exp(c), lo))
     return ctrl, out[0], out[1], out[2]
 
@@ -252,6 +256,9 @@ def _merge_info(infos):
         info["band"] = [min(b[0] for b in bands), max(b[1] for b in bands)]
     info["consolidated_from"] = sorted({f for i in infos for f in i.get("consolidated_from", [])})
     info["spacing"] = min(i.get("spacing", 12.0) for i in infos)
+    links = [L for i in infos for L in i.get("links", [])]
+    if links:
+        info["links"] = links
     return info
 
 
@@ -584,37 +591,53 @@ class VesselSearch:
         c = self._cached(move)
         if c is not None:
             return c[2]
-        win = self._move_window(move)
         out = self._compute(move)
-        self._cache[move["key"]] = (self._signature(win), win, out)
+        self._store(move, out)
+        self.n_evaluated += 1
         return out
 
+    def _store(self, move, out):
+        win = out[1][3] if out is not None else self._move_window(move)
+        self._cache[move["key"]] = (self._signature(win), win, out)
+
     def _compute(self, move):
+        """(dE, (old ids, new edges, their patches, window)) of a move.
+
+        The new vessels are fitted on a window: for a join, split or
+        reroute only the parameters near the junction, on the focus window;
+        otherwise all of them, on the whole footprint.  dE is then always
+        scored on the whole footprint of the old and new vessels, so it is
+        exactly the change of E that apply() makes, wherever the new
+        vessels differ from the old.  The window returned is the one whose
+        optical density the result depends on (see _cached)."""
         built = move["build"]()
         if built is None:
             return None
         old, new0 = built
         focus = move.get("focus")
-        if focus is None:
-            smps = [self.samples(k) for k in old] + [edge_samples(e) for e in new0]
-            win = self._window(smps)
+        full = lambda new: self._window([self.samples(k) for k in old] +
+                                        [edge_samples(e) for e in new])
+        if focus is None or not new0:
+            wfit = full(new0) if (old or new0) else None
         else:
-            win = self._focus_window(focus, self._focus_reach(move))
+            wfit = self._focus_window(focus, self._focus_reach(move))
+        new = []
+        if new0:
+            m_fit = self._local(new0, wfit, old)
+            free = None if focus is None else \
+                self._free(m_fit, np.asarray(focus, float) - [wfit[0], wfit[1]])
+            self._fit(m_fit, self.cfg.local_iters, free)
+            new = self._fitted_edges(m_fit, wfit)
+        win = full(new)
         m_old = self._local([self.net.edges[k] for k in old], win, old)
         n0, p0 = self._local_energy(m_old)
         c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in old)
-        m_new = self._local(new0, win, old)
-        if new0:
-            free = None if focus is None else \
-                self._free(m_new, np.asarray(focus, float) - [win[0], win[1]])
-            self._fit(m_new, self.cfg.local_iters, free)
-        new = self._fitted_edges(m_new, win) if new0 else []
+        m_new = self._local(new, win, old)
         n1, p1 = self._local_energy(m_new)
         c1 = sum(self.cost(e) for e in new)
         self.last_parts = dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
-        patches = self._patches(m_new, win) if focus is None and new else None
-        self.n_evaluated += 1
-        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, win))
+        patches = self._patches(m_new, win) if new else []
+        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, wfit if focus is not None else win))
 
     def _focus_window(self, focus, R):
         R = R + 3 * self.hs + 4.0
@@ -666,13 +689,7 @@ class VesselSearch:
         m.rebuild()
 
     def apply(self, proposal):
-        old, new, patches, win = proposal
-        if not new:
-            patches = []
-        elif patches is None:   # fitted on a focus window: render the whole vessels
-            smps = [edge_samples(e) for e in new]
-            wfull = self._window(smps)
-            patches = self._patches(self._local(new, wfull, old), wfull)
+        old, new, patches, _ = proposal
         for k in old:
             p, v = self.patch.pop(k)
             self.V[p] -= v
@@ -941,8 +958,7 @@ class VesselSearch:
         with ctx.Pool(nw) as pool:
             for part in pool.map(_evaluate_chunk, chunks):
                 for i, r in part:
-                    win = self._move_window(moves[i])
-                    self._cache[moves[i]["key"]] = (self._signature(win), win, r)
+                    self._store(moves[i], r)
         _SHARED = None
         self.n_evaluated += len(todo)
 
@@ -1088,16 +1104,19 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
             continue
         s = smp[j]
         L, sa = float(s["s_arc"][-1]), float(s["s_arc"][i])
-        if min(sa, L - sa) < end_tol:                  # end meets end: one shared node
+        # within one footprint of j's own end (ends that meet or overlap):
+        # the two ends share one node, a joint, rather than each passing
+        # through the other's end
+        if min(sa, L - sa) < max(end_tol, float(s["r"][i] + s["s"][i]) + tol + 2.0):
             keep = ej.u if sa < 0.5 * L else ej.v
-            if keep != nid:
+            if keep != nid and keep not in e.through and nid not in ej.through:
                 net.merge_nodes(keep, nid)
             continue
         p = s["xy"][i]
         near = [t for t in ej.through if t in net.nodes and
                 np.linalg.norm(net.nodes[t].xy - p) < 3.0]
         if near:                                        # two branches leave at one point
-            if near[0] != nid:
+            if near[0] != nid and near[0] not in e.through:
                 net.merge_nodes(near[0], nid)
             continue
         if nid in ej.through or nid in (ej.u, ej.v):
@@ -1107,6 +1126,15 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
             net.sync_ends(kk)
         ej.info["through"] = list(ej.through) + [nid]
         net._touch()
+    # an edge never passes through its own end, nor twice through a node
+    for e in net.edges.values():
+        if e.through:
+            t = [n for n in dict.fromkeys(e.through) if n in net.nodes and n not in (e.u, e.v)]
+            if t:
+                e.info["through"] = t
+            else:
+                e.info.pop("through", None)
+    net._touch()
 
 
 def search_map(intensity: np.ndarray, net: VesselNetwork, cfg: SearchConfig | None = None,
