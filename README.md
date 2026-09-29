@@ -154,6 +154,33 @@ recordings folder — raw bursts are never written to. See
 [`analysis/stabilize/METHODS.md`](analysis/stabilize/METHODS.md) for how
 every step works and how it was validated.
 
+### Vessel overlay
+
+The **Vessels** panel finds the vessels on a stabilized burst and draws them
+over playback: centrelines, widths (the lumen walls), vessel numbers,
+junctions by kind and any mask layers, each switched on and off separately,
+with a legend of what the overlay holds.
+
+- **Segmenter** — which segmentation finds them. Each is one file in
+  `analysis/segmentation/plugins`, so the segmentation can be changed or
+  replaced without touching the app;
+  [`analysis/segmentation/README.md`](analysis/segmentation/README.md)
+  explains how to write one. Two come with it: *Stabilization mask (quick)*,
+  the stabilization's own vessel mask thinned to centrelines (seconds; a
+  quick look), and *vesselmap (spline network)*, every vessel fitted as a
+  spline (about an hour for a full frame). Each keeps its own result, so
+  switching compares them; **⟳ Refresh** picks up a new or edited one.
+- **Find vessels** runs it on the stabilized mean of the result in view, in
+  a separate process (one analysis job at a time); **Cancel** stops it and
+  keeps the previous overlay.
+- The overlay is drawn on the **Stabilized** and **Stabilized mean** views,
+  and on **Raw** frames it follows the eye: each point is carried through
+  that frame's stabilization. Mask layers show on the stabilized views only.
+- **V** shows or hides the overlay; **S** switches between Raw and
+  Stabilized.
+- The status line warns when an overlay was made on an earlier
+  stabilization, or by an earlier version of the segmenter.
+
 ## Analysis on another computer
 
 Stabilization needs no camera, driver or GUI — only Python 3.10+ and three
@@ -211,6 +238,7 @@ the GPU when there is one).
 python analysis/tests/test_synthetic.py       # translation vs known motion (CPU and GPU)
 python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks (CPU and GPU)
 python analysis/tests/test_gpu.py             # GPU backend vs the CPU path
+python analysis/tests/test_segmentation.py    # the segmenter contract behind the vessel overlay
 ```
 
 ## Repository layout
@@ -219,6 +247,9 @@ python analysis/tests/test_gpu.py             # GPU backend vs the CPU path
 |---|---|
 | `camera_recorder.py`, `run.bat`, `run.sh` | the recorder app and its launchers |
 | `analysis/stabilize/` | offline stabilization package, with `METHODS.md` |
+| `analysis/segmentation/` | the vessel overlay's segmenters (`plugins/`), their runner and the overlay format |
+| `analysis/limbusflow/` | red-cell velocimetry used by vesselmap's flow step |
+| `vesselmap/` | the spline-network vessel map (`python -m vesselmap`), with its own README |
 | `analysis/tests/` | synthetic ground-truth and smoke tests |
 | `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |
 | `tools/` | building and fetching the reference-data release |

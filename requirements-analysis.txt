@@ -7,3 +7,6 @@ tifffile>=2024.1
 # Optional: with an NVIDIA GPU, a CUDA build of PyTorch runs the per-frame image
 # work there (METHODS.md §14; tested: torch 2.11.0+cu128 on an RTX 3080):
 #   pip install torch --index-url https://download.pytorch.org/whl/cu128
+# The Review tab's vessel overlay: each segmenter (analysis/segmentation/plugins)
+# needs its own packages. stabilization_mask: scikit-image. vesselmap:
+# requirements-vesselmap.txt.

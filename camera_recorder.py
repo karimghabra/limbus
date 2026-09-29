@@ -1839,6 +1839,33 @@ def _analysis_modules():
         return None
 
 
+def open_in_file_manager(path):
+    """Show a folder in Explorer / Finder / the desktop's file manager."""
+    if sys.platform == "win32":
+        os.startfile(path)  # noqa: S606 - opens Explorer
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", path])
+    else:
+        subprocess.Popen(["xdg-open", path])
+
+
+def _segmentation_module():
+    """The vessel segmentation runner and overlay reader
+    (analysis/segmentation), or None. Imported lazily, like stabilize: it
+    lists the segmenters without importing them, so their own packages are
+    only ever loaded by the process that runs one."""
+    if not os.path.isdir(os.path.join(ANALYSIS_DIR, "segmentation")):
+        return None
+    if ANALYSIS_DIR not in sys.path:
+        sys.path.insert(0, ANALYSIS_DIR)
+    try:
+        import segmentation
+        import segmentation.overlay  # noqa: F401  segmentation.overlay.read
+        return segmentation
+    except Exception:
+        return None
+
+
 def stabilization_base(burst_path):
     """Results live beside the recordings folder, never inside a burst:
     <recordings parent>/stabilization/<method>/<burst>/ — the same default
@@ -1885,26 +1912,48 @@ class StabilizationResult:
         return "could not be registered"
 
     def stabilize(self, index, frame):
-        """The frame as stabilized, in its own dtype. Frames the result didn't
-        use are still aligned where a correction exists, and labelled."""
+        """(frame as stabilized in its own dtype, note, aligned). Frames the
+        result didn't use are still aligned where a correction exists, and
+        labelled; `aligned` is False when the frame is shown uncorrected."""
         if self.fields is not None:
             warped = self.fields.warp_frame(index, frame)
             if warped is None:
-                return frame, "not used: " + self.why_unused(index) + " (shown unaligned)"
+                return (frame, "not used: " + self.why_unused(index) + " (shown unaligned)",
+                        False)
             if np.issubdtype(frame.dtype, np.integer):
                 top = np.iinfo(frame.dtype).max
                 warped = np.clip(np.rint(warped), 0, top).astype(frame.dtype)
         else:
             row = self.rows.get(index)
             if row is None:
-                return frame, "no correction for this frame (shown unaligned)"
+                return frame, "no correction for this frame (shown unaligned)", False
             dx, dy = float(row["dx_px"]), float(row["dy_px"])
             m = np.float32([[1, 0, -dx], [0, 1, -dy]])
             warped = cv2.warpAffine(frame, m, (frame.shape[1], frame.shape[0]),
                                     flags=cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
         note = None if self.used(index) else "not used: " + self.why_unused(index)
-        return warped, note
+        return warped, note, self.has_correction(index)
+
+    def has_correction(self, index):
+        """A translation result writes dx = dy = 0 for the frames it could
+        not register, so only its registered rows carry a real correction."""
+        if self.fields is not None:
+            return self.fields.has(index)
+        return self.used(index)
+
+    def to_raw(self, index, pts):
+        """Points (N, 2) of the stabilized frame -> where they appear in raw
+        frame `index`, or None if this result has no correction for it.
+        stabilized(x) = raw(x + d(x)), so stabilized point x is seen at raw
+        x + d(x)."""
+        if not self.has_correction(index):
+            return None
+        pts = np.asarray(pts, np.float64).reshape(-1, 2)
+        if self.fields is not None:
+            return pts + self.fields.at(index, pts)
+        row = self.rows[index]
+        return pts + (float(row["dx_px"]), float(row["dy_px"]))
 
     def mean_image(self):
         """mean_stabilized.tif as RGB, NaN (no valid data) in magenta."""
@@ -1921,6 +1970,216 @@ class StabilizationResult:
         return self._mean
 
 
+def _vessel_rgb(key):
+    """A colour per vessel (or per group of segments that make one vessel):
+    hues a golden angle apart, so neighbouring numbers look different."""
+    hue = int((key * 137.508) % 180)
+    bgr = cv2.cvtColor(np.uint8([[[hue, 255, 255]]]), cv2.COLOR_HSV2BGR)[0, 0]
+    return int(bgr[2]), int(bgr[1]), int(bgr[0])
+
+
+# how each kind of junction is marked: (shape, RGB, legend text). A kind not
+# listed here — a segmenter may name its own — gets a white diamond,
+# labelled with the kind's own name.
+JUNCTION_STYLE = {
+    "bifurcation": ("dot", (90, 230, 120), "branch"),
+    "junction": ("dot", (30, 150, 70), "junction (4+)"),
+    "crossing": ("ring", (80, 200, 255), "crossing"),
+    "crossing under": ("ring", (150, 120, 255), "crossing under"),
+    "overlap": ("cross", (250, 235, 70), "overlap"),
+    "unresolved": ("square", (255, 150, 40), "unresolved"),
+    "endpoint": ("square", (190, 190, 190), "end"),
+}
+# tints for a segmenter's mask layers, in order, and how strongly they show
+MASK_RGB = ((0, 210, 255), (255, 110, 200), (255, 220, 60))
+MASK_ALPHA = 0.35
+
+
+def junction_style(kind):
+    return JUNCTION_STYLE.get(kind) or ("diamond", (235, 235, 235), kind)
+
+
+def junction_marker(rgb, x, y, kind, r=5, mono=None):
+    """Mark a junction of this kind at (x, y), outlined in black so it reads
+    on bright sclera and dark vessel alike. mono: draw the marker's shape in
+    this one value instead (for a coverage mask)."""
+    shape, col, _ = junction_style(kind)
+    line = cv2.LINE_AA
+    passes = (((0, 0, 0), 1), (col, 0)) if mono is None else ((mono, 1), (mono, 0))
+    for colour, grow in passes:
+        k = 1 + 2 * grow
+        if shape == "dot":
+            cv2.circle(rgb, (x, y), r - 1 + grow, colour, -1, line)
+        elif shape == "ring":
+            cv2.circle(rgb, (x, y), r, colour, k, line)
+        elif shape == "square":
+            cv2.rectangle(rgb, (x - r, y - r), (x + r, y + r), colour, k, line)
+        elif shape == "diamond":
+            cv2.polylines(rgb, [np.int32([(x, y - r), (x + r, y), (x, y + r), (x - r, y)])],
+                          True, colour, k, line)
+        else:
+            cv2.line(rgb, (x - r, y - r), (x + r, y + r), colour, k, line)
+            cv2.line(rgb, (x - r, y + r), (x + r, y - r), colour, k, line)
+
+
+class OverlayView:
+    """A segmenter's overlay of one stabilization result (analysis/
+    segmentation: overlay.json and its masks), drawn over playback in the
+    Review tab. Which segmenter made it doesn't matter here: they all hand
+    over the same file.
+
+    Everything is in the stabilized frame's full-resolution pixels. To draw
+    on another frame the caller passes a function that maps those points into
+    it — the identity for stabilized frames, the frame's stabilization field
+    for raw ones — so every point is mapped in one call. Masks are images, so
+    they are drawn on the stabilized views only.
+
+    A full-frame vesselmap overlay is ~1500 vessels and ~1200 junctions, so:
+    lines of one colour are drawn in one call, and on the stabilized views,
+    where the overlay is the same for every frame, it is drawn once into a
+    cached layer that each frame is composited with.
+    """
+
+    def __init__(self, doc):
+        self.doc = doc
+        self.made = doc["made"]
+        self.summary = doc.get("summary") or ""
+        self.vessels = []
+        parts = []                  # every point to be mapped, in one array
+        n = 0
+
+        def add(points):
+            nonlocal n
+            parts.append(points)
+            n += len(points)
+            return slice(n - len(points), n)
+
+        for v in doc["vessels"]:
+            C = v["points"]
+            key = v["group"] if v.get("group") is not None else v["id"]
+            item = {"id": v["id"], "rgb": _vessel_rgb(key), "centre": add(C), "walls": None,
+                    "tag": add(C[len(C) // 2][None])}
+            R = v["radius"]
+            if R is not None:
+                # the lumen's walls: the centreline moved out by the radius
+                # measured at each point, along the local normal
+                t = np.gradient(C, axis=0)
+                t /= np.maximum(np.hypot(t[:, 0], t[:, 1]), 1e-9)[:, None]
+                nrm = np.c_[-t[:, 1], t[:, 0]] * R[:, None]
+                item["walls"] = (add(C + nrm), add(C - nrm))
+            self.vessels.append(item)
+        self.junctions = [(j["kind"], add(np.array([[j["x"], j["y"]]], float)))
+                          for j in doc["junctions"]]
+        self.points = np.vstack(parts) if parts else np.zeros((0, 2))
+        # the lines, grouped by colour: one drawing call per colour
+        self._centres, self._walls = {}, {}
+        for v in self.vessels:
+            self._centres.setdefault(v["rgb"], []).append(v["centre"])
+            if v["walls"]:
+                self._walls.setdefault(tuple(c // 2 + 64 for c in v["rgb"]), []).extend(v["walls"])
+        self.mask_layers = list(doc["masks"])
+        self._masks = None
+        self._alpha = {}            # masks scaled to a view size, cached
+        self._layer = self._layer_key = None
+
+    def kinds(self):
+        out = {}
+        for kind, _ in self.junctions:
+            out[kind] = out.get(kind, 0) + 1
+        return out
+
+    def masks(self):
+        """[(name, bool image)], read on first use; unreadable ones are skipped."""
+        if self._masks is None:
+            self._masks = []
+            for name, path in self.mask_layers:
+                m = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+                if m is not None and m.shape == tuple(self.doc["shape"]):
+                    self._masks.append((name, m > 0))
+        return self._masks
+
+    def _tint(self, rgb):
+        h, w = rgb.shape[:2]
+        if (w, h) not in self._alpha:
+            self._alpha = {(w, h): [cv2.resize(m.astype(np.float32), (w, h),
+                                               interpolation=cv2.INTER_AREA) * MASK_ALPHA
+                                    for _, m in self.masks()]}
+        for k, a in enumerate(self._alpha[(w, h)]):
+            col = np.array(MASK_RGB[k % len(MASK_RGB)], np.float32)
+            rgb[:] = (rgb * (1 - a[..., None]) + col * a[..., None]).astype(np.uint8)
+
+    def draw(self, rgb, to_frame, scale, centrelines=True, walls=True, ids=True,
+             junctions=True, masks=True, stabilized=True, still=False):
+        """Draw onto `rgb`, an image shown at `scale` = (sx, sy) of the
+        full-resolution frame. to_frame maps stabilized-frame points into that
+        frame, or returns None if it can't; returns False then, True if drawn.
+        stabilized: the frame is a stabilized one, so masks can be drawn.
+        still: to_frame is the identity, so the drawing can be cached."""
+        if masks and stabilized and self.mask_layers:
+            self._tint(rgb)
+        if not len(self.points):
+            return True
+        parts = (centrelines, walls, ids, junctions)
+        if not still:
+            P = to_frame(self.points)
+            if P is None:
+                return False
+            self._paint((rgb,), P, scale, *parts)
+            return True
+        key = (rgb.shape, tuple(scale), parts)
+        if self._layer_key != key:
+            # drawn once on black, with a coverage mask drawn alongside: the
+            # colours come out premultiplied by their anti-aliased coverage
+            h, w = rgb.shape[:2]
+            colour = np.zeros((h, w, 3), np.uint8)
+            cover = np.zeros((h, w), np.uint8)
+            self._paint((colour, cover), to_frame(self.points), scale, *parts)
+            self._layer = (cv2.merge([255 - cover] * 3), colour)
+            self._layer_key = key
+        # frame * (1 - coverage) + premultiplied colour, in whole-image 8-bit
+        # operations: a dense overlay covers over half the pixels
+        uncovered, colour = self._layer
+        cv2.multiply(rgb, uncovered, dst=rgb, scale=1 / 255)
+        cv2.add(rgb, colour, dst=rgb)
+        return True
+
+    def _paint(self, targets, P, scale, centrelines, walls, ids, junctions):
+        """Draw with OpenCV onto targets: (image,) or (colour image, coverage
+        mask), the mask getting every shape in 255."""
+        sx, sy = scale
+        P = (P + 0.5) * (sx, sy) - 0.5
+        fixed = np.rint(P * 16).astype(np.int32)        # 4 bits of subpixel
+        line = cv2.LINE_AA
+        mask = targets[1] if len(targets) > 1 else None
+        if walls:
+            for colour, slices in self._walls.items():
+                lines = [fixed[s] for s in slices]
+                cv2.polylines(targets[0], lines, False, colour, 1, line, 4)
+                if mask is not None:
+                    cv2.polylines(mask, lines, False, 255, 1, line, 4)
+        if centrelines:
+            for colour, slices in self._centres.items():
+                lines = [fixed[s] for s in slices]
+                cv2.polylines(targets[0], lines, False, colour, 1, line, 4)
+                if mask is not None:
+                    cv2.polylines(mask, lines, False, 255, 1, line, 4)
+        if junctions:
+            for kind, s in self.junctions:
+                x, y = (int(round(c)) for c in P[s][0])
+                junction_marker(targets[0], x, y, kind)
+                if mask is not None:
+                    junction_marker(mask, x, y, kind, mono=255)
+        if ids:
+            for v in self.vessels:
+                x, y = (int(round(c)) for c in P[v["tag"]][0])
+                for colour, k in (((0, 0, 0), 3), (v["rgb"], 1)):
+                    cv2.putText(targets[0], str(v["id"]), (x + 4, y - 4),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.4, colour, k, line)
+                    if mask is not None:
+                        cv2.putText(mask, str(v["id"]), (x + 4, y - 4),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, 255, k, line)
+
+
 class ReviewTab(QtWidgets.QWidget):
     """Play back a capture immediately after taking it: scrub through the
     frames, and see the settings each one was taken with. TIFF bursts can be
@@ -1932,8 +2191,11 @@ class ReviewTab(QtWidgets.QWidget):
         self.source = None
         self.index = 0
         self.result = None          # StabilizationResult for the view
-        self.proc = None            # the running stabilization, if any
-        self._run = None            # (burst path, method) it is working on
+        self.vessels = None         # OverlayView: the chosen segmenter's, of that result
+        self.segmentation = _segmentation_module()
+        self.segmenters = {}        # id -> segmentation.Segmenter
+        self.proc = None            # the running analysis job, if any
+        self._run = None            # (burst path, method, job, title) it is working on
         self.analysis = _analysis_modules()
         self._build_ui()
         self.timer = QtCore.QTimer(self)
@@ -2002,12 +2264,21 @@ class ReviewTab(QtWidgets.QWidget):
         options.addWidget(self.auto_contrast)
         options.addStretch(1)
 
-        # sidebar: what there is to play, and what it was taken with
+        # sidebar: what there is to play, and what it was taken with. It
+        # scrolls, like the Camera tab's panel: on a short window its groups
+        # keep their size instead of being squeezed below it (squeezed, Qt
+        # crashed laying out the Vessels legend)
         side = QtWidgets.QVBoxLayout()
         panel = QtWidgets.QWidget()
         panel.setLayout(side)
         panel.setFixedWidth(300)
-        layout.addWidget(panel)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidget(panel)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        scroll.setFixedWidth(300 + scroll.style().pixelMetric(QtWidgets.QStyle.PM_ScrollBarExtent))
+        layout.addWidget(scroll)
 
         buttons = QtWidgets.QHBoxLayout()
         side.addLayout(buttons)
@@ -2041,7 +2312,8 @@ class ReviewTab(QtWidgets.QWidget):
         self.view_combo.setToolTip(
             "Stabilized: each frame warped by its correction.\n"
             "Stabilized mean: the average of the frames used; magenta marks "
-            "regions too few frames saw.")
+            "regions too few frames saw.\n"
+            "S switches between Raw and Stabilized.")
         self.view_combo.currentIndexChanged.connect(lambda _: self._view_changed())
         stab.addRow("View", self.view_combo)
         self.stab_btn = QtWidgets.QPushButton("Stabilize")
@@ -2050,19 +2322,104 @@ class ReviewTab(QtWidgets.QWidget):
         self.stab_status = QtWidgets.QLabel("")
         self.stab_status.setWordWrap(True)
         stab.addRow(self.stab_status)
-        self.stab_log = QtWidgets.QPlainTextEdit()
-        self.stab_log.setReadOnly(True)
-        self.stab_log.setMaximumBlockCount(400)
-        self.stab_log.setFixedHeight(90)
-        self.stab_log.setStyleSheet("font-family: monospace; font-size: 10px;")
-        self.stab_log.setVisible(False)
-        stab.addRow(self.stab_log)
         side.addWidget(stab_box)
+
+        vessel_box = QtWidgets.QGroupBox("Vessels")
+        vbox = QtWidgets.QVBoxLayout(vessel_box)
+        seg_row = QtWidgets.QHBoxLayout()
+        seg_row.addWidget(QtWidgets.QLabel("Segmenter"))
+        self.segmenter_combo = QtWidgets.QComboBox()
+        self.segmenter_combo.setToolTip(
+            "Which segmentation finds the vessels: one file each in "
+            "analysis/segmentation/plugins (see the README there). Each keeps "
+            "its own result, so switching compares them. \u27f3 Refresh picks up "
+            "a new or changed one.")
+        self.segmenter_combo.currentIndexChanged.connect(lambda _: self._segmenter_changed())
+        seg_row.addWidget(self.segmenter_combo, stretch=1)
+        vbox.addLayout(seg_row)
+        self.vessel_show = QtWidgets.QCheckBox("Show on playback  (V)")
+        self.vessel_show.setChecked(True)
+        self.vessel_show.setToolTip(
+            "Draw the vessels found on the stabilized mean over every view. On "
+            "raw frames they follow the eye through each frame's stabilization; "
+            "frames without a correction show none.")
+        vbox.addWidget(self.vessel_show)
+        grid = QtWidgets.QGridLayout()
+        grid.setContentsMargins(18, 0, 0, 0)
+        self.vessel_parts = {}
+        for n, (key, label, tip) in enumerate((
+                ("centrelines", "Centrelines", "Each vessel's centreline."),
+                ("walls", "Widths", "The lumen walls: the radius measured along "
+                                    "the centreline, either side of it."),
+                ("ids", "IDs", "Vessel numbers. They are NOT stable between "
+                               "runs: re-finding vessels renumbers them."),
+                ("junctions", "Junctions", "Where vessels meet, by kind."),
+                ("masks", "Masks", "The segmenter's mask layers, tinted (on the "
+                                   "stabilized views; a mask can't follow a raw "
+                                   "frame's correction the way a line can)."))):
+            box = QtWidgets.QCheckBox(label)
+            # a full-frame map is ~1500 vessels: their numbers hide the image
+            box.setChecked(key not in ("walls", "ids", "masks"))
+            box.setToolTip(tip)
+            box.toggled.connect(lambda _: self._render())
+            grid.addWidget(box, n // 2, n % 2)
+            self.vessel_parts[key] = box
+        vbox.addLayout(grid)
+        self.vessel_show.toggled.connect(self._vessel_show_toggled)
+        # the legend: what this overlay contains, drawn with the very markers
+        # and tints the overlay uses
+        self.legend = QtWidgets.QGridLayout()
+        self.legend.setContentsMargins(18, 0, 0, 0)
+        self.legend.setHorizontalSpacing(4)
+        vbox.addLayout(self.legend)
+        self.vessel_btn = QtWidgets.QPushButton("Find vessels")
+        self.vessel_btn.setToolTip(
+            "Run the chosen segmenter on this result's stabilized mean, in a "
+            "separate process.")
+        self.vessel_btn.clicked.connect(self._vessels_clicked)
+        self.vessel_files_btn = QtWidgets.QPushButton("Open folder")
+        self.vessel_files_btn.setToolTip(
+            "The segmenter's result folder: the overlay, and whatever else it "
+            "wrote (vesselmap: map.json, the interactive map_digraph.html, ...).")
+        self.vessel_files_btn.clicked.connect(self._open_vessel_folder)
+        buttons = QtWidgets.QHBoxLayout()
+        buttons.addWidget(self.vessel_btn, stretch=1)
+        buttons.addWidget(self.vessel_files_btn)
+        vbox.addLayout(buttons)
+        self.vessel_status = QtWidgets.QLabel("")
+        self.vessel_status.setWordWrap(True)
+        vbox.addWidget(self.vessel_status)
+        side.addWidget(vessel_box)
+        self.vessel_box = vessel_box
+        self._fill_segmenters()
+
+        # progress of whichever analysis job is running
+        self.job_log = QtWidgets.QPlainTextEdit()
+        self.job_log.setReadOnly(True)
+        self.job_log.setMaximumBlockCount(400)
+        self.job_log.setFixedHeight(90)
+        self.job_log.setStyleSheet("font-family: monospace; font-size: 10px;")
+        self.job_log.setVisible(False)
+        side.addWidget(self.job_log)
+
+        # keys, while the Review tab has focus
+        for key, slot in (("V", self.vessel_show.toggle),
+                          ("S", self._toggle_stabilized)):
+            sc = QtWidgets.QShortcut(QtGui.QKeySequence(key), self)
+            sc.setContext(QtCore.Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
+
         if not self.analysis:
             for w in (self.method_combo, self.view_combo, self.stab_btn):
                 w.setEnabled(False)
+            vessel_box.setEnabled(False)
             self.stab_status.setText(
                 "Unavailable: the analysis/stabilize folder wasn't found "
+                "beside the app.")
+        elif not self.segmentation:
+            vessel_box.setEnabled(False)
+            self.vessel_status.setText(
+                "Unavailable: the analysis/segmentation folder wasn't found "
                 "beside the app.")
 
         info_box = QtWidgets.QGroupBox("Capture")
@@ -2075,7 +2432,9 @@ class ReviewTab(QtWidgets.QWidget):
 
     # ---- listing -----------------------------------------------------------
     def refresh(self, select=None):
-        """Rescan the output folder; optionally select a given capture."""
+        """Rescan the output folder, and the segmenters; optionally select a
+        given capture."""
+        self._fill_segmenters()
         folder = self.main.output_dir
         entries = []
         try:
@@ -2221,10 +2580,10 @@ class ReviewTab(QtWidgets.QWidget):
             return
         if frame is None:
             return
-        shown, note = frame, None
+        shown, note, aligned = frame, None, False
         if view == "stabilized":
             try:
-                shown, note = self.result.stabilize(self.index, frame)
+                shown, note, aligned = self.result.stabilize(self.index, frame)
             except Exception as exc:
                 shown, note = frame, f"could not stabilize: {exc}"
         image = self._to_8bit(shown)
@@ -2234,7 +2593,14 @@ class ReviewTab(QtWidgets.QWidget):
             cv2.putText(image, note, (int(10 * scale), int(34 * scale)),
                         cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 190, 40),
                         max(1, int(2 * scale)), cv2.LINE_AA)
-        self._show(image)
+        # the vessels live in the stabilized frame: drawn as they are on an
+        # aligned frame, and carried along this frame's correction on a raw one
+        to_frame = None
+        if view == "stabilized" and aligned:
+            to_frame = lambda p: p
+        elif view == "raw" and self.result is not None and self.result.ok:
+            to_frame = lambda p, i=self.index: self.result.to_raw(i, p)
+        vessels = self._show(image, to_frame, stabilized=view == "stabilized" and aligned)
         self.counter.setText(f"{self.index + 1} / {len(self.source)}")
         # The frame's real pixel range, in sensor DN. A black-looking frame
         # can be dim-but-valid or genuinely empty, and a bright one can be
@@ -2247,9 +2613,42 @@ class ReviewTab(QtWidgets.QWidget):
         meta.append(("Pixel range", f"{lo}–{hi} of {top}{flag}"))
         if view == "stabilized":
             meta.append(("Stabilized", note or "used"))
+        if vessels:
+            meta.append(("Vessels", vessels))
         self._fill(self.frame_form, meta)
 
-    def _show(self, image):
+    def _vessels_on(self):
+        return self.vessels is not None and self.vessel_show.isChecked()
+
+    def _show(self, image, to_frame=None, stabilized=True):
+        """Show an 8-bit frame fitted to the view, with the vessels over it
+        when they are switched on; to_frame maps the vessels into this frame
+        (None: it can't be done for this frame), and masks are drawn only on
+        a stabilized frame. Returns what became of the vessels, for the frame
+        panel, or None when they are off.
+
+        The vessels are drawn after scaling to the view, not before: a 1 px
+        line drawn on the full frame would be thinned away by the scaling."""
+        drawn = None
+        if self._vessels_on():
+            h, w = image.shape[:2]
+            size = self.view.size()
+            s = min(size.width() / w, size.height() / h)
+            if s > 0:
+                dw, dh = max(1, round(w * s)), max(1, round(h * s))
+                image = cv2.resize(image, (dw, dh), interpolation=(
+                    cv2.INTER_AREA if s < 1 else cv2.INTER_LINEAR))
+                if image.ndim == 2:
+                    image = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+                parts = {k: box.isChecked() for k, box in self.vessel_parts.items()}
+                if to_frame is not None and self.vessels.draw(
+                        image, to_frame, (dw / w, dh / h), stabilized=stabilized,
+                        still=stabilized, **parts):
+                    drawn = f"{len(self.vessels.vessels)} drawn"
+                    if parts["masks"] and self.vessels.mask_layers and not stabilized:
+                        drawn += " (masks: stabilized views only)"
+                else:
+                    drawn = "not drawn: no correction for this frame"
         height, width = image.shape[:2]
         if image.ndim == 3:
             qimg = QtGui.QImage(image.data, width, height, 3 * width,
@@ -2261,6 +2660,7 @@ class ReviewTab(QtWidgets.QWidget):
         self.view.setPixmap(pix.scaled(
             self.view.size(), QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation))
+        return drawn
 
     def _render_mean(self):
         try:
@@ -2269,14 +2669,14 @@ class ReviewTab(QtWidgets.QWidget):
             self.view.setPixmap(QtGui.QPixmap())
             self.view.setText(f"Could not read the stabilized mean:\n{exc}")
             return
-        self._show(rgb)
+        vessels = self._show(rgb, lambda p: p)
         self.counter.setText("mean")
         frames = self.result.metrics.get("frames", {})
         self._fill(self.frame_form, [
             ("Showing", f"mean of {frames.get('registered', '?')} frames"),
             ("Display range", f"{lo:.0f}–{hi:.0f} DN (1st–99th pct)"),
             ("No data", f"{100 * missing:.1f}% (magenta)"),
-        ])
+        ] + ([("Vessels", vessels)] if vessels else []))
 
     # ---- stabilization -------------------------------------------------------
     def _burst_path(self):
@@ -2289,6 +2689,7 @@ class ReviewTab(QtWidgets.QWidget):
     def _load_result(self):
         """Pick up the result for the selected burst and method, if any."""
         self.result = None
+        self.vessels = None
         burst = self._burst_path()
         if self.analysis and burst and self._method():
             folder = os.path.join(stabilization_base(burst), self._method(),
@@ -2298,20 +2699,106 @@ class ReviewTab(QtWidgets.QWidget):
                     self.result = StabilizationResult(folder, self.analysis[1])
                 except Exception as exc:
                     self.result = None
-                    self.stab_log.setVisible(True)
-                    self.stab_log.appendPlainText(f"could not read result: {exc}")
+                    self.job_log.setVisible(True)
+                    self.job_log.appendPlainText(f"could not read result: {exc}")
+        self._load_overlay()
         self._update_stab_status()
         self._render()
+
+    # ---- vessels ---------------------------------------------------------------
+    def _segmenter(self):
+        return self.segmenters.get(self.segmenter_combo.currentData())
+
+    def _fill_segmenters(self):
+        """List the segmenters found now, keeping the one chosen if it's still there."""
+        if not self.segmentation:
+            return
+        try:
+            found = self.segmentation.list_segmenters()
+        except Exception as exc:
+            found = []
+            self.vessel_status.setText(f"Could not list the segmenters: {exc}")
+        chosen = self.segmenter_combo.currentData()
+        self.segmenters = {s.id: s for s in found}
+        self.segmenter_combo.blockSignals(True)
+        self.segmenter_combo.clear()
+        for n, seg in enumerate(found):
+            self.segmenter_combo.addItem(seg.label, seg.id)
+            self.segmenter_combo.setItemData(n, f"{seg.description}\n\n{seg.path}",
+                                             QtCore.Qt.ToolTipRole)
+        index = self.segmenter_combo.findData(chosen)
+        self.segmenter_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.segmenter_combo.blockSignals(False)
+        # re-read the overlay too: the segmenter's file may have changed, or
+        # it may have been run again from the command line
+        self._segmenter_changed()
+
+    def _segmenter_changed(self):
+        self._load_overlay()
+        self._update_stab_status()
+        self._render()
+
+    def _load_overlay(self):
+        """The chosen segmenter's overlay of the result in view, if it has one."""
+        self.vessels = None
+        seg = self._segmenter()
+        if seg is not None and self.result is not None and self.result.ok:
+            folder = self.segmentation.result_dir(self.result.folder, seg.id)
+            if os.path.exists(os.path.join(folder, "overlay.json")):
+                try:
+                    self.vessels = OverlayView(self.segmentation.overlay.read(folder))
+                except Exception as exc:
+                    self.job_log.setVisible(True)
+                    self.job_log.appendPlainText(f"could not read the {seg.label} overlay: {exc}")
+        self._rebuild_legend()
+
+    def _rebuild_legend(self):
+        """Junction kinds and mask layers of the overlay in view, as drawn."""
+        while self.legend.count():
+            old = self.legend.takeAt(0).widget()
+            if old is not None:
+                # off the panel now: deleteLater alone leaves it drawn until
+                # the event loop gets round to it
+                old.hide()
+                old.setParent(None)
+                old.deleteLater()
+        entries = []
+        if self.vessels is not None:
+            for kind in sorted(self.vessels.kinds(), key=lambda k: (k not in JUNCTION_STYLE, k)):
+                icon = np.full((14, 14, 3), 48, np.uint8)
+                junction_marker(icon, 7, 7, kind)
+                entries.append((icon, junction_style(kind)[2]))
+            for k, (name, _) in enumerate(self.vessels.mask_layers):
+                icon = np.full((14, 14, 3), 48, np.uint8)
+                icon[2:12, 2:12] = MASK_RGB[k % len(MASK_RGB)]
+                entries.append((icon, name))
+        for n, (icon, text) in enumerate(entries):
+            swatch = QtWidgets.QLabel()
+            swatch.setPixmap(QtGui.QPixmap.fromImage(QtGui.QImage(
+                icon.data, 14, 14, 42, QtGui.QImage.Format_RGB888).copy()))
+            name = QtWidgets.QLabel(text)
+            name.setStyleSheet("font-size: 10px;")
+            self.legend.addWidget(swatch, n // 2, 2 * (n % 2))
+            self.legend.addWidget(name, n // 2, 2 * (n % 2) + 1)
+        self.legend.setColumnStretch(3, 1)
+        has_masks = bool(self.vessels is not None and self.vessels.mask_layers)
+        self.vessel_parts["masks"].setEnabled(has_masks and self.vessel_show.isChecked())
+
+    def _running(self, job):
+        """Whether `job` is running, and whether on the burst and method in view."""
+        if self.proc is None or self._run[2] != job:
+            return False, False
+        return True, self._run[:2] == (self._burst_path(), self._method())
 
     def _update_stab_status(self):
         if not self.analysis:
             return
+        self._update_vessel_status()
         burst = self._burst_path()
-        running = self.proc is not None
+        running, mine = self._running("stabilize")
         if running:
             self.stab_btn.setText("Cancel")
-            mine = burst and self._run == (burst, self._method())
-            self.stab_btn.setEnabled(bool(mine))
+            self.stab_btn.setEnabled(mine)
             if not mine:
                 self.stab_status.setText(
                     f"Busy: stabilizing {os.path.basename(self._run[0])} "
@@ -2320,7 +2807,8 @@ class ReviewTab(QtWidgets.QWidget):
             self.stab_status.setText("Stabilizing… progress below.")
             return
         self.stab_btn.setText("Stabilize")
-        self.stab_btn.setEnabled(bool(burst))
+        # one analysis job at a time: they share the CPU and the result folder
+        self.stab_btn.setEnabled(bool(burst) and self.proc is None)
         if not burst:
             self.stab_status.setText("Stabilization works on TIFF bursts.")
             return
@@ -2359,6 +2847,64 @@ class ReviewTab(QtWidgets.QWidget):
                 lines.append("⚠ Made with older code or settings — re-run to update.")
         self.stab_status.setText("\n".join(lines))
 
+    def _update_vessel_status(self):
+        if not self.segmentation:
+            return
+        burst = self._burst_path()
+        seg = self._segmenter()
+        job = f"vessels:{seg.id}" if seg else None
+        running, mine = self._running(job)
+        self.vessel_btn.setText("Cancel" if mine else "Re-run" if self.vessels else "Find vessels")
+        self.segmenter_combo.setEnabled(not mine)
+        self.vessel_files_btn.setEnabled(self._vessel_folder() is not None)
+        if running:
+            self.vessel_btn.setEnabled(mine)
+            self.vessel_status.setText("Finding vessels… progress below.")
+            return
+        stabilized = self.result is not None and self.result.ok
+        self.vessel_btn.setEnabled(stabilized and seg is not None and self.proc is None)
+        if self.proc is not None:
+            text = f"Busy: {self._run[3]}."
+        elif seg is None:
+            text = ("No segmenters found: add one to analysis/segmentation/plugins, "
+                    "then press \u27f3 Refresh.")
+        elif not burst:
+            text = "Vessels are found on a stabilized TIFF burst."
+        elif not stabilized:
+            text = "Stabilize with this method first: vessels are found on its stabilized mean."
+        elif self.vessels is None:
+            text = f"Not found with {seg.label} on this result yet."
+        else:
+            text = (self.vessels.summary + "\nFound "
+                    + time.strftime("%Y-%m-%d %H:%M", time.localtime(self.vessels.made)))
+            for note in self.segmentation.overlay.staleness(
+                    self.vessels.doc, self.result.folder, seg):
+                text += f"\n\u26a0 {note[0].upper() + note[1:]} — re-run to update."
+        self.vessel_status.setText(text)
+
+    def _vessel_folder(self):
+        seg = self._segmenter()
+        if seg is None or self.result is None or not self.result.ok:
+            return None
+        folder = self.segmentation.result_dir(self.result.folder, seg.id)
+        return folder if os.path.isdir(folder) else None
+
+    def _open_vessel_folder(self):
+        folder = self._vessel_folder()
+        if folder:
+            open_in_file_manager(folder)
+
+    def _vessel_show_toggled(self, on):
+        for box in self.vessel_parts.values():
+            box.setEnabled(on)
+        self._rebuild_legend()          # Masks stays off without mask layers
+        self._render()
+
+    def _toggle_stabilized(self):
+        """S: flip between the raw and the stabilized frames."""
+        target = "raw" if self.view_combo.currentData() == "stabilized" else "stabilized"
+        self.view_combo.setCurrentIndex(self.view_combo.findData(target))
+
     def _view_changed(self):
         if self.view_combo.currentData() == "mean":
             self._stop()
@@ -2366,16 +2912,33 @@ class ReviewTab(QtWidgets.QWidget):
 
     def _stabilize_clicked(self):
         if self.proc is not None:
-            self._cancel_stabilization()
+            self._cancel_job()
             return
         burst = self._burst_path()
         if not burst or not self.analysis:
             return
         method = self._method()
-        base = stabilization_base(burst)
-        args = ["-u", "-m", "stabilize", burst, "--method", method, "--out", base]
+        args = ["-u", "-m", "stabilize", burst, "--method", method,
+                "--out", stabilization_base(burst)]
         if self.result is not None:
             args.append("--force")      # the button reads Re-run
+        self._start_job("stabilize", args, f"{method}: {os.path.basename(burst)}")
+
+    def _vessels_clicked(self):
+        if self.proc is not None:
+            self._cancel_job()
+            return
+        burst = self._burst_path()
+        seg = self._segmenter()
+        if not burst or seg is None or not (self.result and self.result.ok):
+            return
+        name = os.path.basename(os.path.normpath(burst))
+        args = ["-u", "-m", "segmentation", "run", seg.id, self.result.folder, "--burst", burst]
+        self._start_job(f"vessels:{seg.id}", args,
+                        f"finding vessels with {seg.label} in {name} ({self._method()})")
+
+    def _start_job(self, job, args, title):
+        """Run an analysis package (python -m ...) on the burst in view."""
         proc = QtCore.QProcess(self)
         proc.setProcessChannelMode(QtCore.QProcess.MergedChannels)
         env = QtCore.QProcessEnvironment.systemEnvironment()
@@ -2386,13 +2949,13 @@ class ReviewTab(QtWidgets.QWidget):
         proc.setWorkingDirectory(ANALYSIS_DIR)
         proc.readyReadStandardOutput.connect(self._proc_output)
         proc.finished.connect(self._proc_finished)
-        self.stab_log.clear()
-        self.stab_log.setVisible(True)
-        self.stab_log.appendPlainText(f"{method}: {os.path.basename(burst)}")
+        self.job_log.clear()
+        self.job_log.setVisible(True)
+        self.job_log.appendPlainText(title)
         # a separate process: the window stays responsive, and a crash in
         # the analysis can't take the recorder down with it
         self.proc = proc
-        self._run = (burst, method)
+        self._run = (self._burst_path(), self._method(), job, title)
         proc.start(sys.executable, args)
         self._update_stab_status()
 
@@ -2402,12 +2965,12 @@ class ReviewTab(QtWidgets.QWidget):
         text = bytes(self.proc.readAllStandardOutput()).decode("utf-8", "replace")
         for line in text.splitlines():
             if line.strip():
-                self.stab_log.appendPlainText(line)
+                self.job_log.appendPlainText(line)
 
     def _proc_finished(self, code, _status):
         self._proc_output()
-        burst, method = self._run
-        self.stab_log.appendPlainText("finished" if code == 0 else f"exited with code {code}")
+        burst, method = self._run[:2]
+        self.job_log.appendPlainText("finished" if code == 0 else f"exited with code {code}")
         self.proc = None
         self._run = None
         if self._burst_path() == burst and self._method() == method:
@@ -2415,10 +2978,10 @@ class ReviewTab(QtWidgets.QWidget):
         else:
             self._update_stab_status()
 
-    def _cancel_stabilization(self):
+    def _cancel_job(self):
         if self.proc is None:
             return
-        burst, method = self._run
+        burst, method, job = self._run[:3]
         self.proc.finished.disconnect(self._proc_finished)
         pid = int(self.proc.processId() or 0)
         if sys.platform == "win32" and pid:
@@ -2432,24 +2995,24 @@ class ReviewTab(QtWidgets.QWidget):
         self.proc.waitForFinished(5000)
         self.proc = None
         self._run = None
-        # a killed run can't tidy up: remove its working maps (hundreds of MB),
-        # retrying while the dying interpreter still holds them open
+        # a killed stabilization can't tidy up: remove its working maps
+        # (hundreds of MB), retrying while the dying interpreter holds them open
         name = os.path.basename(os.path.normpath(burst))
         deadline = time.time() + 10
-        for m in ("translation", method):
+        for m in (("translation", method) if job == "stabilize" else ()):
             work = os.path.join(stabilization_base(burst), m, name, "_work")
             while os.path.exists(work):
                 shutil.rmtree(work, ignore_errors=True)
                 if not os.path.exists(work) or time.time() > deadline:
                     break
                 time.sleep(0.2)
-        self.stab_log.appendPlainText("cancelled")
+        self.job_log.appendPlainText("cancelled")
         self._load_result()
 
     def shutdown(self):
         """Called when the window closes: don't leave an analysis running."""
         if self.proc is not None:
-            self._cancel_stabilization()
+            self._cancel_job()
 
     def _to_8bit(self, frame):
         if frame.dtype != np.uint16:
@@ -3755,12 +4318,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.review.refresh()
 
     def _open_folder(self):
-        if sys.platform == "win32":
-            os.startfile(self.output_dir)  # noqa: S606 - opens Explorer
-        elif sys.platform == "darwin":
-            subprocess.Popen(["open", self.output_dir])
-        else:
-            subprocess.Popen(["xdg-open", self.output_dir])
+        open_in_file_manager(self.output_dir)
 
     # ---- status bar ---------------------------------------------------------
     def _update_status(self):

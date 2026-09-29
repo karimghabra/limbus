@@ -67,6 +67,28 @@ class FieldEvaluator:
             fy += ly
         return fx, fy
 
+    def at(self, A, L, pts):
+        """The field at arbitrary points (N, 2) as (N, 2): the same value
+        dense() gives at those pixels, without building the whole map.
+        Used to carry vector annotations (centrelines) instead of images."""
+        pts = np.asarray(pts, np.float64).reshape(-1, 2)
+        A = np.asarray(A, np.float64)
+        d = pts @ A[:, :2].T + A[:, 2]
+        n = len(pts)
+        if n and L is not None and self.grid is not None and self.grid.rows and self.grid.cols:
+            g = ((pts - (self.grid.x0, self.grid.y0)) / self.grid.stride).astype(np.float32)
+            # remap's maps are images, limited to 32767 columns: fold the
+            # points into rows
+            cols = min(n, 4096)
+            rows = -(-n // cols)
+            g = np.pad(g, ((0, rows * cols - n), (0, 0)), mode="edge").reshape(rows, cols, 2)
+            gx, gy = np.ascontiguousarray(g[..., 0]), np.ascontiguousarray(g[..., 1])
+            for k in (0, 1):
+                d[:, k] += cv2.remap(np.ascontiguousarray(L[..., k], dtype=np.float32),
+                                     gx, gy, cv2.INTER_CUBIC,
+                                     borderMode=cv2.BORDER_REPLICATE).ravel()[:n]
+        return d
+
     def warp(self, img, fx, fy, interpolation=cv2.INTER_LINEAR, border=0.0):
         """output(x) = img(x + field(x)); outside the frame -> border."""
         return cv2.remap(np.ascontiguousarray(img, dtype=np.float32),
@@ -137,6 +159,13 @@ class FieldSet:
         if self._evaluator is None:
             self._evaluator = FieldEvaluator(self.shape, self.grid)
         return self._evaluator.dense(self.affine[k], self.local[k])
+
+    def at(self, i, pts):
+        """Frame i's field at points (N, 2), in (x, y) full-resolution pixels."""
+        k = self._row[int(i)]
+        if self._evaluator is None:
+            self._evaluator = FieldEvaluator(self.shape, self.grid)
+        return self._evaluator.at(self.affine[k], self.local[k], pts)
 
     def warp_frame(self, i, img, border=0.0):
         if not self.has(i) or tuple(img.shape[:2]) != self.shape:

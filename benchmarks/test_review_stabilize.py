@@ -82,7 +82,7 @@ def stabilize(name, method):
         fail.append(f"{name}/{method}: button reads {tab.stab_btn.text()!r} while running")
     while tab.proc is not None and time.time() - started < TIMEOUT_S:
         pump(0.2)
-    log = tab.stab_log.toPlainText().splitlines()
+    log = tab.job_log.toPlainText().splitlines()
     print(f"\n{name} / {method}: {time.time() - started:.0f}s, status before: {before!r}")
     print("  log tail: " + " | ".join(log[-4:]))
     print(f"  status: {tab.stab_status.text()!r}")
