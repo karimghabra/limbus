@@ -88,8 +88,10 @@ class SearchConfig:
     null_quantile: float = 0.9      # this quantile of the evidence per px of 'anti-vessels'
     null_bands: tuple = ((1.2, 2.5), (2.5, 5.0), (5.0, 10.0))   # fitted to bright ridges
     tau: float = 0.0                # data temperature; <= 0: reduced chi-square of the map
-    t_start: float = 0.3            # first temperature, as a fraction of tau * lam_vessel
-    hot_steps: float = 1.0          # annealing steps (x number of input edges) before T = 0
+    t_start: float = 0.1            # first temperature, as a fraction of tau * lam_vessel
+    hot_steps: float = 0.5          # annealing steps (x number of input edges) before T = 0
+    hopeless: float = 10.0          # a move scored worse than this (x tau * lam_vessel) is
+                                    # not re-scored while its vessels exist
     local_iters: int = 40           # gradient steps after a move
     focus_radius: float = 30.0      # a join / split / reroute re-fits the vessel within this
                                     # distance (px) of the junction; the rest stays as it was
@@ -549,13 +551,17 @@ class VesselSearch:
         vessels it involves all exist and the fixed optical density in its
         window is the same (total within 0.2 %, centroid within 0.05 px).
         Joins far away replace vessels by new ids without changing what a
-        move here sees, so their scores stay valid."""
+        move here sees, so their scores stay valid.  A hopeless move (e.g.
+        deleting a strong vessel) keeps its score while its vessels exist:
+        nothing nearby can bring it within reach."""
         c = self._cache.get(move["key"])
         if c is None:
             return None
         sig, win, r = c
         if r is not None and any(k not in self.net.edges for k in r[1][0]):
             return None
+        if r is not None and r[0] > self.cfg.hopeless * self.tau * self.cfg.lam_vessel:
+            return c            # far out of reach at any temperature the search uses
         now = self._signature(win)
         if abs(now[0] - sig[0]) > 2e-3 * max(sig[0], 1e-9) + 1e-6 or \
                 abs(now[1] - sig[1]) > 0.05 or abs(now[2] - sig[2]) > 0.05:

@@ -220,9 +220,14 @@ def cmd_consolidate(a):
     cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
     cc = _apply_sets(ConsolidateConfig(verbose=not a.quiet), a.consolidate_set)
     t = time.time()
-    out = consolidate_map(I, net, cfg, cc, prepared=P)
-    c = out.meta["consolidation"]
-    msg = f"{c['edges_before']} segments -> {c['edges_after']} vessels by matching"
+    if a.no_matching:
+        out, msg = net, f"{len(net.edges)} edges"
+    else:
+        out = consolidate_map(I, net, cfg, cc, prepared=P)
+        c = out.meta["consolidation"]
+        msg = f"{c['edges_before']} segments -> {c['edges_after']} vessels by matching"
+        if a.matched_out:
+            out.save(a.matched_out)
     if not a.no_search:
         from .search import SearchConfig, search_map
         sc = _apply_sets(SearchConfig(verbose=not a.quiet), a.search_set)
@@ -395,6 +400,9 @@ def main(argv=None):
     c.add_argument("--search-set", nargs="*", help="SearchConfig overrides key=value")
     c.add_argument("--no-search", action="store_true",
                    help="only match continuations; skip the energy search (search.py)")
+    c.add_argument("--no-matching", action="store_true",
+                   help="only the energy search, e.g. on a map already consolidated")
+    c.add_argument("--matched-out", help="also save the matched map (before the search) here")
     c.add_argument("--quiet", action="store_true")
     c.set_defaults(func=cmd_consolidate)
     ce = sub.add_parser("consolidate-eval", help="score consolidation against synthetic ground "
