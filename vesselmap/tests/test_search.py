@@ -253,11 +253,14 @@ def test_to_through_never_ends_an_edge_at_its_own_through_node():
     assert "junction" not in net.summary()["node_kinds"]
 
 
-@pytest.mark.parametrize("overlap, rk, rj", [(6, 2.5, 2.5), (15, 2.5, 2.5), (7, 4.0, 1.5),
-                                             (7, 1.5, 4.0), (25, 2.5, 2.5)])
+@pytest.mark.parametrize("overlap, rk, rj", [(6, 2.5, 2.5), (7, 4.0, 1.5), (7, 1.5, 4.0),
+                                             (15, 2.5, 2.5), (25, 2.5, 2.5)])
 def test_to_through_overlapping_ends_share_one_joint(overlap, rk, rj):
-    """However long the overlap and whatever the widths, two vessel ends
-    lying on each other become one shared joint, never mutual through nodes."""
+    """Two vessel ends lying on each other become one shared joint, never
+    mutual through nodes, whatever the widths.  A long overlap (the ends
+    would move more than about half a calibre) is left alone: the edit
+    would change what the map renders, and joining a vessel found twice is
+    the search's move."""
     from vesselmap.search import to_through
     net = VesselNetwork((200, 200))
     k = _straight(net, (60, 100), (100 if overlap > 20 else 120, 100), r=rk)
@@ -266,7 +269,7 @@ def test_to_through_overlapping_ends_share_one_joint(overlap, rk, rj):
     segs = _valid_through(net)
     assert not net.edges[k].through and not net.edges[j].through
     shared = {net.edges[k].u, net.edges[k].v} & {net.edges[j].u, net.edges[j].v}
-    assert len(shared) == 1
+    assert len(shared) == (1 if overlap < 10 else 0)
     assert len(segs.edges) == 2
 
 
@@ -656,3 +659,56 @@ def test_search_report_attributes_deletions():
     rep = search_report(net, vessels, (100, 200))
     assert rep["deleted"] == 4 and rep["deleted_true"] == 4
     assert rep["deleted_true_by"] == dict(hot=1, price=1, lam=1, phi=1, other=0), rep
+
+
+def test_to_through_refused_edits_are_undone():
+    """An edit the accept hook refuses leaves the network exactly as it was
+    (geometry, nodes and through lists), and every edit is shown to it."""
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (40, 100), (160, 100), r=2.5)
+    _straight(net, (100, 40), (100, 95.5), r=2.0)          # a branch
+    _straight(net, (10, 100.3), (46, 100.3), r=2.5)        # an overlapping piece
+    before = net.copy()
+    seen = []
+    to_through(net, 1.5, accept=lambda edges, ids, focus: seen.append(ids) or False)
+    assert len(seen) >= 2
+    assert set(net.nodes) == set(before.nodes) and set(net.edges) == set(before.edges)
+    for k, e in net.edges.items():
+        assert np.array_equal(e.ctrl, before.edges[k].ctrl) and not e.through
+        assert (e.u, e.v) == (before.edges[k].u, before.edges[k].v)
+    kept = net.copy()
+    to_through(kept, 1.5, accept=lambda edges, ids, focus: True)
+    plain = before.copy()
+    to_through(plain, 1.5)
+    assert sum(len(e.through) for e in kept.edges.values()) == \
+        sum(len(e.through) for e in plain.edges.values()) == 1
+
+
+@pytest.mark.slow
+def test_parallel_scoring_with_a_cold_compile_cache(tmp_path):
+    """Worker processes are forked from the search; torch.compile may have
+    to compile again in them, and must not wait for the parent's compile
+    workers (it hung with an empty inductor cache)."""
+    import os
+    import subprocess
+    import sys
+    code = """
+import sys, warnings; warnings.filterwarnings("ignore")
+sys.path.insert(0, %r); sys.path.insert(0, %r)
+from test_search import _scene, _edge, _line, _cfg, _vessel
+from vesselmap.search import VesselSearch
+from vesselmap.network import VesselNetwork
+I, P = _scene([_vessel(_line((-10, 60), (250, 64)), r=2.0)], (120, 240))
+net = VesselNetwork((120, 240))
+for a, b in (((0, 60.0), (70, 61.1)), ((76, 61.2), (150, 62.3)), ((150, 62.3), (239, 63.7))):
+    _edge(net, _line(a, b))
+C = VesselSearch(net, P, _cfg(workers=2))
+moves = C.all_moves()
+C._evaluate_all(moves * 3)
+print("scored", len(moves))
+""" % (os.path.dirname(os.path.dirname(os.path.dirname(__file__))), os.path.dirname(__file__))
+    env = dict(os.environ, TORCHINDUCTOR_CACHE_DIR=str(tmp_path / "inductor"))
+    out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
+                         timeout=600)
+    assert out.returncode == 0 and "scored" in out.stdout, out.stderr[-2000:]

@@ -95,7 +95,7 @@ from scipy.spatial import cKDTree
 from . import spline as sp
 from .fit import MapConfig, optimize
 from .image import Prepared, prepare
-from .network import (A_MIN, PROFILE_SPACING, R_MIN, S_MIN, Edge, VesselNetwork,
+from .network import (A_MIN, PROFILE_SPACING, R_MIN, S_MIN, Edge, Node, VesselNetwork,
                       _fit_edge_params, despike)
 from .render import NetworkModel, _cv_blur
 
@@ -143,6 +143,8 @@ class SearchConfig:
     init_iters: int = 0             # joint fit before the search (unfitted input)
     global_iters: int = 150         # joint fit of everything after the search
     attach_tol: float = 1.5         # px beyond a vessel's r + s where a branch end attaches
+    attach_max: float = 1.0         # ... unless attaching it changes NLL + prior by more than
+                                    # this (x tau * lam_vessel): the end then stays free
     through_iters: int = 40         # joint fit once branch ends sit on their parents
     calibre_window: int = 4         # profile knots the calibre prior averages over (as in
                                     # consolidation: a long vessel may taper)
@@ -1466,6 +1468,48 @@ class VesselSearch:
                          f"{self.n_evaluated} local fits")
         return dict(steps=step + 1, accepted=acc, stays=stays)
 
+    def _attach_scorer(self, log):
+        """accept() for to_through: an edit of the representation (a branch
+        end brought onto its parent, two ends made one) is scored like a
+        move: the changed vessels are fitted near the junction (the nodes
+        held where the edit put them, so shared ends stay shared) on their
+        window over the rest of the model, and the edit is kept only if it
+        then changes NLL + prior by at most attach_max * tau * lam_vessel.
+        A kept edit takes the fitted geometry and updates the rendered
+        state."""
+        limit = self.cfg.attach_max * self.tau * self.cfg.lam_vessel
+
+        def accept(before, ids, focus):
+            old = [before[k] for k in ids if k in before]
+            new_ids = [k for k in ids if k in self.net.edges]
+            new = [self.net.edges[k] for k in new_ids]
+            if not old and not new:
+                return True
+            win = self._window([edge_samples(e) for e in old + new])
+            removed = [k for k in ids if k in self.patch]
+            n0, p0 = self._local_energy(self._local(old, win, removed))
+            m_new = self._local(new, win, removed)
+            if new:
+                free = self._free(m_new, np.asarray(focus, float) - [win[0], win[1]])
+                free["node"][:] = False
+                self._fit(m_new, self.cfg.local_iters, free)
+            n1, p1 = self._local_energy(m_new)
+            d = (n1 + p1) - (n0 + p0)
+            log.append(round(d, 1))
+            if d > limit:
+                return False
+            for k, f in zip(new_ids, self._fitted_edges(m_new, win) if new else []):
+                e = self.net.edges[k]
+                e.ctrl, e.r, e.s, e.a = f.ctrl, f.r, f.s, f.a
+            for k in removed:
+                p, v = self.patch.pop(k)
+                self.V[p] -= v
+            for k, (p, v) in zip(new_ids, self._patches(m_new, win) if new else []):
+                self.patch[k] = (p, v)
+                self.V[p] += v
+            return True
+        return accept
+
     def _record(self, step, T, m, prop, d, dp):
         """move_log entry of an accepted move (before it is applied): its
         dE split into data (nll, prior), cost and Phi; for a join the
@@ -1518,7 +1562,12 @@ class VesselSearch:
             hist.append(self.anneal(0.0, 0))
             self.log(f"after the joint fit: {hist[-1]}; {len(self.net.edges)} vessels")
         E_an = self.energy_total()
-        to_through(self.net, cfg.attach_tol)
+        attach_log = []
+        to_through(self.net, cfg.attach_tol, accept=self._attach_scorer(attach_log))
+        limit = cfg.attach_max * self.tau * cfg.lam_vessel
+        refused = sum(d > limit for d in attach_log)
+        self.log(f"branch points: {len(attach_log) - refused} edits, {refused} refused "
+                 f"(they would change NLL + prior by more than {limit:.0f})")
         self.net.snap_through_nodes()
         self.global_fit(cfg.through_iters)
         E1 = self.energy_total()
@@ -1536,6 +1585,8 @@ class VesselSearch:
             vessels_before=n0, vessels_after=len(self.net.edges),
             energy_before=E0, energy_annealed=E_an, energy_after=E1, steps=hist,
             local_fits=self.n_evaluated, seconds=round(time.time() - self.t0, 1),
+            attach=dict(edits=len(attach_log) - refused, refused=refused,
+                        dE=sorted(attach_log)),
             moves=[{k: v for k, v in r.items() if k != "xy"} for r in self.move_log],
             deleted=[r for r in self.move_log if r["kind"] == "delete"])
         self.net.meta["final_nll"] = E1["nll"]
@@ -1551,40 +1602,66 @@ _SHARED = None
 def _evaluate_chunk(idx):
     """Worker: score some of the moves of the forked search state."""
     torch.set_num_threads(1)
+    try:
+        # torch.compile (render.entry_core) may recompile here; its compile
+        # workers belong to the parent and would never answer a forked child
+        import torch._inductor.config as inductor_config
+        inductor_config.compile_threads = 1
+    except Exception:
+        pass
     C, moves = _SHARED
     return [(i, C._compute(moves[i])) for i in idx]
 
 
-def _cut_slice(smp, a, p):
-    """The samples an edge keeps when end a is brought to p along its own
-    course: cut at the sample nearest p, which becomes p."""
-    i = int(np.argmin(np.linalg.norm(smp["xy"] - p, axis=1)))
+def _end_path(smp, a, p, slack=2.0):
+    """(xy, r, s, a) an edge keeps when end `a` is brought to p along its
+    own course.  Only the end stretch is looked at (arclength up to
+    |p - end| + slack from the end): the edge is cut at the sample of that
+    stretch nearest p, which becomes p, or, when that sample is the end
+    itself, extended straight to p.  None if too little would be left."""
+    xy, arc = smp["xy"], smp["s_arc"]
+    p = np.asarray(p, float)
+    i_end = 0 if a == 0 else len(xy) - 1
+    D = float(np.linalg.norm(p - xy[i_end]))
+    reach = D + slack
+    idx = np.flatnonzero(arc <= reach) if a == 0 else np.flatnonzero(arc >= arc[-1] - reach)
+    i = int(idx[np.argmin(np.linalg.norm(xy[idx] - p, axis=1))])
+    prof = [smp[k] for k in ("r", "s", "a")]
+    if i == i_end and D > 0.5:                    # extend straight to p
+        if a == 0:
+            return (np.vstack([p, xy]), *[np.r_[q[0], q] for q in prof])
+        return (np.vstack([xy, p]), *[np.r_[q, q[-1]] for q in prof])
     sl = slice(i, None) if a == 0 else slice(0, i + 1)
-    return sl, len(smp["xy"][sl]) >= 3
+    out = xy[sl].copy()
+    if len(out) < 3:
+        return None
+    out[0 if a == 0 else -1] = p
+    return (out, *[q[sl] for q in prof])
 
 
-def _move_node(net: VesselNetwork, nid, p):
+def _move_node(net: VesselNetwork, nid, p, limit):
     """Move node nid to p, bringing every edge that ends there along its own
-    course: each is cut at its sample nearest p (or extended to p) and
-    re-fitted faithfully, so no edge folds back as it would if only the node
-    moved.  Through nodes left off a cut edge (they were on the
-    cut-away stub) are dropped from its through list.  Returns (ok, the ids
-    of the edges changed, the through nodes dropped); nothing changes when
-    ok is False."""
+    course (_end_path: cut back, or extended straight) and re-fitting it
+    faithfully, so no edge folds back as it would if only the node moved.
+    Refused (nothing changes) when any of those ends is farther than
+    `limit` from p: bigger edits would change what the map renders.
+    Through nodes left off a cut edge (they were on the cut-away stub) are
+    dropped from its through list.  Returns (ok, the ids of the edges
+    changed, the through nodes dropped)."""
     inc = net.incident(nid)
     p = np.asarray(p, float)
-    cuts = []
+    paths = []
     for f, end in inc:                       # sampled before the node moves (sampling
         smp = net.sample(f, 0.5)             # syncs the ends to the nodes)
-        sl, ok = _cut_slice(smp, end, p)
-        if not ok:                           # every edge must keep enough of itself
+        if np.linalg.norm(smp["xy"][0 if end == 0 else -1] - p) > limit:
             return False, [], []
-        cuts.append((f, end, smp, sl))
+        path = _end_path(smp, end, p)
+        if path is None:                     # every edge must keep enough of itself
+            return False, [], []
+        paths.append((f, path))
     net.nodes[nid].x, net.nodes[nid].y = float(p[0]), float(p[1])
-    for f, end, smp, sl in cuts:
-        xy = smp["xy"][sl].copy()
-        xy[0 if end == 0 else -1] = p
-        net.refit_edge(f, xy, smp["r"][sl], smp["s"][sl], smp["a"][sl], faithful=True)
+    for f, path in paths:
+        net.refit_edge(f, *path, faithful=True)
     dropped = []
     for f, _ in inc:
         e = net.edges[f]
@@ -1605,6 +1682,16 @@ def _move_node(net: VesselNetwork, nid, p):
             e.info.pop("through", None)
     net._touch()
     return True, [f for f, _ in inc], dropped
+
+
+def _snapshot(net: VesselNetwork):
+    return ({k: Node(v.x, v.y, v.fixed_kind) for k, v in net.nodes.items()},
+            {k: e.copy() for k, e in net.edges.items()}, net._nid, net._eid)
+
+
+def _restore(net: VesselNetwork, snap):
+    net.nodes, net.edges, net._nid, net._eid = snap[0], snap[1], snap[2], snap[3]
+    net._touch()
 
 
 def _can_merge(net: VesselNetwork, keep, drop) -> bool:
@@ -1629,14 +1716,14 @@ def _can_merge(net: VesselNetwork, keep, drop) -> bool:
     return True
 
 
-def _merge_ends(net: VesselNetwork, keep, drop):
+def _merge_ends(net: VesselNetwork, keep, drop, limit):
     """Merge node drop into keep, if _can_merge allows it: the edges ending
-    at drop are first brought along their own course onto keep.  Through
-    lists that named drop name keep.  Returns (ok, edges changed, through
-    nodes dropped)."""
+    at drop are first brought along their own course onto keep (at most
+    `limit` px, see _move_node).  Through lists that named drop name keep.
+    Returns (ok, edges changed, through nodes dropped)."""
     if not _can_merge(net, keep, drop):
         return False, [], []
-    ok, changed, dropped = _move_node(net, drop, net.nodes[keep].xy)
+    ok, changed, dropped = _move_node(net, drop, net.nodes[keep].xy, limit)
     if not ok:
         return False, [], []
     for f_id in net.passing(drop):
@@ -1646,7 +1733,7 @@ def _merge_ends(net: VesselNetwork, keep, drop):
     return True, changed, dropped
 
 
-def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
+def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0, accept=None):
     """Branch points in the map's representation (network.py), from vessel
     ends that lie on another vessel (within its r + s + tol).  The ends are
     settled one at a time, closest contact first, each against the current
@@ -1655,9 +1742,8 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
     * continuation: the other vessel has an end lying on this vessel's
       centreline (within half their calibre, as this end lies on the
       other's) that faces this end (their outward directions oppose): the
-      vessels overlap at their ends, however long the overlap.  Both ends are brought along
-      their own course to the point midway between them and share one node,
-      a joint;
+      vessels overlap at their ends.  Both ends are brought along their own
+      course to the point midway between them and share one node, a joint;
     * side by side: the end runs (nearly) parallel to the other vessel and
       is no continuation of it: two vessels next to each other, not a branch
       point; nothing is recorded;
@@ -1667,10 +1753,23 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
       through (``info["through"]``), brought along its own course onto the
       other's centreline, or joins a through node already within 3 px.
 
+    Every edit is bounded: an end moves at most about the footprint it lies
+    in (a continuation: half the calibre + end_tol; otherwise the other
+    vessel's r + s + tol, + end_tol at its end), cut back along its end
+    stretch or extended straight (_move_node).  An end that would need more
+    stays free: this is a change of representation, and must not change
+    what the map renders (long overlaps are left to the search's joins).
+
     A vessel never attaches both its ends to the same vessel (a stub lying
     along it is no branch), no merge may make an edge end at a node it
     passes through, form a loop or touch the image border (_can_merge), and
-    ends whose through node is dropped by a later cut are settled again."""
+    ends whose through node is dropped by a later cut are settled again.
+
+    accept(edges before, ids of the edges changed or removed, the junction)
+    -> bool, if given, sees every edit and may refuse it: the edit is undone
+    and that end stays free (VesselSearch refuses edits that change the fit
+    much, see VesselSearch._attach_scorer; it may also refine the changed
+    edges' geometry)."""
     import heapq
     geo, index = {}, [None]
     node_of = lambda k, a: net.edges[k].u if a == 0 else net.edges[k].v
@@ -1722,7 +1821,7 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
                 best = (d, j, i)
         return best
 
-    heap, attached = [], {}
+    heap, attached, refused = [], {}, set()
     for k in list(net.edges):
         for a in (0, 1):
             c = contact(k, a)
@@ -1734,7 +1833,7 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
     while heap and guard < 20 * len(net.edges) + 100:
         guard += 1
         _, k, a = heapq.heappop(heap)
-        if k not in net.edges or (k, a) in attached:
+        if k not in net.edges or (k, a) in attached or (k, a) in refused:
             continue
         c = contact(k, a)
         if c is None:
@@ -1745,7 +1844,8 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
         nid = node_of(k, a)
         p, t = end_geom(k, a)
         sj = smp(j)
-        done = None
+        done, made = None, []
+        snap = _snapshot(net) if accept is not None else None
         # continuation: an end of j lies on k and faces this end
         cont = []
         sk = smp(k)
@@ -1763,38 +1863,51 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0, parallel_deg=12.0):
         if cont:
             _, b, nb, pb = min(cont)
             if _can_merge(net, nb, nid):
-                ok, ch1, dr1 = _move_node(net, nb, 0.5 * (p + pb))
+                ok, ch1, dr1 = _move_node(net, nb, 0.5 * (p + pb), lat + end_tol)
                 if ok:
-                    ok2, ch2, dr2 = _merge_ends(net, nb, nid)
+                    ok2, ch2, dr2 = _merge_ends(net, nb, nid, lat + end_tol)
                     done = (ch1 + ch2, dr1 + dr2)
                     if ok2:
-                        attached[(k, a)], attached[(j, b)] = j, k
+                        made = [((k, a), j), ((j, b), k)]
         elif abs(float(np.dot(t, sj["tan"][i]))) > cos_par:
             continue                                # side by side: no branch point
         else:
             L, sa = float(sj["s_arc"][-1]), float(sj["s_arc"][i])
+            reach = float(sj["r"][i] + sj["s"][i]) + tol      # an end moves at most this
             if min(sa, L - sa) < end_tol:           # on j's own end: share its node
-                ok, ch, dr = _merge_ends(net, net.edges[j].u if sa < 0.5 * L else net.edges[j].v, nid)
+                ok, ch, dr = _merge_ends(net, net.edges[j].u if sa < 0.5 * L else net.edges[j].v,
+                                         nid, reach + end_tol)
                 done = (ch, dr)
                 if ok:
-                    attached[(k, a)] = j
+                    made = [((k, a), j)]
             else:
                 q = sj["xy"][i]
                 ej = net.edges[j]
                 near = [x for x in ej.through if x in net.nodes and
                         np.linalg.norm(net.nodes[x].xy - q) < 3.0]
                 if near:                            # two branches leave at one point
-                    ok, ch, dr = _merge_ends(net, near[0], nid)
+                    ok, ch, dr = _merge_ends(net, near[0], nid, reach + 3.0)
                     done = (ch, dr)
                     if ok:
-                        attached[(k, a)] = j
+                        made = [((k, a), j)]
                 elif nid not in ej.through and nid not in (ej.u, ej.v) and not net.passing(nid):
-                    ok, ch, dr = _move_node(net, nid, q)
+                    ok, ch, dr = _move_node(net, nid, q, reach)
                     done = (ch, dr)
                     if ok:
                         ej.info["through"] = list(ej.through) + [nid]
                         net._touch()
-                        attached[(k, a)] = j
+                        made = [((k, a), j)]
+        if done and accept is not None:
+            gone = [x for x in snap[1] if x not in net.edges]
+            if not made or not accept(snap[1], sorted(set(done[0]) | set(gone)),
+                                      net.nodes[node_of(k, a)].xy):
+                _restore(net, snap)                 # undone: this end stays free
+                refused.add((k, a))
+                geo.clear()
+                index[0] = None
+                continue
+        for key, val in made:
+            attached[key] = val
         if done:
             ch, dr = done
             changed(set(ch) | {j})
