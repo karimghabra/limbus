@@ -245,8 +245,12 @@ def face_weight(a, b, cfg):
         D0 = max(cfg.frag_gap, near)
         taper = fm * (2.0 * D0 - d) / D0
         m_ahead = min(m_ahead, taper)
-        if np.dot(t1, v) > 0 or np.dot(t2, -v) > 0:     # not passed each other: a gap
-            m_ov = min(m_ov, taper)
+        # ends that have not passed each other (one lies ahead of the
+        # other) are a gap: tapered, blending in over a width so that
+        # the weight does not jump where they just pass
+        ahead_by = max(float(np.dot(t1, v)), float(np.dot(t2, -v)))
+        if ahead_by > 0:
+            m_ov = min(m_ov, max(taper, m_ov - ahead_by / (max(w1, w2) + 2.0)))
     m = min(1.0 - d / G, (0.5 - c12) / 1.5, max(1.0 - d / near, m_ahead, m_ov))
     return float(min(1.0, max(0.0, m) / fm))
 
@@ -322,14 +326,23 @@ def end_evidence(m: NetworkModel, hw: float, frag_len: float, entries=None):
     if len(m.e_samp) == 0:
         return [(0.0, 0.0, 0.0)] * n
     arc, Ledge = m.samples()[5:7]
-    j = m.e_samp
+    j, k = m.e_samp, m.e_edge
     w = m.weight.reshape(-1)[m.e_pix]
     v = 0.5 * w * ((1 - hw) * ent) ** 2 * m.stride ** 2
     le = torch.clamp(0.5 * Ledge, max=frag_len)
-    a, L, l = arc[j], Ledge[m.e_edge], le[m.e_edge]
-    S0 = torch.zeros(n, dtype=v.dtype).index_add(0, m.e_edge, v * (a <= l))
-    S1 = torch.zeros(n, dtype=v.dtype).index_add(0, m.e_edge, v * (L - a <= l))
-    return [(float(S0[k]), float(S1[k]), float(le[k])) for k in range(n)]
+    a, L = arc[j], Ledge[k]
+    # a vessel shorter than 2 frag_len is split in halves by sample index
+    # (the middle sample shared), not by arclength, whose rounding depends
+    # on the model the vessel is rendered in
+    r = (j - m.samp_first_t[k]).to(v.dtype)
+    n1 = (m.samp_last_t[k] - m.samp_first_t[k]).to(v.dtype)
+    h0 = torch.where(2 * r < n1, 1.0, torch.where(2 * r == n1, 0.5, 0.0)).to(v.dtype)
+    short = 0.5 * L <= frag_len
+    w0 = torch.where(short, h0, (a <= frag_len).to(v.dtype))
+    w1 = torch.where(short, 1.0 - h0, (L - a <= frag_len).to(v.dtype))
+    S0 = torch.zeros(n, dtype=v.dtype).index_add(0, k, v * w0)
+    S1 = torch.zeros(n, dtype=v.dtype).index_add(0, k, v * w1)
+    return [(float(S0[q]), float(S1[q]), float(le[q])) for q in range(n)]
 
 
 class EndGraph:
@@ -1418,7 +1431,8 @@ class VesselSearch:
                 i = int(np.argmin(dE))
                 if dE[i] >= -1e-3:
                     break
-            else:
+            T_draw = T
+            if T > 0:
                 logit = np.r_[-dE, 0.0] / T
                 p = np.exp(logit - logit.max())
                 i = int(self.rng.choice(len(p), p=p / p.sum()))
@@ -1427,12 +1441,14 @@ class VesselSearch:
                     stays += 1
                     continue
             d, m, prop, dp = res[i]
-            rec = self._record(step, T, m, prop, d, dp)
+            rec = self._record(step, T_draw, m, prop, d, dp)
             if m["kind"] == "delete":
                 self.graveyard[self._gid] = self.net.edges[m["anchor"][0]].copy()
+                rec["grave"] = self._gid
                 self._gid += 1
             elif m["kind"] == "revive":
                 del self.graveyard[m["grave"]]
+                rec["grave"] = int(m["grave"])
             ids = self.apply(prop)
             rec["new"] = [int(k) for k in ids]
             self.move_log.append(rec)
@@ -1455,7 +1471,10 @@ class VesselSearch:
         dE split into data (nll, prior), cost and Phi; for a join the
         weight of the pair it joins (a join releasing more Phi than that
         strands other ends), for a delete what the vessel explained."""
-        parts = prop[5]["parts"]
+        parts = dict(prop[5]["parts"])
+        # a cached score's correction for changes around the move (see
+        # _lookup) is a change of the data NLL alone
+        parts["nll"] += (d - dp) - (parts["nll"] + parts["prior"] + parts["cost"])
         rec = dict(step=int(step), T=round(float(T), 2), kind=m["kind"],
                    anchor=[int(k) for k in m["anchor"]], dE=round(float(d), 1),
                    nll=round(parts["nll"], 1), prior=round(parts["prior"], 1),

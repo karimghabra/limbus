@@ -576,3 +576,83 @@ def test_face_weight_gap_taper_and_mutual_overlap():
     branch_start = E((302.8, 227.3), (0.70, -0.71), 3.7)
     assert faces(parent_end, branch_start)
     assert face_weight(parent_end, branch_start, cfg) < 0.1
+
+
+def test_end_evidence_is_the_same_in_any_model():
+    """The same vessel gets the same end evidence whether it is rendered
+    alone on a window or among other vessels, and a short vessel's halves
+    never both count its middle sample."""
+    from vesselmap.render import NetworkModel
+    from vesselmap.search import end_evidence
+    rng = np.random.default_rng(0)
+    for trial in range(12):
+        L = rng.uniform(8, 55)
+        ang, c = rng.uniform(0, np.pi), rng.uniform(40, 150, 2)
+        t = np.linspace(-L / 2, L / 2, 40)
+        bend = rng.uniform(-0.02, 0.02) * t ** 2
+        arc = c + np.stack([t * np.cos(ang) - bend * np.sin(ang), t * np.sin(ang) + bend * np.cos(ang)], 1)
+        shape = (200, 300)
+        big = VesselNetwork(shape)
+        for i in range(6):
+            _edge(big, np.linspace((5, 10 + 30 * i), (295, 12 + 30 * i), 200))
+        _edge(big, arc)
+        off = np.floor(arc.min(0)) - 20
+        alone = VesselNetwork(shape)
+        _edge(alone, arc - off)
+        res = []
+        for net in (big, alone):
+            net.background = np.zeros((5, 6), np.float32)
+            net.bg_spacing = 64.0
+            m = NetworkModel(net, np.zeros(shape, np.float32), np.ones(shape, np.float32), stride=1)
+            S0, S1, l = end_evidence(m, 0.3, 30.0)[-1]
+            ent = m.vessel_entries().detach()
+            tot = float((0.5 * (0.7 * ent[m.e_edge == len(m.eids) - 1]) ** 2).sum())
+            res.append((S0, S1))
+        assert np.allclose(res[0], res[1], rtol=1e-4), (trial, res)
+        assert abs(res[1][0] + res[1][1] - tot) < 1e-3 * tot, (trial, res[1], tot)
+
+
+def test_face_weight_has_no_jump_where_ends_pass_each_other():
+    from vesselmap.search import SearchConfig, face_weight
+    cfg = SearchConfig()
+    E = lambda p, t, w: (np.array(p, float), np.array(t, float), w)
+    for w1, w2, y in ((1.0, 11.0, 9.75), (1.5, 10.0, 8.0), (1.77, 13.92, 11.0), (3.34, 8.61, 7.0)):
+        g = [face_weight(E((0, 0), (1, 0), w1), E((x, y), (-1, 0), w2), cfg) for x in (-0.01, 0.01)]
+        if None not in g:
+            assert abs(g[0] - g[1]) < 0.05, (w1, w2, y, g)
+
+
+def test_move_log_parts_add_up_and_temperature_is_the_draws():
+    H, W = 120, 240
+    I, P = _scene([_vessel(_line((-10, 60), (250, 64)), r=2.0)], (H, W))
+    net = VesselNetwork((H, W))
+    _edge(net, _line((0, 60.0), (70, 61.1)))
+    _edge(net, _line((76, 61.2), (150, 62.3)))
+    _edge(net, _line((150, 62.3), (239, 63.7)))
+    _edge(net, _line((100, 20), (130, 30)), r=1.0, a=0.02)
+    C = VesselSearch(net, P, _cfg(workers=1))
+    C.run()
+    log = C.move_log
+    assert log
+    for r in log:
+        assert abs(r["nll"] + r["prior"] + r["cost"] + r["frag"] - r["dE"]) < 0.3, r
+    T0 = C.cfg.t_start * C.tau * C.cfg.t_scale
+    assert abs(log[0]["T"] - round(T0, 2)) < 0.02 or log[0]["step"] > 0
+
+
+def test_search_report_attributes_deletions():
+    from vesselmap.synthetic import search_report
+    vessels = [_vessel(_line((10, 50), (190, 50)))]
+    xy = np.stack([np.linspace(20, 180, 81), np.full(81, 50.0)], 1).round(1).tolist()
+    base = dict(kind="delete", L=160.0, frag=0.0, xy=xy, nll=0.0, prior=0.0)
+    recs = [dict(base, dE=20.0, loss=1400.0, cost=-1380.0, grave=0),     # uphill: hot
+            dict(base, dE=-10.0, loss=500.0, cost=-1380.0, grave=1),     # below the price
+            dict(base, dE=-10.0, loss=1300.0, cost=-1380.0, grave=2),    # existence cost
+            dict(base, dE=-10.0, loss=1500.0, cost=-1380.0, frag=-200.0, grave=3),   # Phi
+            dict(base, dE=-10.0, loss=1500.0, cost=-1380.0, frag=-200.0, grave=4)]   # revived
+    net = VesselNetwork((100, 200))
+    net.meta["search"] = dict(price_per_px=6.0, tau=5.0, config=dict(lam_vessel=50.0),
+                              deleted=recs, moves=recs + [dict(kind="revive", grave=4)])
+    rep = search_report(net, vessels, (100, 200))
+    assert rep["deleted"] == 4 and rep["deleted_true"] == 4
+    assert rep["deleted_true_by"] == dict(hot=1, price=1, lam=1, phi=1, other=0), rep

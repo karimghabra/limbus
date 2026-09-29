@@ -206,27 +206,53 @@ fixed thresholds, and removes nothing. The search goes on from the matched
 vessels by minimising one explicit objective over the *structure* of the
 map:
 
-    E(M) = NLL(image | M) + prior(M) + sum_v (tau * lam_vessel + price * L_v)
+    E(M) = NLL(image | M) + prior(M) + sum_v (tau * lam_vessel + price * L_v) + Phi(M)
 
 NLL and prior are the renderer's score, with the windowed calibre prior of
-consolidation. The last term is new.
+consolidation. The rest is new: an existence cost per vessel and per px,
+and a fragmentation term Phi on vessel ends.
 
-* *A cost per vessel.* Every vessel pays `tau * lam_vessel` (`lam_vessel`
-  = 150), so two pieces of one vessel cost more than the vessel.
-  `tau` is the data temperature, the reduced chi-square of the map's
-  residual: structured misfit inflates NLL differences by about that
-  factor.
-* *A price per px of centreline*, so a vessel must explain enough of the
-  image per px to be kept. The NLL alone cannot say what is too weak to be
-  a vessel: its noise is the sensor's, and in a 12-bit frame any texture
-  ridge is overwhelmingly significant. On frame 20 the median segment
-  explains 34 NLL per px, the weakest 5 % still 7.5. So the price is set
-  by the *texture null*. Tissue texture makes bright ridges as often as
-  dark ones, and vessels are only dark. 'Anti-vessels' are therefore
+* *Existence.* Every vessel pays `tau * lam_vessel` (`lam_vessel` = 50)
+  and every px of centreline a `price`, so a vessel must explain enough of
+  the image per px to be kept. `tau` is the data temperature, the reduced
+  chi-square of the map's residual: structured misfit inflates NLL
+  differences by about that factor. The NLL alone cannot say what is too
+  weak to be a vessel: its noise is the sensor's, and in a 12-bit frame any
+  texture ridge is overwhelmingly significant. On frame 20 the median
+  segment explains 34 NLL per px, the weakest 5 % still 7.5. So the price
+  is set by the *texture null*. Tissue texture makes bright ridges as often
+  as dark ones, and vessels are only dark. 'Anti-vessels' are therefore
   fitted by the same renderer to the bright ridges of the map's residual,
   away from mapped vessels. The price is the 90th percentile of their
   evidence per px (length-weighted). A vessel that explains no more per
   px than that is not told apart from texture.
+* *Fragmentation, Phi.* A cost per vessel cannot drive consolidation.
+  Joining two pieces saves one vessel's cost, but deleting a piece saves at
+  least as much, so a cost high enough to join fragments deletes faint
+  vessels first. (An earlier version with `lam_vessel` = 150 / 500 / 1500
+  lost recall steadily as it rose, at a flat precision.) Phi instead
+  charges vessel ends that face each other: the pairs a join would try.
+  Each pair pays `g * min(om, om')`, over a maximum-weight matching of the
+  ends. The matching means an end pays once, and that at a fork or crossing
+  any buildable join pays about the same, so the data picks the partner.
+  - `om` is `lam_frag` (0.4) times the end's evidence (the signal energy
+    of its last 30 px) above the price, at most `tau * lam_cap` (400). An
+    end of texture-grade junk has `om` = 0, so gluing it onto a strong
+    vessel earns nothing.
+  - Deleting a vessel releases at most `lam_frag` of its evidence. A vessel
+    survives whenever 60 % of what it explains beyond the price exceeds
+    `tau * lam_vessel`.
+  - `g` in [0, 1] says how clearly the ends face each other. Across a gap
+    a pair counts fully up to 6 px and not at all beyond 12 px: on the
+    synthetic maps facing ends within 6 px are 63 % one vessel, 6-30 px
+    apart 38 %. Overlapping ends count only when each lies on the other's
+    line (a vessel found twice), not a branch leaving its parent near the
+    parent's end.
+  Longer gaps are still candidates, decided by the data and the existence
+  cost alone. Phi depends on the map alone, so the search samples one
+  energy, and a move's change of Phi is computed exactly on the matching
+  components it touches. The gradient fits do not see Phi (it would dim
+  fragment ends).
 * *Moves.* `join` two vessel ends into one spline: ends that met at a node,
   a bridged gap, or overlapping ends of a vessel found twice. `delete` a
   vessel; any vessel duplicating it is re-fitted to take over. `split` a
@@ -238,13 +264,16 @@ consolidation. The last term is new.
   touches. Its energy change is computed on a window, rendering only those
   vessels over the fixed rest of the model: the other vessels' optical
   density, halo included, and the background. A join, split or reroute
-  re-fits only the parameters within 30 px of the junction and scores the
-  pixels around it, so its cost does not depend on the vessel's length.
+  re-fits only the parameters within 30 px of the junction (joined vessels
+  are rebuilt faithfully elsewhere). The result is scored on the whole
+  footprint of the old and new vessels, so dE is exactly the change the
+  move makes.
 * *Search.* Rejection-free annealing. At every step every candidate move is
   scored, and one is drawn with probability proportional to exp(-dE / T),
-  staying put (dE = 0) included. A score stays cached until the optical
-  density of the other vessels in its window changes; stale scores are
-  re-fitted in worker processes. At a high temperature the search can
+  staying put (dE = 0) included. A data score is cached and corrected
+  exactly (it is linear in the other vessels' optical density) for every
+  change around it; a move is re-fitted in worker processes only when the
+  correction is large. The change of Phi is added afresh at every step. At a high temperature the search can
   leave a local minimum, for example join two pieces only after a
   duplicate between them has gone, or delete a weak vessel and later
   revive it. As T falls it becomes steepest descent, and it stops when no
@@ -252,8 +281,10 @@ consolidation. The last term is new.
   then a last greedy pass.
 * *Output.* A branch end lying on another vessel becomes a node that vessel
   passes through (`info["through"]`), as in consolidation. Every join
-  records `evidence="energy"` and its dE in `info["links"]`, and
-  `map_summary.json` holds the search's energies, temperature and price.
+  records `evidence="energy"`, its dE and the part of it due to Phi
+  (`frag`) in `info["links"]`. `map_summary.json` holds the search's
+  energies, temperature and price; `meta["search"]["moves"]` logs every
+  accepted move, split into NLL, prior, cost and Phi.
 
 **Per-frame fitting** (`fit_frame`) first aligns the map to the frame
 globally. Phase correlation between the rendered vessel image and the frame's
