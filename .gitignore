@@ -6,6 +6,8 @@ recordings/
 *.tif
 *.tiff
 *.raw
+# ...except the figures of the synthetic render study (no subject data)
+!vesselmap/render_study/figures/*.png
 
 # Python virtual environment (recreate with the command in README.md)
 venv/

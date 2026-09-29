@@ -523,6 +523,15 @@ frame fits about as well as the frame the map was built from.
   traced with kinks or along the wrong neighbour stays in pieces, and an
   unambiguous but wrong continuation at a fork is still possible where a
   branch leaves nearly straight.
+* The renderer draws each pixel from its one nearest centreline sample, as
+  a straight tube, and adds the edges. On synthetic tubes that is off by up
+  to 29 % of a vessel's peak density in a tight bend, 56 % in a hairpin and
+  94 % where a coil crosses itself. At junctions it is off by 10–26 %,
+  because overlapping tubes are counted twice. `render_study/` measures this
+  and gives closed-form fixes that stay within 1 %. **They should be
+  implemented in future annotation workflows**: in `NetworkModel`, which
+  every step uses, and in `synthetic.py`, whose ground truth double-counts
+  at branch points in the same way.
 
 ## Files
 
@@ -533,4 +542,5 @@ renderer and score · `fit.py` discovery and per-frame fitting ·
 `consolidate.py` one spline per vessel · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the
-fast ones).
+fast ones) · `render_study/` rendering accuracy study and closed-form fixes
+still to implement.
