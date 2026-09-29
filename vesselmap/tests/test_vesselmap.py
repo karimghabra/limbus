@@ -430,3 +430,35 @@ def test_fast_flow_is_measured_despite_motion_smear():
     assert fast_flow(K[::-1])["v"] < 0                   # time reversed: direction flips
     static = 0.6 + 0.02 * np.tile(pat[:S], (T, 1)) + rng.normal(0, 0.02, K.shape)
     assert not fast_flow(static)["reliable"]
+
+
+def test_synthetic_vessels_do_not_run_inside_one_another():
+    """The generator cuts an in-focus vessel where it would run along
+    another's lumen (no image can tell two vessels apart there): a branch
+    curving back into its parent ends where it meets it, while a crossing,
+    a branch leaving its parent, and a vessel out of focus stay whole."""
+    from vesselmap.synthetic import _cut_overlaps
+    x = np.arange(0.0, 200.0)
+    parent = dict(xy=np.stack([x, np.full_like(x, 100.0)], 1), r=np.full(200, 2.5), blur=1.0,
+                  amp=0.4, parent=None)
+    # leaves the parent at x = 50, bends away and comes back to run inside it from x = 120
+    t = np.arange(0.0, 150.0)
+    bx = 50 + t * 0.8
+    by = 100 - np.where(t < 50, t * 0.4, np.where(t < 88, 20 - (t - 50) * 0.53, 0.0))
+    branch = dict(xy=np.stack([bx, by], 1), r=np.full(150, 1.2), blur=1.0, amp=0.4,
+                  parent=(0, 50))
+    cross = dict(xy=np.stack([np.full(100, 30.0), np.arange(50.0, 150.0)], 1), r=np.full(100, 1.0),
+                 blur=1.0, amp=0.3)
+    blurred = dict(xy=parent["xy"] + [0, 1.0], r=np.full(200, 4.0), blur=6.0, amp=0.3)
+    out = _cut_overlaps([parent, branch, cross, blurred])
+    assert len(out) == 4
+    assert len(out[0]["xy"]) == 200 and len(out[2]["xy"]) == 100 and len(out[3]["xy"]) == 200
+    b = out[1]["xy"]
+    assert 60 < len(b) < 100, len(b)                      # cut where it comes back
+    d = np.abs(b[-1, 1] - 100.0)
+    assert d < 2.5 + 1.2 + 1.0, d                         # ... on reaching the parent's lumen
+    # a branch off the part of a parent that is cut goes too
+    p0 = branch["xy"][140]
+    child = dict(xy=p0 + np.stack([np.zeros(30), -np.arange(30.0)], 1), r=np.full(30, 1.0),
+                 blur=1.0, amp=0.3, parent=(1, 140))
+    assert len(_cut_overlaps([parent, branch, child])) == 2

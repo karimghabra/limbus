@@ -712,3 +712,83 @@ print("scored", len(moves))
     out = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True,
                          timeout=600)
     assert out.returncode == 0 and "scored" in out.stdout, out.stderr[-2000:]
+
+
+def test_relaxed_move_is_conservative_and_renders_neighbours_whole():
+    """A move scored with the vessels near it re-fitted too (relax_radius)
+    lowers E by at least its score once applied (the vessels before it are
+    re-fitted for the score as well), and the neighbours it re-fitted, which
+    reach beyond the move's window, are rendered whole."""
+    H, W = 160, 240
+    parent = _vessel(_line((-10, 100), (250, 100)), r=3.0)
+    branch = _vessel(_line((120, 100), (200, 10)), r=1.5)
+    I, P = _scene([parent, branch], (H, W))
+    net = VesselNetwork((H, W))
+    _edge(net, _line((0, 100), (117, 100), 118), r=3.0)
+    _edge(net, _line((123, 100), (239, 100), 117), r=3.0)
+    _edge(net, _line((121, 97), (200, 10), 118), r=1.5)
+    C = VesselSearch(net, P, _cfg(workers=1, relax_radius=12.0))
+    (move,) = [m for m in C.join_moves()
+               if all(C.samples(k)["xy"][:, 1].std() < 1.0 for k in m["anchor"])]
+    C.cfg.relax_radius = 0.0
+    _, plain = C._compute(move)
+    C.cfg.relax_radius = 12.0
+    rel = C._relaxed(plain[0], plain[1])
+    assert rel is not None and len(rel[0]) == 3            # the branch is re-fitted too
+    dE, prop = C._proposal(rel[0], rel[1], rel[2], rel[3][0], rel[3][1], rel[4], False, rel[5])
+    E0 = C.energy_total()["total"]
+    C.apply(prop)
+    E1 = C.energy_total()["total"]
+    assert E1 - E0 <= dE + 0.02 * abs(dE) + 5.0, (E1 - E0, dE)
+    assert len(C.net.edges) == 2
+    fresh = VesselSearch(C.net, P, _cfg(init_iters=0, workers=1))
+    assert np.abs(fresh.V - C.V).max() < 1e-3
+
+
+def test_short_end_is_extended_along_its_vessel():
+    """A trace that stops short of its vessel's end is lengthened (extend
+    moves follow the dark ridge the model leaves beyond the end) to within
+    a couple of px of the end, and no further."""
+    H, W = 120, 200
+    x = np.linspace(20, 170, 300)
+    v = dict(xy=np.stack([x, 60 + 8 * np.sin(x / 30)], 1), r=np.full(300, 1.2), blur=1.0, amp=0.3)
+    I, P = _scene([v], (H, W))
+    net = VesselNetwork((H, W))
+    keep = x < 150                                  # the trace stops 20 px short
+    _edge(net, v["xy"][keep], r=1.2, s=1.0, a=0.3)
+    C = VesselSearch(net, P, _cfg(workers=1))
+    assert any(m["kind"] == "extend" for m in C.all_moves(("extend",)))
+    C.anneal(0.0, 0, kinds=("extend", "trim"))
+    (k,) = C.net.edges
+    xy = C.samples(k)["xy"]
+    far = xy[np.argmax(xy[:, 0])]
+    assert np.linalg.norm(far - v["xy"][-1]) < 3.0, far
+    near = xy[np.argmin(xy[:, 0])]
+    assert np.linalg.norm(near - v["xy"][0]) < 3.0, near
+
+
+def test_vessels_traced_across_a_shallow_crossing_are_swapped_back():
+    """Two vessels crossing at a shallow angle, each traced into the
+    other's far half (two V-shaped traces meeting at the crossing), become
+    the two straight vessels again (swap moves)."""
+    H, W = 140, 260
+    ang = np.radians(25.0)
+    c = np.array([130.0, 70.0])
+    u1 = np.array([np.cos(ang / 2), np.sin(ang / 2)])
+    u2 = np.array([np.cos(ang / 2), -np.sin(ang / 2)])
+    t = np.linspace(-150, 150, 301)[:, None]
+    a, b = c + t * u1, c + t * u2
+    I, P = _scene([_vessel(a, r=1.3, amp=0.35), _vessel(b, r=1.3, amp=0.35)], (H, W))
+    net = VesselNetwork((H, W))
+    inside = lambda xy: xy[(xy[:, 0] >= 0) & (xy[:, 0] <= W - 1) & (xy[:, 1] >= 0) & (xy[:, 1] <= H - 1)]
+    _edge(net, inside(np.vstack([a[:151], b[151:]])), r=1.3, s=1.0, a=0.35)
+    _edge(net, inside(np.vstack([b[:151], a[151:]])), r=1.3, s=1.0, a=0.35)
+    C = VesselSearch(net, P, _cfg(workers=1))
+    assert any(m["kind"] == "swap" for m in C.all_moves(("swap",)))
+    C.anneal(0.0, 0, kinds=("swap",))
+    assert len(C.net.edges) == 2
+    for k in C.net.edges:
+        xy = C.samples(k)["xy"]
+        d = np.abs((xy - xy.mean(0)) @ np.array([-(xy[-1] - xy[0])[1], (xy[-1] - xy[0])[0]])
+                   / np.linalg.norm(xy[-1] - xy[0]))
+        assert d.max() < 2.0, d.max()                   # straight again

@@ -136,6 +136,12 @@ class SearchConfig:
                                     # fitted again, longer (a join / split / reroute also wider: a
     refine_iters: int = 150         # bend at a junction needs room to relax; the pieces it
     refine_radius: float = 60.0     # replaces were fitted for hundreds of steps)
+    relax_radius: float = 0.0       # a move still scored above 0 (below refine_below) is scored
+    relax_iters: int = 120          # again with the other vessels within this distance (px)
+    relax_below: float = 1.0        # re-fitted too, before and after alike (a branch whose
+    relax_kinds: tuple = ("join", "reroute", "delete", "split", "swap")    # parent changes, a
+                                    # crossing vessel, may have to move for the move to pay);
+                                    # relax_radius 0: off
     lr_pos: float = 0.1
     lr_prof: float = 0.03
     join_gap: float = 40.0          # largest gap bridged (px) ...
@@ -154,6 +160,9 @@ class SearchConfig:
     through_iters: int = 40         # joint fit once branch ends sit on their parents
     calibre_window: int = 4         # profile knots the calibre prior averages over (as in
                                     # consolidation: a long vessel may taper)
+    local_bg: bool = False          # a move also re-fits the background near it (a correction
+                                    # on the window, before and after alike, in closed form):
+                                    # a vessel that explains background texture can then go
     births: bool = False            # propose new vessels where the map leaves dark ridges
     birth_bands: tuple = ((0.8, 1.2), (1.2, 2.5), (2.5, 5.0), (5.0, 10.0))   # (px) of
     birth_z: float = 4.0            # the residual (ridge z above this), and faint paths
@@ -161,6 +170,9 @@ class SearchConfig:
     birth_rounds: int = 1           # greedy passes with fresh proposals after annealing
     greedy_batch: bool = True       # at T = 0 take every improving move on a window of its
                                     # own in one step (exact: they do not interact)
+    min_gain: float = 3.0           # at T = 0 a move must lower E by more than this (nats): less
+                                    # is the local fit's own noise (a trim whose end the fit
+                                    # slides back out is a re-fit, not a change)
     lam_bend: float = 0.0           # bending prior weight; 0: the map's (MapConfig)
     lam_bg: float = 0.0             # background smoothness prior weight; 0: the map's
     bg_spacing: float = 0.0         # background grid spacing (px); 0: the map's
@@ -886,9 +898,11 @@ class VesselSearch:
         y1 = int(min(self.H, math.ceil(xy[:, 1].max() + pad) + 1))
         return x0, y0, x1, y1
 
-    def _local(self, edges, win, removed):
+    def _local(self, edges, win, removed, bg=False):
         """NetworkModel of `edges` alone on the window, fitted against the
-        image minus the background and every vessel except `removed`."""
+        image minus the background and every vessel except `removed`.
+        bg: with a background correction on the window (zero to start),
+        on the map's background grid spacing, which may be fitted."""
         x0, y0, x1, y1 = win
         pad = int(math.ceil(3 * self.hs)) + 2
         X0, Y0 = max(0, x0 - pad), max(0, y0 - pad)
@@ -911,12 +925,13 @@ class VesselSearch:
             k = sub._eid
             sub._eid += 1
             sub.edges[k] = Edge(u, v, c.copy(), e.r.copy(), e.s.copy(), e.a.copy(), dict(e.info))
-        gh = int(math.ceil((y1 - y0 - 1) / BG_SPACING)) + 1
-        gw = int(math.ceil((x1 - x0 - 1) / BG_SPACING)) + 1
+        spacing = (self.net.bg_spacing or BG_SPACING) if bg else BG_SPACING
+        gh = int(math.ceil((y1 - y0 - 1) / spacing)) + 1
+        gw = int(math.ceil((x1 - x0 - 1) / spacing)) + 1
         sub.background = np.zeros((gh, gw), np.float32)
-        sub.bg_spacing = BG_SPACING
+        sub.bg_spacing = spacing
         m = NetworkModel(sub, target, self.P.weight[y0:y1, x0:x1], stride=1,
-                         bg_spacing=BG_SPACING, fit_background=False,
+                         bg_spacing=spacing, fit_background=bg,
                          image_box=(-x0, -y0, self.W - 1.0 - x0, self.H - 1.0 - y0))
         m.raw_hw.requires_grad_(False)
         m.raw_hs.requires_grad_(False)
@@ -1085,6 +1100,9 @@ class VesselSearch:
             self._fit(m_fit, iters, free)
             return self._fitted_edges(m_fit, wfit)
 
+        lbg = self.cfg.local_bg
+        bg_grid = [None]
+
         def score(new):
             win = full(new)
             m_old = self._local([self.net.edges[k] for k in old], win, old)
@@ -1092,6 +1110,11 @@ class VesselSearch:
             c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in old)
             m_new = self._local(new, win, old)
             n1, p1 = self._local_energy(m_new)
+            if lbg:                       # the best background correction for each, in closed form
+                g0, _ = self._bg_gain(m_old)
+                g1, grid = self._bg_gain(m_new)
+                n0, n1 = n0 - g0, n1 - g1
+                bg_grid[0] = grid
             c1 = sum(self.cost(e) for e in new)
             return win, m_old, m_new, dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
 
@@ -1104,18 +1127,98 @@ class VesselSearch:
             # where the first fit got
             new = fit(new, self.cfg.refine_radius, self.cfg.refine_iters)
             win, m_old, m_new, parts = score(new)
+        nb_S, relaxed = {}, False
+        if self.cfg.relax_radius > 0 and not lbg and move["kind"] in self.cfg.relax_kinds and \
+                0 < sum(parts.values()) < self.cfg.relax_below * scale:
+            rel = self._relaxed(old, new)
+            if rel is not None and sum(rel[4].values()) < sum(parts.values()):
+                old, new, win, m_old, m_new, parts, nb_S = rel[0], rel[1], rel[2], rel[3][0], \
+                    rel[3][1], rel[4], rel[5]
+                relaxed = True
         self.last_parts = parts
-        sens = self._sensitivity(m_old, m_new, win)
         # full-footprint patches are kept only for moves without a focus (few);
-        # a join / split / reroute is rendered again when it is applied
-        patches = self._patches(m_new, win) if new and focus is None else ([] if not new else None)
+        # a join / split / reroute (or a relaxed move) is rendered again when applied
+        keep = focus is None and not relaxed
+        return self._proposal(old, new, win, m_old, m_new, parts, keep, nb_S,
+                              bg_grid[0] if lbg else None)
+
+    def _proposal(self, old, new, win, m_old, m_new, parts, keep_patches=False, nb_S=None,
+                  bg=None):
+        """(dE, proposal) of a scored move (see evaluate)."""
+        sens = self._sensitivity(m_old, m_new, win)
+        patches = self._patches(m_new, win) if new and keep_patches else ([] if not new else None)
         ends = []
         for e in new:
             s = edge_samples(e, 1.0)
             ends.append([(r[5], r[1], r[2], r[3]) for r in self._end_rows(-1, s, (0.0, 0.0, 0.0))])
-        extra = dict(S=end_evidence(m_new, self.hw, self.cfg.frag_len) if new else [],
-                     ends=ends, parts=parts)
+        S = end_evidence(m_new, self.hw, self.cfg.frag_len) if new else []
+        if nb_S:                   # a relaxed neighbour's ends lie beyond the window: as they were
+            S = [nb_S.get(i, S[i]) for i in range(len(S))]
+        extra = dict(S=S, ends=ends, parts=parts)
+        if bg is not None:
+            extra["bg"] = bg
         return (sum(parts.values()), (old, new, patches, win, sens, extra))
+
+    def _relaxed(self, old, new):
+        """A move scored with the vessels near it re-fitted as well: those
+        with centreline within relax_radius (+8 px) of the old or new
+        vessels, their parameters within relax_radius of them free (the
+        old and new vessels' all), fitted for relax_iters steps before and
+        after the move alike on a window over both.  Returns (old ids and
+        the neighbours', new edges and the neighbours re-fitted, window,
+        (model before, model after), parts, {index in new: end evidence of
+        a neighbour as it was}), or None without neighbours."""
+        R = self.cfg.relax_radius
+        smp = [self.samples(k) for k in old] + [edge_samples(e) for e in new]
+        pts = np.concatenate([s["xy"] for s in smp])
+        I = self._idx()
+        if I["tree"] is None:
+            return None
+        nb = sorted({int(I["lab"][c]) for h in I["tree"].query_ball_point(pts, R + 8.0) for c in h}
+                    - set(old))
+        if not nb:
+            return None
+        tree = cKDTree(pts)
+        ext = []
+        for j in nb:
+            s = self.samples(j)
+            d, _ = tree.query(s["xy"])
+            sel = d <= R + 30.0             # a free control point moves the curve about this far
+            if sel.any():
+                ext.append(dict(xy=s["xy"][sel], r=s["r"][sel], s=s["s"][sel]))
+        win = self._window(smp + ext)
+        removed = list(old) + nb
+        nbe = [self.net.edges[j] for j in nb]
+        off = np.array([win[0], win[1]], float)
+        models = []
+        for edges in ([self.net.edges[k] for k in old] + nbe, list(new) + nbe):
+            m = self._local(edges, win, removed)
+            if len(m.eids):
+                self._fit(m, self.cfg.relax_iters, self._free_near(m, pts - off, R))
+            models.append(m)
+        m0, m1 = models
+        n0, p0 = self._local_energy(m0)
+        n1, p1 = self._local_energy(m1)
+        fitted = self._fitted_edges(m1, win)
+        c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in removed)
+        c1 = sum(self.cost(e) for e in fitted)
+        nb_S = {len(new) + q: self.endS[j] for q, j in enumerate(nb) if j in self.endS}
+        return (removed, fitted, win, (m0, m1), dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0),
+                nb_S)
+
+    @torch.no_grad()
+    def _free_near(self, m, pts, radius):
+        """As _free, for the parameters within radius of any of pts."""
+        T = cKDTree(pts)
+        near = lambda P: torch.as_tensor(T.query(P.numpy())[0] <= radius)
+        ctrl = m.ctrl_all().numpy()
+        prof = []
+        for k in range(len(m.eids)):
+            n, mp = m.edge_nctrl[k], m.edge_nprof[k]
+            c = ctrl[m.edge_ctrl_off[k]:m.edge_ctrl_off[k] + n]
+            prof.append(sp.design(n, max(mp, 2))[:mp] @ c if mp > 1 else c[:1])
+        prof = torch.as_tensor(np.concatenate(prof), dtype=torch.float32)
+        return dict(node=near(m.node_xy), inner=near(m.inner), prof=near(prof))
 
     def _focus_window(self, focus, R):
         R = R + 3 * self.hs + 4.0
@@ -1140,6 +1243,46 @@ class VesselSearch:
             prof.append(sp.design(n, max(mp, 2))[:mp] @ c if mp > 1 else c[:1])
         prof = torch.as_tensor(np.concatenate(prof), dtype=torch.float32)
         return dict(node=near(m.node_xy), inner=near(m.inner), prof=near(prof))
+
+    @torch.no_grad()
+    def _bg_gain(self, m):
+        """The background correction c (a grid on the local model's window,
+        at the map's background spacing, upsampled bicubically like the
+        background) that best explains the local model's residual under the
+        background prior, in closed form: it minimises
+        0.5 sum w (res - U c)^2 + lam_bg |second differences of c|^2, and
+        lowers NLL + prior by 0.5 b' A^-1 b (A = U'WU + 2Q, b = U'W res).
+        Returns (that decrease, c)."""
+        import torch.nn.functional as F
+        H, W = m.H, m.W
+        spacing = self.net.bg_spacing or BG_SPACING
+        gh = int(math.ceil((H - 1) / spacing)) + 1
+        gw = int(math.ceil((W - 1) / spacing)) + 1
+        n = gh * gw
+        basis = torch.eye(n, dtype=torch.float32).reshape(n, 1, gh, gw)
+        U = F.interpolate(basis, size=(H, W), mode="bicubic", align_corners=True)
+        U = U.reshape(n, -1).T.double()                          # pixels x coefficients
+        res = (m.logI - m.predict()).reshape(-1).double()
+        w = m.weight.reshape(-1).double()
+        A = U.T @ (w[:, None] * U)
+        lam = float(self.priors.get("lam_bg", MapConfig().lam_bg))
+        D = []
+        for i in range(gh):
+            for j in range(gw - 2):
+                row = torch.zeros(n, dtype=torch.float64)
+                row[i * gw + j], row[i * gw + j + 1], row[i * gw + j + 2] = 1, -2, 1
+                D.append(row)
+        for i in range(gh - 2):
+            for j in range(gw):
+                row = torch.zeros(n, dtype=torch.float64)
+                row[i * gw + j], row[(i + 1) * gw + j], row[(i + 2) * gw + j] = 1, -2, 1
+                D.append(row)
+        if D:
+            D = torch.stack(D)
+            A = A + 2 * lam * (D.T @ D)
+        b = U.T @ (w * res)
+        c = torch.linalg.solve(A + 1e-9 * torch.eye(n, dtype=torch.float64), b)
+        return float(0.5 * (b @ c)), c.reshape(gh, gw).float().numpy()
 
     def _fit(self, m, iters, free=None):
         """Adam on a local model's vessels (positions and profiles; the
@@ -1168,8 +1311,13 @@ class VesselSearch:
 
     def apply(self, proposal):
         old, new, patches, win = proposal[:4]
-        if patches is None:            # scored on win: render the new vessels there again
-            patches = self._patches(self._local(new, win, old), win)
+        if len(proposal) > 5 and "bg" in proposal[5]:
+            self._apply_bg(proposal[5]["bg"], win)
+        if patches is None:            # render the new vessels again, each on its own footprint
+            patches = []               # (a relaxed neighbour reaches beyond the move's window)
+            for e in new:
+                w = self._window([edge_samples(e)])
+                patches += self._patches(self._local([e], w, []), w)
         for k in old:
             p, v = self.patch.pop(k)
             self.V[p] -= v
@@ -1193,6 +1341,30 @@ class VesselSearch:
         self._index = None
         self._egraph = None
         return ids
+
+    def _apply_bg(self, grid, win):
+        """Add a move's background correction (its grid on the window) to
+        the background image; scores fitted against the old background
+        there are dropped."""
+        import torch.nn.functional as F
+        x0, y0, x1, y1 = win
+        g = torch.as_tensor(grid, dtype=torch.float32)
+        img = F.interpolate(g[None, None], size=(y1 - y0, x1 - x0), mode="bicubic",
+                            align_corners=True)[0, 0].numpy()
+        if not np.any(img):
+            return
+        self.B = self.B.copy()
+        self.B[y0:y1, x0:x1] += img
+        keep = {}
+        for key, out in self._cache.items():
+            if out is None:
+                keep[key] = out
+                continue
+            a0, b0, a1, b1 = out[1][3]
+            if a0 < x1 and x0 < a1 and b0 < y1 and y0 < b1:
+                continue
+            keep[key] = out
+        self._cache = keep
 
     def _ends(self):
         """Every vessel end: (eid, end, position, outward tangent, width)."""
@@ -1304,7 +1476,7 @@ class VesselSearch:
         from .render import profile_peak
         cfg = self.cfg
         R = self.P.logI - (self.B - self.optical_density())
-        zone = map_zone(self.net, self.P.shape, 1.0, 2.0)
+        zone = map_zone(self.net, self.P.shape, 0.0, 1.0)   # a centreline itself: not found again
         tmp = VesselNetwork(self.P.shape)
         for band in (cfg.birth_bands if bands is None else bands):
             seeds = detect(-R, self.P.sigma, band_scales(band, 3), z_hi=cfg.birth_z,
@@ -1380,6 +1552,226 @@ class VesselSearch:
             return [k], out
         return build
 
+    def trim_moves(self, cuts=(8.0, 16.0, 32.0)):
+        """Cut a stretch off a vessel end: where a trace runs on past its
+        vessel, into a neighbour or along texture, the rest stands alone."""
+        moves = []
+        for k in self.net.edges:
+            s = self.samples(k)
+            L = float(s["L"])
+            for end in (0, 1):
+                if end == 0 and self.net.node_kind(self.net.edges[k].u, 1) == "border" or \
+                        end == 1 and self.net.node_kind(self.net.edges[k].v, 1) == "border":
+                    continue
+                for c in cuts:
+                    if L - c < 10.0:
+                        continue
+                    at = c if end == 0 else L - c
+                    i = int(np.searchsorted(s["s_arc"], at))
+                    moves.append(dict(kind="trim", anchor=[k], key=("trim", k, end, c),
+                                      focus=s["xy"][min(i, len(s["xy"]) - 1)],
+                                      build=self._trim_builder(k, end, at)))
+        return moves
+
+    def _trim_builder(self, k, end, at):
+        def build():
+            e = self.net.edges[k]
+            s = edge_samples(e, 0.7)
+            i = int(np.searchsorted(s["s_arc"], at))
+            sl = slice(i, None) if end == 0 else slice(0, i + 1)
+            if len(s["xy"][sl]) < 4:
+                return None
+            links = _split_links(e.info.get("links", []), [s["xy"][sl]], s["xy"][min(i, len(s["xy"]) - 1)])
+            ctrl, r, s_, a = _fit_edge_params(s["xy"][sl], s["r"][sl], s["s"][sl], s["a"][sl],
+                                              e.info.get("spacing", 12.0), faithful=True)
+            return [k], [Edge(-1, -1, ctrl, r, s_, a, _with_links(e.info, links[0]))]
+        return build
+
+    def extend_moves(self, lengths=(4.0, 8.0, 16.0, 24.0), z=1.0):
+        """Lengthen a vessel end along the dark ridge the model leaves
+        unexplained beyond it (a trace that stopped short of its vessel's
+        end, or of the vessel it runs into): the ridge is followed from the
+        end (see _trace) and each length it reaches is a candidate; the
+        shortest is tried straight ahead in any case (the end's own taper
+        explains part of what lies just beyond it)."""
+        moves = []
+        ridge = self._ridge_maps()
+        for (k, end, p, t, w) in self._ends():
+            if self._border(p):
+                continue
+            path = self._trace(ridge, k, p, t, float(self.samples(k)["r"][0 if end == 0 else -1]),
+                               max(lengths), z)
+            L = 0.0 if path is None else float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
+            if L < lengths[1]:
+                path = np.asarray(p, float) + np.outer(np.linspace(0.0, lengths[1], 9), t)
+            inside = (path[:, 0] >= 0) & (path[:, 0] <= self.W - 1) & \
+                (path[:, 1] >= 0) & (path[:, 1] <= self.H - 1)
+            if not inside.all():                     # to the border, where the vessel stays open
+                n = int(np.argmin(inside))
+                a, b = path[n - 1], path[n]
+                lo = np.array([0.0, 0.0]) - a
+                hi = np.array([self.W - 1.0, self.H - 1.0]) - a
+                d = b - a
+                f = min([1.0] + [float(v) for v in np.r_[lo / np.where(d < 0, d, -1e-12),
+                                                         hi / np.where(d > 0, d, 1e-12)] if 0 <= v <= 1])
+                path = np.vstack([path[:n], a + f * d])
+            L = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
+            if L < 1.0:
+                continue
+            for c in lengths:
+                c = min(c, L)
+                moves.append(dict(kind="extend", anchor=[k], key=("extend", k, end, round(c, 1)),
+                                  focus=p, build=self._extend_builder(k, end, path, c)))
+                if c >= L:
+                    break
+        return moves
+
+    def _ridge_maps(self, sigmas=(1.0, 2.0, 4.0, 8.0)):
+        """The residual's dark ridges at a few scales: the image less the
+        model, negated and smoothed, over its robust noise level."""
+        import cv2
+        res = -(self.P.logI - (self.B - self.optical_density())).astype(np.float32)
+        out = {}
+        ok = self.P.weight > 0
+        for sg in sigmas:
+            m = cv2.GaussianBlur(res, (0, 0), sg)
+            v = m[ok]
+            noise = 1.4826 * float(np.median(np.abs(v - np.median(v)))) + 1e-9
+            out[sg] = (m, noise)
+        return out
+
+    def _trace(self, ridge, k, p, t, r, Lmax, z, step=2.0, turn=20.0):
+        """Follow the residual's dark ridge from p along t, a step at a
+        time, turning at most `turn` degrees a step, while it stays z noise
+        levels above zero (at the scale of the vessel's radius r); stops on
+        reaching another vessel.  None when not a step is taken."""
+        sg = min(ridge, key=lambda q: abs(math.log(q / max(r, 0.8))))
+        M, noise = ridge[sg]
+        H, W = M.shape
+
+        def at(q):
+            x, y = float(q[0]), float(q[1])
+            if not (0 <= x < W - 1 and 0 <= y < H - 1):
+                return -np.inf
+            x0, y0 = int(x), int(y)
+            fx, fy = x - x0, y - y0
+            return float((1 - fx) * (1 - fy) * M[y0, x0] + fx * (1 - fy) * M[y0, x0 + 1] +
+                         (1 - fx) * fy * M[y0 + 1, x0] + fx * fy * M[y0 + 1, x0 + 1])
+
+        I = self._idx()
+        pts, d = [np.asarray(p, float)], np.asarray(t, float) / (np.linalg.norm(t) + 1e-9)
+        angs = np.radians(np.linspace(-turn, turn, 5))
+        while (len(pts) - 1) * step < Lmax:
+            best, bv = None, -np.inf
+            for a in angs:
+                c, s_ = math.cos(a), math.sin(a)
+                u = np.array([c * d[0] - s_ * d[1], s_ * d[0] + c * d[1]])
+                q = pts[-1] + step * u
+                v = at(q)
+                if v > bv:
+                    best, bv = q, v
+            if best is None or bv < z * noise:
+                break
+            d = (best - pts[-1]) / step
+            pts.append(best)
+            if I["tree"] is not None:            # reached another vessel: end on it
+                hit = [c for c in I["tree"].query_ball_point(best, 2.0 + r) if int(I["lab"][c]) != k]
+                if hit:
+                    break
+        return np.array(pts) if len(pts) > 1 else None
+
+    def _extend_builder(self, k, end, path, c):
+        def build():
+            e = self.net.edges[k]
+            s = edge_samples(e, 0.7)
+            seg = np.linalg.norm(np.diff(path, axis=0), axis=1)
+            sa = np.r_[0, np.cumsum(seg)]
+            q = np.arange(0.7, min(c, sa[-1]) + 1e-6, 0.7)
+            if not len(q):
+                return None
+            ext = np.stack([np.interp(q, sa, path[:, 0]), np.interp(q, sa, path[:, 1])], 1)
+            i = 0 if end == 0 else -1
+            n = len(ext)
+            prof = [np.full(n, s[key][i]) for key in ("r", "s", "a")]
+            if end == 1:
+                xy = np.concatenate([s["xy"], ext])
+                r, s_, a = (np.concatenate([s[key], pr]) for key, pr in zip(("r", "s", "a"), prof))
+            else:
+                xy = np.concatenate([ext[::-1], s["xy"]])
+                r, s_, a = (np.concatenate([pr, s[key]]) for key, pr in zip(("r", "s", "a"), prof))
+            ctrl, r, s_, a = _fit_edge_params(xy, r, s_, a, e.info.get("spacing", 12.0),
+                                              faithful=True)
+            return [k], [Edge(-1, -1, ctrl, r, s_, a, dict(e.info))]
+        return build
+
+    def swap_moves(self, touch=1.5, max_cos=0.985):
+        """Two vessels that cross exchange their parts beyond the crossing,
+        each part going on with the one that keeps its direction (a trace
+        that switched vessels where two cross at a shallow angle, or run
+        side by side and touch)."""
+        moves = []
+        I = self._idx()
+        if I["tree"] is None or len(I["ids"]) < 2:
+            return moves
+        X, lab, idx = I["X"], I["lab"], I["idx"]
+        seen = set()
+        for k in self.net.edges:
+            s = self.samples(k)
+            best = {}                                   # (j, crossing cluster) -> closest pair
+            for i, h in enumerate(I["tree"].query_ball_point(s["xy"], touch)):
+                for c in h:
+                    j = int(lab[c])
+                    if j == k:
+                        continue
+                    d = float(np.linalg.norm(X[c] - s["xy"][i]))
+                    key = (j, int(s["s_arc"][i] // 12.0))     # one candidate per 12 px of k
+                    if key not in best or d < best[key][0]:
+                        best[key] = (d, i, int(idx[c]))
+            for (j, _), (d, i, ij) in best.items():
+                o = self.samples(j)
+                if min(s["s_arc"][i], s["L"] - s["s_arc"][i], o["s_arc"][ij],
+                       o["L"] - o["s_arc"][ij]) < 6.0:
+                    continue                            # near an end: a join or reroute
+                if abs(float(np.dot(s["tan"][i], o["tan"][ij]))) > max_cos:
+                    continue                            # one vessel traced twice, not a crossing
+                pair = (min(k, j), max(k, j), round(float(s["xy"][i][0]) / 4),
+                        round(float(s["xy"][i][1]) / 4))
+                if pair in seen:
+                    continue
+                seen.add(pair)
+                moves.append(dict(kind="swap", anchor=[k, j], key=("swap",) + pair,
+                                  focus=s["xy"][i],
+                                  build=self._swap_builder(k, s["s_arc"][i], j, o["s_arc"][ij])))
+        return moves
+
+    def _swap_builder(self, k, sk, j, sj):
+        def build():
+            A = edge_samples(self.net.edges[k], 0.7)
+            B = edge_samples(self.net.edges[j], 0.7)
+            ia = int(np.clip(np.searchsorted(A["s_arc"], sk), 1, len(A["xy"]) - 2))
+            ib = int(np.clip(np.searchsorted(B["s_arc"], sj), 1, len(B["xy"]) - 2))
+            if np.dot(_direction(A["xy"], ia), _direction(B["xy"], ib)) < 0:
+                B = _flip(B)                            # B runs the way A does
+                ib = len(B["xy"]) - 1 - ib
+            cut = lambda S, sl: {q: (v[sl] if isinstance(v, np.ndarray) else v)
+                                 for q, v in S.items()}
+            parts = [(cut(A, slice(0, ia + 1)), cut(B, slice(ib, None))),
+                     (cut(B, slice(0, ib + 1)), cut(A, slice(ia, None)))]
+            out = []
+            for head, tail in parts:
+                if len(head["xy"]) < 4 or len(tail["xy"]) < 4:
+                    return None
+                xy = np.concatenate([head["xy"], tail["xy"][1:]])
+                r, s_, a = (np.concatenate([head[q], tail[q][1:]]) for q in ("r", "s", "a"))
+                ctrl, r, s_, a = _fit_edge_params(xy, r, s_, a,
+                                                  min(self.net.edges[k].info.get("spacing", 12.0),
+                                                      self.net.edges[j].info.get("spacing", 12.0)),
+                                                  faithful=True)
+                out.append(Edge(-1, -1, ctrl, r, s_, a,
+                                _merge_info([self.net.edges[k].info, self.net.edges[j].info])))
+            return [k, j], out
+        return build
+
     def reroute_moves(self):
         """A vessel end E that touches vessel V in its interior: E continues
         into one part of V, the other part of V ends at the junction.  This
@@ -1441,9 +1833,11 @@ class VesselSearch:
                             Edge(-1, -1, c2, r2, s2, a2, _with_links(v.info, lk[1]))]
         return build
 
-    def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive", "birth")):
+    def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive", "birth", "trim",
+                               "extend", "swap")):
         gen = dict(join=self.join_moves, delete=self.delete_moves, split=self.split_moves,
-                   reroute=self.reroute_moves, revive=self.revive_moves, birth=self.birth_moves)
+                   reroute=self.reroute_moves, revive=self.revive_moves, birth=self.birth_moves,
+                   trim=self.trim_moves, extend=self.extend_moves, swap=self.swap_moves)
         return [m for k in kinds for m in gen[k]()]
 
     # ------------------------------------------------------------ driver
@@ -1479,7 +1873,8 @@ class VesselSearch:
         _SHARED = None
         self.n_evaluated += len(todo)
 
-    def anneal(self, T0, steps_hot, kinds=("join", "delete", "split", "reroute", "revive", "birth"),
+    def anneal(self, T0, steps_hot, kinds=("join", "delete", "split", "reroute", "revive", "birth",
+                                           "trim", "extend", "swap"),
                max_steps=None):
         """Rejection-free annealing.  At every step all candidate moves are
         scored (cached: only moves near the last change are re-fitted) and
@@ -1487,6 +1882,10 @@ class VesselSearch:
         current state ("stay", dE = 0) included.  T falls geometrically from
         T0 to T0 / 100 over steps_hot steps and is then 0: from there on the
         best improving move is taken until none is left."""
+        with _one_thread():
+            return self._anneal(T0, steps_hot, kinds, max_steps)
+
+    def _anneal(self, T0, steps_hot, kinds, max_steps):
         decay = 0.01 ** (1.0 / max(1, steps_hot))
         T = T0
         max_steps = max_steps or (3 * steps_hot + 100 + len(self.net.edges) + len(self.births))
@@ -1557,7 +1956,7 @@ class VesselSearch:
         pad = self.cfg.join_gap if self._phi_on() else 0.0
         taken, boxes, used = [], [], set()
         for i in np.argsort(dE, kind="stable"):
-            if dE[i] >= -1e-3 or (taken and not self.cfg.greedy_batch):
+            if dE[i] >= -max(self.cfg.min_gain, 1e-3) or (taken and not self.cfg.greedy_batch):
                 break
             prop = res[i][2]
             x0, y0, x1, y1 = prop[3]
@@ -1674,7 +2073,8 @@ class VesselSearch:
             self.log(f"after the joint fit: {hist[-1]}; {len(self.net.edges)} vessels")
         E_an = self.energy_total()
         attach_log = []
-        to_through(self.net, cfg.attach_tol, accept=self._attach_scorer(attach_log))
+        with _one_thread():
+            to_through(self.net, cfg.attach_tol, accept=self._attach_scorer(attach_log))
         limit = cfg.attach_max * self.tau * cfg.lam_vessel
         refused = sum(d > limit for d in attach_log)
         self.log(f"branch points: {len(attach_log) - refused} edits, {refused} refused "
@@ -1708,6 +2108,18 @@ class VesselSearch:
 
 
 _SHARED = None
+
+
+class _one_thread:
+    """Local models are small: torch's intra-op threads only add overhead
+    to them (tens of times slower when the cores are busy, as they are
+    while workers score moves).  The joint fits keep their threads."""
+    def __enter__(self):
+        self.n = torch.get_num_threads()
+        torch.set_num_threads(1)
+
+    def __exit__(self, *exc):
+        torch.set_num_threads(self.n)
 
 
 def _evaluate_chunk(idx):

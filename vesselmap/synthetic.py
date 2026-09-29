@@ -32,19 +32,19 @@ def make_network(rng, shape, n_trees=4, n_cross=4, n_capillary=25):
     vessels = []
     bif = []
 
-    def add_tree(start, heading, r0, blur, depth, length):
+    def add_tree(start, heading, r0, blur, depth, length, parent=None):
         xy = _smooth_path(rng, start, heading, length, wiggle=0.015)
         r = np.linspace(r0, max(0.6, 0.8 * r0), len(xy))
-        vessels.append(dict(xy=xy, r=r, blur=blur, amp=0.35 + 0.1 * rng.random()))
+        me = len(vessels)
+        vessels.append(dict(xy=xy, r=r, blur=blur, amp=0.35 + 0.1 * rng.random(), parent=parent))
         if depth <= 0 or r0 < 1.0:
             return
         for _ in range(rng.integers(1, 3)):
             i = int(rng.integers(len(xy) // 5, 4 * len(xy) // 5))
             tan = xy[min(i + 3, len(xy) - 1)] - xy[max(i - 3, 0)]
             ang = math.atan2(tan[1], tan[0]) + rng.choice([-1, 1]) * rng.uniform(0.5, 1.3)
-            bif.append(xy[i].copy())
             add_tree(xy[i], ang, max(0.7, r[i] * rng.uniform(0.45, 0.75)), blur, depth - 1,
-                     length * rng.uniform(0.4, 0.7))
+                     length * rng.uniform(0.4, 0.7), parent=(me, i))
 
     for _ in range(n_trees):
         start = (rng.uniform(0, W), rng.choice([0, H - 1]))
@@ -65,12 +65,62 @@ def make_network(rng, shape, n_trees=4, n_cross=4, n_capillary=25):
                           wiggle=0.07, corr=0.85)
         vessels.append(dict(xy=xy, r=np.full(len(xy), rng.uniform(0.6, 1.4)),
                             blur=rng.uniform(0.6, 1.5), amp=0.12 + 0.2 * rng.random()))
+    vessels = _cut_overlaps(vessels)
     for v in vessels:
+        if v.get("parent") is not None:
+            bif.append(v["xy"][0].copy())
+        v.pop("parent", None)
         inside = (v["xy"][:, 0] >= -20) & (v["xy"][:, 0] < W + 20) & \
                  (v["xy"][:, 1] >= -20) & (v["xy"][:, 1] < H + 20)
         v["xy"], v["r"] = v["xy"][inside], v["r"][inside]
     vessels = [v for v in vessels if len(v["xy"]) > 10]
     return vessels, np.array(bif).reshape(-1, 2)
+
+
+def _cut_overlaps(vessels, blur_max=2.0, run_factor=4.0, run_px=6.0, min_len=11):
+    """In-focus vessels do not run inside one another (no image, and no
+    annotator, can tell two vessels apart there).  In the order drawn (a
+    parent before its branches), a vessel is cut where its lumen starts to
+    run along an earlier in-focus vessel's for longer than a crossing would
+    (run_factor * (r1 + r2) + run_px px); its branches off the part cut go
+    too.  A branch leaving its parent (the stretch at its start) and a
+    vessel out of focus (blur >= blur_max: at another depth) are exempt."""
+    out, new_index = [], {}
+    for k, v in enumerate(vessels):
+        v = dict(v)
+        par = v.get("parent")
+        if par is not None:
+            pk, pi = par
+            if pk not in new_index or pi >= len(out[new_index[pk]]["xy"]):
+                continue                                    # its parent was cut before it
+            v["parent"] = (new_index[pk], pi)
+        cut = len(v["xy"])
+        if v["blur"] < blur_max:
+            for j, u in enumerate(out):
+                if u["blur"] >= blur_max:
+                    continue
+                d, i = cKDTree(u["xy"]).query(v["xy"])
+                reach = u["r"][i] + v["r"]
+                ov = d < reach
+                n = 0
+                while n < len(ov):
+                    if not ov[n]:
+                        n += 1
+                        continue
+                    b = n
+                    while b < len(ov) and ov[b]:
+                        b += 1
+                    departing = n == 0 and par is not None and v["parent"][0] == j
+                    if not departing and b - n > run_factor * float(reach[n:b].max()) + run_px:
+                        cut = min(cut, n)
+                        break
+                    n = b
+        if cut < min_len:
+            continue
+        v["xy"], v["r"] = v["xy"][:cut], v["r"][:cut]
+        new_index[k] = len(out)
+        out.append(v)
+    return out
 
 
 def render(vessels, shape, rng, ss=2, noise=True, bright=0.8):
