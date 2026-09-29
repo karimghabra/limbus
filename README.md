@@ -32,6 +32,16 @@ Double-click **Camera Recorder** on the Desktop, or run:
    is always at least that long. Videos are saved as `.mp4` files in the
    `recordings` folder, named by date and time.
 3. **📷 Snapshot** saves a single still image (`.png`).
+   **Stabilize the live view** (under it) holds the picture steady against
+   eye motion while you aim and focus: every frame is registered on the
+   vessels as it arrives and shown shifted back into place. It locks on
+   within about 5 s, re-locks by itself after losing the eye (blinks don't count),
+   and **Re-lock** starts afresh, centred on the view now. The status line
+   shows how many frames per second are stabilized and the current offset.
+   What is recorded is untouched: bursts and videos are always raw. Needs an
+   NVIDIA GPU with PyTorch (see *Analysis on another computer*); it keeps
+   up with every frame from full frame (32 fps) to a 60-row strip (400 fps)
+   on an RTX 3080. See `analysis/stabilize/METHODS.md` §15.
 4. **⦿ Capture burst** saves a fixed number of frames as individual
    lossless TIFFs — see *TIFF bursts* below. This is the mode to use for
    measurement: unlike video, it keeps all 12 bits.
@@ -239,6 +249,7 @@ python analysis/tests/test_synthetic.py       # translation vs known motion (CPU
 python analysis/tests/test_nonrigid_smoke.py  # non-rigid sanity checks (CPU and GPU)
 python analysis/tests/test_gpu.py             # GPU backend vs the CPU path
 python analysis/tests/test_segmentation.py    # the segmenter contract behind the vessel overlay
+python analysis/tests/test_live.py            # live stabilization vs known motion (GPU)
 ```
 
 ## Repository layout

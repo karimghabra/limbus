@@ -22,6 +22,7 @@ import shutil
 import platform
 import threading
 import subprocess
+import collections
 from datetime import datetime, timezone
 
 import numpy as np
@@ -1453,7 +1454,7 @@ def make_backend(desc):
 # ----------------------------------------------------------------------------
 
 class CameraThread(QtCore.QThread):
-    frame_ready = QtCore.pyqtSignal(np.ndarray)
+    frame_ready = QtCore.pyqtSignal(np.ndarray, int)     # preview image, frame number
     connected = QtCore.pyqtSignal(dict)
     error = QtCore.pyqtSignal(str)
     info = QtCore.pyqtSignal(str)
@@ -1477,6 +1478,8 @@ class CameraThread(QtCore.QThread):
         self.resulting_fps = 0.0
         self.latest_frame = None
         self.latest_status = {}
+        self.frame_index = 0        # frames grabbed so far, numbering them
+        self.live = None            # stabilize.live.LiveClient while the view is stabilized
 
     # ---- called from the GUI thread ----------------------------------------
     def apply(self, **settings):
@@ -1615,6 +1618,13 @@ class CameraThread(QtCore.QThread):
                         self._burst_stop.clear()
                         self._finish_burst()
 
+                # the stabilized live view: offer() never waits, so a slow or
+                # stopped stabilizer can't hold up grabbing or recording
+                self.frame_index += 1
+                live = self.live
+                if live is not None:
+                    live.offer(frame, self.frame_index)
+
                 now = time.monotonic()
                 fps_count += 1
                 if now - fps_t0 >= 1.0:
@@ -1645,7 +1655,7 @@ class CameraThread(QtCore.QThread):
                             pf, (PREVIEW_MAX_WIDTH,
                                  int(pf.shape[0] * scale)),
                             interpolation=cv2.INTER_AREA)
-                    self.frame_ready.emit(pf)
+                    self.frame_ready.emit(pf, self.frame_index)
 
         except Exception as exc:
             self.error.emit(f"Camera error:\n{exc}")
@@ -3046,6 +3056,10 @@ class ReviewTab(QtWidgets.QWidget):
 # ----------------------------------------------------------------------------
 
 class MainWindow(QtWidgets.QMainWindow):
+    # from the live stabilizer's own thread, delivered in the GUI thread
+    live_results = QtCore.pyqtSignal(list, dict)
+    live_state = QtCore.pyqtSignal(str, str)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Camera Video Recorder")
@@ -3199,6 +3213,46 @@ class MainWindow(QtWidgets.QMainWindow):
         self.snapshot_btn.clicked.connect(self._snapshot)
         self.snapshot_btn.setEnabled(False)
         side.addWidget(self.snapshot_btn)
+
+        # live stabilization: hold the preview steady against eye motion.
+        # What is recorded is untouched: bursts and videos stay raw.
+        stab_box = QtWidgets.QGroupBox("Stabilized view")
+        stab_layout = QtWidgets.QVBoxLayout(stab_box)
+        stab_row = QtWidgets.QHBoxLayout()
+        self.live_check = QtWidgets.QCheckBox("Stabilize the live view")
+        self.live_check.setToolTip(
+            "Hold the preview steady against eye motion: every frame is\n"
+            "registered on the vessels as it arrives (on the GPU) and shown\n"
+            "shifted back into place. Recording and bursts are unaffected:\n"
+            "they always save the raw frames. Needs an NVIDIA GPU with\n"
+            "PyTorch (CUDA).")
+        self.live_check.toggled.connect(self._live_toggled)
+        self.relock_btn = QtWidgets.QPushButton("Re-lock")
+        self.relock_btn.setToolTip(
+            "Lock on afresh, centred on the view now: after moving to\n"
+            "another area, say. (After losing the eye it re-locks by itself.)")
+        self.relock_btn.clicked.connect(self._live_relock)
+        self.relock_btn.setEnabled(False)
+        stab_row.addWidget(self.live_check, stretch=1)
+        stab_row.addWidget(self.relock_btn)
+        stab_layout.addLayout(stab_row)
+        self.live_status = QtWidgets.QLabel("Off")
+        self.live_status.setWordWrap(True)
+        self.live_status.setStyleSheet("color: #555555; font-size: 11px;")
+        stab_layout.addWidget(self.live_status)
+        side.addWidget(stab_box)
+        self.live = None                            # stabilize.live.LiveClient, when on
+        self._live_previews = collections.OrderedDict()   # frame number -> preview image
+        self._live_offsets = collections.OrderedDict()    # frame number -> (dx, dy, registered)
+        self._live_hold = None                      # the last registered offset
+        self._live_locked = False
+        self._live_times = collections.deque()      # when results arrived, for the rate
+        self._live_status_at = 0.0
+        self.live_results.connect(self._on_live_results)
+        self.live_state.connect(self._on_live_state)
+        if not os.path.isfile(os.path.join(ANALYSIS_DIR, "stabilize", "live.py")):
+            self.live_check.setEnabled(False)
+            self.live_status.setText("Unavailable: analysis/stabilize wasn't found beside the app.")
 
         # settings
         settings = QtWidgets.QGroupBox("Camera settings")
@@ -3503,6 +3557,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _connect_camera(self, descriptor):
         if self.recording:
             self._toggle_record()
+        # the frames may change size: the stabilizer starts again on the
+        # new camera's first frames
+        self._live_stop("Waiting for the camera…" if self.live_check.isChecked() else None)
         if self.cam_thread:
             self.cam_thread.shutdown()
         self.preview.setText(f"Connecting to {descriptor['label']}…")
@@ -3635,7 +3692,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status.setText(msg)
 
     # ---- preview ------------------------------------------------------------
-    def _show_frame(self, frame):
+    def _show_frame(self, frame, index=0):
+        """A preview image from the camera thread. Stabilized, it waits for
+        its own frame's offset (a few tens of ms) rather than being shifted
+        by an older frame's, which would add the motion in between."""
+        if self.live_check.isChecked():
+            if self.live is None:
+                self._live_start()                  # frames are here now
+            elif self._live_locked:
+                self._live_previews[index] = frame
+                if len(self._live_previews) > 16:
+                    # half a second with no offset for it: don't freeze the
+                    # view, show the newest at the last offset
+                    newest = next(reversed(self._live_previews))
+                    self._live_display(self._live_previews.pop(newest), None)
+                    self._live_previews.clear()
+                    return
+                self._live_show_ready()
+                return
+        self._display(frame)
+
+    def _display(self, frame):
         if frame.ndim == 2:
             h, w = frame.shape
             qimg = QtGui.QImage(frame.data, w, h, w,
@@ -3648,6 +3725,148 @@ class MainWindow(QtWidgets.QMainWindow):
         self.preview.setPixmap(pix.scaled(
             self.preview.size(), QtCore.Qt.KeepAspectRatio,
             QtCore.Qt.SmoothTransformation))
+
+    # ---- stabilized live view -------------------------------------------------
+    def _live_toggled(self, on):
+        if on:
+            self._live_start()
+        else:
+            self._live_stop("Off")
+
+    def _live_start(self):
+        """Start the stabilizer on the frames the camera produces now."""
+        frame = self.cam_thread.latest_frame if self.cam_thread else None
+        if frame is None:
+            self.live_status.setText("Waiting for the camera…")
+            return                                  # _show_frame starts it later
+        try:
+            if ANALYSIS_DIR not in sys.path:
+                sys.path.insert(0, ANALYSIS_DIR)
+            from stabilize import live
+            client = live.LiveClient(frame.shape[:2], frame.dtype)
+        except Exception as exc:
+            self._live_fail(f"Could not start: {exc}")
+            return
+        # a stopped client's last messages must not reach its successor's view
+        client.on_results = lambda rows, info: (
+            self.live is client and self.live_results.emit(rows, info))
+        client.on_state = lambda kind, text: (
+            self.live is client and self.live_state.emit(kind, text))
+        self._live_reset()
+        self.live = client
+        client.start()
+        self.cam_thread.live = client
+        self.live_status.setText("Starting the stabilizer on the GPU…")
+        self.live_status.setToolTip("")
+
+    def _live_reset(self):
+        self._live_previews.clear()
+        self._live_offsets.clear()
+        self._live_times.clear()
+        self._live_hold = None
+        self._live_locked = False
+
+    def _live_stop(self, text=None):
+        client, self.live = self.live, None
+        if self.cam_thread is not None:
+            self.cam_thread.live = None
+        if client is not None:
+            # stopping waits for the worker to exit: not in the GUI thread
+            threading.Thread(target=client.stop, daemon=True).start()
+        self._live_reset()
+        self.relock_btn.setEnabled(False)
+        if text is not None:
+            self.live_status.setText(text)
+
+    def _live_fail(self, text, detail=""):
+        self.live_check.blockSignals(True)
+        self.live_check.setChecked(False)
+        self.live_check.blockSignals(False)
+        self._live_stop(text)
+        self.live_status.setToolTip(detail or text)
+
+    def _live_relock(self):
+        if self.live is not None:
+            self.live.relock()
+
+    def _on_live_state(self, kind, text):
+        if self.live is None:
+            return
+        if kind == "locking":
+            self._live_locked = False
+            self.relock_btn.setEnabled(True)
+            self.live_status.setText("Locking on…" + (f"\n{text}" if text else ""))
+        elif kind == "locked":
+            self._live_locked = True
+            self._live_status_at = 0.0
+            self.live_status.setText("Locked" + (f": {text}" if text else ""))
+        elif kind == "lost":
+            self._live_locked = False
+            self.live_status.setText("Lost the eye: locking on again…")
+        elif kind == "reshape":
+            self._live_stop()                        # the frames changed size or type
+            self._live_start()
+        elif kind in ("error", "stopped"):
+            first = (text or kind).strip().splitlines()
+            self._live_fail(first[-1] if kind == "error" and len(first) > 1 else first[0], text)
+
+    def _on_live_results(self, rows, info):
+        if self.live is None:
+            return
+        now = time.monotonic()
+        for index, dx, dy, ok, conf in rows:
+            self._live_offsets[index] = (dx, dy, ok)
+            if ok:
+                self._live_hold = (dx, dy)
+            self._live_times.append(now)
+        while len(self._live_offsets) > 1024:
+            self._live_offsets.popitem(last=False)
+        while self._live_times and now - self._live_times[0] > 1.0:
+            self._live_times.popleft()
+        if self._live_locked:
+            self._live_show_ready()
+            if now - self._live_status_at > 0.5:
+                self._live_status_at = now
+                cam = self.cam_thread.measured_fps if self.cam_thread else 0.0
+                text = f"Locked · {len(self._live_times)} of {cam:.0f} fps stabilized"
+                if self._live_hold is not None:
+                    text += f"\nOffset {self._live_hold[0]:+.1f}, {self._live_hold[1]:+.1f} px"
+                if self.live.skipped:
+                    text += f" · {self.live.skipped} frames skipped (GPU busy)"
+                self.live_status.setText(text)
+
+    def _live_show_ready(self):
+        """Show the newest preview whose offset has arrived; drop older ones."""
+        for index in reversed(self._live_previews):
+            if index in self._live_offsets:
+                frame = self._live_previews[index]
+                while self._live_previews:
+                    if self._live_previews.popitem(last=False)[0] == index:
+                        break
+                self._live_display(frame, self._live_offsets[index])
+                return
+
+    def _live_display(self, frame, offset):
+        """Show a preview shifted back into place. A frame that didn't
+        register (a blink, a saccade) isn't shown: the last stabilized one
+        stays. Shifted by the last good offset instead, it would jump by as
+        much as the eye moved. offset None: no offset came in time; the
+        frame is shown at the last good one rather than freezing the view."""
+        if offset is not None and offset[2]:
+            dx, dy = offset[0], offset[1]
+        elif offset is not None:
+            return
+        elif self._live_hold is not None:
+            dx, dy = self._live_hold
+        else:
+            self._display(frame)
+            return
+        # the preview may be downscaled from the frames the offsets refer to
+        s = frame.shape[1] / self.live.shape[1] if self.live is not None else 1.0
+        m = np.float32([[1, 0, -dx * s], [0, 1, -dy * s]])
+        self._display(cv2.warpAffine(frame, m, (frame.shape[1], frame.shape[0]),
+                                     flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                                     borderValue=0))
 
     # ---- recording ----------------------------------------------------------
     def _record_pressed(self):
@@ -4419,6 +4638,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 QtWidgets.QApplication.processEvents()
                 time.sleep(0.05)
             dlg.close()
+        client, self.live = self.live, None
+        if client is not None:
+            if self.cam_thread:
+                self.cam_thread.live = None
+            client.stop()
         if self.cam_thread:
             self.cam_thread.shutdown()
         self.review.shutdown()

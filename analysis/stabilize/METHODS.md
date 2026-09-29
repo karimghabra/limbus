@@ -600,3 +600,86 @@ pass criteria, and the GPU matches the CPU there to every printed digit (the
 tables of §12 and §13 hold for both). `tests/test_gpu.py` checks the
 primitives against OpenCV, the stages on identical inputs, and the
 end-to-end agreement above.
+
+## §15 Live stabilization
+
+**What for.** A steady picture while aiming and focusing: the Camera tab's
+*Stabilize the live view* registers every frame as the camera delivers it
+and shows it shifted back into place (`live.py`). What is recorded is
+untouched — bursts and videos stay raw, and the offline methods remain the
+measurement.
+
+**Causal registration.** Offline, every frame is registered against a
+template made from the whole burst (§8). Live, only the frames seen so far
+exist, so the translation method's steps and parameters are applied one
+frame at a time: vesselness and envelope masks (§5–§6), coarse correlation
+of the masks with the template, and the half-whitened sub-pixel refinement
+(§7) started from the last position — plus, as offline, from the coarse
+estimate when that is confident and lands elsewhere, the fine stage's
+confidence deciding. The first 24 frames calibrate: they set the vesselness
+contrast and envelope threshold, the quality gate's reference statistics
+(§3; each new frame is judged against them), and the first template, chained
+and then registered once against the template the chain makes.
+
+**The template is anchored.** It is the calibration frames, kept for good,
+plus the recently registered frames, which fade (memory 64 frames). The
+recent part lets it follow the eye into tissue the calibration never saw;
+without the permanent part it drifts, because each frame's small
+registration error is learnt back into it. On frames 0–849 of `15-22-26`,
+against the offline result: a purely recent template 0.22 px at the start,
+0.41 px after 600 frames; a fixed calibration template registered only 440
+of 685 frames; anchored, 620 frames and 0.22 px throughout.
+
+**Losing and finding the eye.** Blinks and lighting jumps (frames the gate
+rejects) are not registered and don't count as losing the eye: it comes back
+from them. Clear frames that stop registering for a second do: the stream is
+calibrated again, on frames the old reference calls clear, so not on the
+blink that lost it. The new template is then registered against the last
+four templates: where it matches one, it takes that template's place in the
+reference frame, so the view doesn't jump — also after moving to another
+area and back. **Re-lock** starts a fresh reference, centred on the view.
+
+**Display.** Each preview image waits for its own frame's offset (tens of
+ms) rather than taking an older frame's, which would add the motion in
+between. A frame that didn't register isn't shown — the last stabilized one
+stays — since shifting it by the last good offset makes it jump by as far
+as the eye moved (126 px at the saccade of `15-50-52`, before this rule).
+
+**Running alongside the camera.** The stabilizer is a process of its own,
+on the GPU (§14): the recorder never loads PyTorch, and a slow or failed
+stabilizer can't hold up grabbing or recording. Frames reach it through a
+shared-memory ring of 32 frames; handing one over never waits, and if every
+slot is still in use the frame is skipped for stabilization only. It takes
+the frames that have arrived together as one batch, so when the camera is
+fast the batches grow and it keeps up at a little more latency. Before the
+first frame it runs every GPU step once on made-up frames, or the first real
+ones would wait over a second for CUDA to compile kernels and plan FFTs.
+
+**Results.** Reference bursts fed at their recorded frame rate (16-bit,
+MSB-aligned, as the camera sends them), RTX 3080; latency is from handing a
+frame over to its offset arriving:
+
+| Burst | Frames | Rate | Frames skipped | Latency median / p95 | vs offline, median / p95 |
+|---|---|---|---|---|---|
+| `15-50-52` | 1920×1200 | 32 fps | 0 | 18 / 20 ms | 0.05 / 0.11 px |
+| `15-31-37` | 1920×500 | 74 fps | 0 | 21 / 49 ms | 0.10 / 0.14 px |
+| `15-22-26` | 1920×500 (blinks) | 74 fps | 0 | 23 / 34 ms | 0.22 / 1.18 px |
+| `12-57-20` | 1920×100 | 149 fps | 0 | 23 / 46 ms | 0.00 / 0.05 px |
+| crop of `15-31-37` | 1920×200 | 200 fps | 1 of 800 | 40 / 155 ms | — |
+| crop of `15-31-37` | 1920×60 | 400 fps | 0 | 24 / 48 ms | — |
+
+On `15-22-26` it loses the eye once, around frame 880, where the offline
+method registers none of frames 850–999 either. In the app (the Camera tab
+with a camera replaying a burst, `benchmarks/test_live_view.py`), the preview
+images shown wander 30 px (median) from the first without stabilization and
+0.1 px with it at 32 fps; 8.7 → 0.10 px at 74 fps; and at 149 fps every frame
+is stabilized. Against known motion (`tests/test_live.py`): 0.063 px RMS;
+blinks not registered and no loss of lock; after moving to another area and
+back, the original reference rejoined to 0.065 px.
+
+**Limits.** Translation only (no rotation or magnification, §13). Needs an
+NVIDIA GPU; on the CPU the same steps take 130 ms per full frame. It locks
+on 3–5 s after being switched on (about 3 s to load PyTorch and warm up,
+then 24 frames). It keeps fewer frames than offline on hard bursts: 647 against 695
+on `15-22-26`, where it can't use the frames after a blink to place the
+frames before it.
