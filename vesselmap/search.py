@@ -132,6 +132,10 @@ class SearchConfig:
     local_iters: int = 40           # gradient steps after a move
     focus_radius: float = 30.0      # a join / split / reroute re-fits the vessel within this
                                     # distance (px) of the junction; the rest stays as it was
+    refine_below: float = 2.0       # a move scored within +-this (x tau * t_scale) of 0 is
+                                    # fitted again, longer (a join / split / reroute also wider: a
+    refine_iters: int = 150         # bend at a junction needs room to relax; the pieces it
+    refine_radius: float = 60.0     # replaces were fitted for hundreds of steps)
     lr_pos: float = 0.1
     lr_prof: float = 0.03
     join_gap: float = 40.0          # largest gap bridged (px) ...
@@ -150,6 +154,16 @@ class SearchConfig:
     through_iters: int = 40         # joint fit once branch ends sit on their parents
     calibre_window: int = 4         # profile knots the calibre prior averages over (as in
                                     # consolidation: a long vessel may taper)
+    births: bool = False            # propose new vessels where the map leaves dark ridges
+    birth_bands: tuple = ((0.8, 1.2), (1.2, 2.5), (2.5, 5.0), (5.0, 10.0))   # (px) of
+    birth_z: float = 4.0            # the residual (ridge z above this), and faint paths
+    birth_faint: bool = True        # traced along the residual (faint.trace_faint)
+    birth_rounds: int = 1           # greedy passes with fresh proposals after annealing
+    greedy_batch: bool = True       # at T = 0 take every improving move on a window of its
+                                    # own in one step (exact: they do not interact)
+    lam_bend: float = 0.0           # bending prior weight; 0: the map's (MapConfig)
+    lam_bg: float = 0.0             # background smoothness prior weight; 0: the map's
+    bg_spacing: float = 0.0         # background grid spacing (px); 0: the map's
     workers: int = 0                # processes scoring moves in parallel; 0: one per CPU
     seed: int = 0
     verbose: bool = True
@@ -653,11 +667,18 @@ class VesselSearch:
         self.H, self.W = P.shape
         self.net = explode(net)
         self.priors = dict(MapConfig().priors(), calibre_window=cfg.calibre_window)
+        if cfg.lam_bend > 0:
+            self.priors["lam_bend"] = cfg.lam_bend
+        if cfg.lam_bg > 0:
+            self.priors["lam_bg"] = cfg.lam_bg
+        if cfg.bg_spacing > 0 and self.net.bg_spacing != cfg.bg_spacing:
+            self.net.background, self.net.bg_spacing = None, float(cfg.bg_spacing)
         self.rng = np.random.default_rng(cfg.seed)
         self.t0 = time.time()
         self._smp = {}
         self._cache = {}
         self.graveyard = {}             # deleted vessels, which a revive move may restore
+        self.births, self._bid = {}, 0  # proposed new vessels (refresh_births)
         self._gsmp = {}
         self._gid = 0
         self._index = None
@@ -895,7 +916,8 @@ class VesselSearch:
         sub.background = np.zeros((gh, gw), np.float32)
         sub.bg_spacing = BG_SPACING
         m = NetworkModel(sub, target, self.P.weight[y0:y1, x0:x1], stride=1,
-                         bg_spacing=BG_SPACING, fit_background=False)
+                         bg_spacing=BG_SPACING, fit_background=False,
+                         image_box=(-x0, -y0, self.W - 1.0 - x0, self.H - 1.0 - y0))
         m.raw_hw.requires_grad_(False)
         m.raw_hs.requires_grad_(False)
         return m
@@ -976,12 +998,12 @@ class VesselSearch:
             return False, None
         return True, (dE + delta, prop)
 
-    def _focus_reach(self, move):
+    def _focus_reach(self, move, radius=None):
         """Radius of a move's focus window: the re-fitted stretch plus the
         widest footprint among the vessels it touches."""
         rch = max(float((self.samples(k)["r"] + 3 * self.samples(k)["s"]).max())
                   for k in move["anchor"])
-        return self.cfg.focus_radius + rch + 1.5
+        return (radius or self.cfg.focus_radius) + rch + 1.5
 
     # ------------------------------------------------------------ moves
     def evaluate(self, move):
@@ -1052,25 +1074,36 @@ class VesselSearch:
         focus = move.get("focus")
         full = lambda new: self._window([self.samples(k) for k in old] +
                                         [edge_samples(e) for e in new])
-        if focus is None or not new0:
-            wfit = full(new0) if (old or new0) else None
-        else:
-            wfit = self._focus_window(focus, self._focus_reach(move))
-        new = []
-        if new0:
-            m_fit = self._local(new0, wfit, old)
+        def fit(start, radius, iters):
+            if focus is None:
+                wfit = full(start)
+            else:
+                wfit = self._focus_window(focus, self._focus_reach(move, radius))
+            m_fit = self._local(start, wfit, old)
             free = None if focus is None else \
-                self._free(m_fit, np.asarray(focus, float) - [wfit[0], wfit[1]])
-            self._fit(m_fit, self.cfg.local_iters, free)
-            new = self._fitted_edges(m_fit, wfit)
-        win = full(new)
-        m_old = self._local([self.net.edges[k] for k in old], win, old)
-        n0, p0 = self._local_energy(m_old)
-        c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in old)
-        m_new = self._local(new, win, old)
-        n1, p1 = self._local_energy(m_new)
-        c1 = sum(self.cost(e) for e in new)
-        parts = dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
+                self._free(m_fit, np.asarray(focus, float) - [wfit[0], wfit[1]], radius)
+            self._fit(m_fit, iters, free)
+            return self._fitted_edges(m_fit, wfit)
+
+        def score(new):
+            win = full(new)
+            m_old = self._local([self.net.edges[k] for k in old], win, old)
+            n0, p0 = self._local_energy(m_old)
+            c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in old)
+            m_new = self._local(new, win, old)
+            n1, p1 = self._local_energy(m_new)
+            c1 = sum(self.cost(e) for e in new)
+            return win, m_old, m_new, dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
+
+        new = fit(new0, None, self.cfg.local_iters) if new0 else []
+        win, m_old, m_new, parts = score(new)
+        scale = self.tau * self.cfg.t_scale
+        if new and self.cfg.refine_below > 0 and \
+                -self.cfg.refine_below * scale < sum(parts.values()) < self.cfg.refine_below * scale:
+            # promising: fit again, longer (and wider around a junction), from
+            # where the first fit got
+            new = fit(new, self.cfg.refine_radius, self.cfg.refine_iters)
+            win, m_old, m_new, parts = score(new)
         self.last_parts = parts
         sens = self._sensitivity(m_old, m_new, win)
         # full-footprint patches are kept only for moves without a focus (few);
@@ -1082,7 +1115,7 @@ class VesselSearch:
             ends.append([(r[5], r[1], r[2], r[3]) for r in self._end_rows(-1, s, (0.0, 0.0, 0.0))])
         extra = dict(S=end_evidence(m_new, self.hw, self.cfg.frag_len) if new else [],
                      ends=ends, parts=parts)
-        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, win, sens, extra))
+        return (sum(parts.values()), (old, new, patches, win, sens, extra))
 
     def _focus_window(self, focus, R):
         R = R + 3 * self.hs + 4.0
@@ -1093,11 +1126,11 @@ class VesselSearch:
         return x0, y0, x1, y1
 
     @torch.no_grad()
-    def _free(self, m, f):
-        """Masks of the parameters of a local model within focus_radius of
-        the point f (window coordinates): nodes, inner control points and
-        profile knots.  The others are held fixed."""
-        rad2 = self.cfg.focus_radius ** 2
+    def _free(self, m, f, radius=None):
+        """Masks of the parameters of a local model within focus_radius (or
+        radius) of the point f (window coordinates): nodes, inner control
+        points and profile knots.  The others are held fixed."""
+        rad2 = (radius or self.cfg.focus_radius) ** 2
         near = lambda P: ((P - torch.as_tensor(f, dtype=P.dtype)) ** 2).sum(1) <= rad2
         ctrl = m.ctrl_all().numpy()
         prof = []
@@ -1259,6 +1292,47 @@ class VesselSearch:
                             smp=self._gsmp[g], build=(lambda e=e: ([], [e.copy()]))))
         return out
 
+    def refresh_births(self, bands=None):
+        """Candidate new vessels from what the map does not explain yet:
+        dark ridges of the residual away from the mapped vessels (per band
+        of widths) and faint line paths traced along it.  Each becomes a
+        birth move, fitted and scored like any other; the energy decides
+        which exist (a vessel must pay its price and cost)."""
+        from .faint import FaintConfig, map_zone, trace_faint
+        from .fit import band_scales, seeds_to_edges
+        from .ridges import detect
+        from .render import profile_peak
+        cfg = self.cfg
+        R = self.P.logI - (self.B - self.optical_density())
+        zone = map_zone(self.net, self.P.shape, 1.0, 2.0)
+        tmp = VesselNetwork(self.P.shape)
+        for band in (cfg.birth_bands if bands is None else bands):
+            seeds = detect(-R, self.P.sigma, band_scales(band, 3), z_hi=cfg.birth_z,
+                           z_lo=0.5 * cfg.birth_z, min_len=max(8.0, 2.5 * band[0]),
+                           valid=self.P.valid, exclude=zone)
+            seeds_to_edges(tmp, seeds, band)
+        if cfg.birth_faint and (bands is None or min(b[0] for b in bands) <= 1.2):
+            for t in trace_faint(R, zone, FaintConfig(verbose=False), self.P.valid):
+                xy = t["xy"]
+                n = len(xy)
+                sc = float(np.median(t["scale"]))
+                r, s_ = max(R_MIN, 0.8 * sc), max(S_MIN, 0.6 * sc)
+                ix = np.clip(np.round(xy).astype(int), 0, [self.W - 1, self.H - 1])
+                a = max(0.01, float(np.mean(-R[ix[:, 1], ix[:, 0]])) / float(profile_peak(r, s_)))
+                tmp.add_edge_dense(xy, np.full(n, r), np.full(n, s_), np.full(n, a),
+                                   info=dict(tier="birth-faint"))
+        self.births = {}
+        for k in tmp.edges:
+            e = tmp.edges[k]
+            if len(e.ctrl) >= 2:
+                self.births[self._bid] = e
+                self._bid += 1
+        self.log(f"births: {len(self.births)} proposals")
+
+    def birth_moves(self):
+        return [dict(kind="birth", anchor=[], key=("birth", b), bid=b,
+                     build=(lambda e=e: ([], [e.copy()]))) for b, e in self.births.items()]
+
     def split_moves(self):
         """Split a vessel at a sharp bend (the path may switch vessels there)."""
         cfg = self.cfg
@@ -1367,9 +1441,9 @@ class VesselSearch:
                             Edge(-1, -1, c2, r2, s2, a2, _with_links(v.info, lk[1]))]
         return build
 
-    def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive")):
+    def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive", "birth")):
         gen = dict(join=self.join_moves, delete=self.delete_moves, split=self.split_moves,
-                   reroute=self.reroute_moves, revive=self.revive_moves)
+                   reroute=self.reroute_moves, revive=self.revive_moves, birth=self.birth_moves)
         return [m for k in kinds for m in gen[k]()]
 
     # ------------------------------------------------------------ driver
@@ -1405,7 +1479,7 @@ class VesselSearch:
         _SHARED = None
         self.n_evaluated += len(todo)
 
-    def anneal(self, T0, steps_hot, kinds=("join", "delete", "split", "reroute", "revive"),
+    def anneal(self, T0, steps_hot, kinds=("join", "delete", "split", "reroute", "revive", "birth"),
                max_steps=None):
         """Rejection-free annealing.  At every step all candidate moves are
         scored (cached: only moves near the last change are re-fitted) and
@@ -1415,7 +1489,7 @@ class VesselSearch:
         best improving move is taken until none is left."""
         decay = 0.01 ** (1.0 / max(1, steps_hot))
         T = T0
-        max_steps = max_steps or (3 * steps_hot + 100)
+        max_steps = max_steps or (3 * steps_hot + 100 + len(self.net.edges) + len(self.births))
         acc, stays = {}, 0
         for step in range(max_steps):
             moves = self.all_moves(kinds)
@@ -1431,12 +1505,12 @@ class VesselSearch:
             if not res:
                 break
             dE = np.array([r[0] for r in res])
-            if T <= 0:
-                i = int(np.argmin(dE))
-                if dE[i] >= -1e-3:
-                    break
             T_draw = T
-            if T > 0:
+            if T <= 0:
+                chosen = self._batch(res, dE)
+                if not chosen:
+                    break
+            else:
                 logit = np.r_[-dE, 0.0] / T
                 p = np.exp(logit - logit.max())
                 i = int(self.rng.choice(len(p), p=p / p.sum()))
@@ -1444,31 +1518,58 @@ class VesselSearch:
                 if i == len(res):
                     stays += 1
                     continue
-            d, m, prop, dp = res[i]
-            rec = self._record(step, T_draw, m, prop, d, dp)
-            if m["kind"] == "delete":
-                self.graveyard[self._gid] = self.net.edges[m["anchor"][0]].copy()
-                rec["grave"] = self._gid
-                self._gid += 1
-            elif m["kind"] == "revive":
-                del self.graveyard[m["grave"]]
-                rec["grave"] = int(m["grave"])
-            ids = self.apply(prop)
-            rec["new"] = [int(k) for k in ids]
-            self.move_log.append(rec)
-            if m["kind"] in ("join", "reroute") and ids:
-                e = self.net.edges[ids[0]]
-                e.info["links"] = list(e.info.get("links", [])) + [dict(
-                    kind=m["kind"], evidence="energy", dE=round(float(d), 1),
-                    frag=round(float(dp), 1), xy=[round(float(v), 1) for v in m["focus"]])]
-            acc[m["kind"]] = acc.get(m["kind"], 0) + 1
+                chosen = [i]
+            for i in chosen:
+                d, m, prop, dp = res[i]
+                rec = self._record(step, T_draw, m, prop, d, dp)
+                if m["kind"] == "delete":
+                    self.graveyard[self._gid] = self.net.edges[m["anchor"][0]].copy()
+                    rec["grave"] = self._gid
+                    self._gid += 1
+                elif m["kind"] == "revive":
+                    del self.graveyard[m["grave"]]
+                    rec["grave"] = int(m["grave"])
+                elif m["kind"] == "birth":
+                    del self.births[m["bid"]]
+                ids = self.apply(prop)
+                rec["new"] = [int(k) for k in ids]
+                self.move_log.append(rec)
+                if m["kind"] in ("join", "reroute") and ids:
+                    e = self.net.edges[ids[0]]
+                    e.info["links"] = list(e.info.get("links", [])) + [dict(
+                        kind=m["kind"], evidence="energy", dE=round(float(d), 1),
+                        frag=round(float(dp), 1), xy=[round(float(v), 1) for v in m["focus"]])]
+                acc[m["kind"]] = acc.get(m["kind"], 0) + 1
             if self.cfg.verbose and (step % 25 == 0):
                 G = self._graph()
-                self.log(f"step {step}: T = {T:.1f}, {len(res)} moves, took {m['kind']} "
-                         f"(dE = {d:.0f}, of which Phi {dp:.0f}); {len(self.net.edges)} vessels; "
-                         f"Phi {G.total:.0f} ({G.matched} matched of {G.n_facing} facing pairs); "
-                         f"{self.n_evaluated} local fits")
+                self.log(f"step {step}: T = {T:.1f}, {len(res)} moves, took {len(chosen)} "
+                         f"({m['kind']}, dE = {d:.0f}, of which Phi {dp:.0f}); "
+                         f"{len(self.net.edges)} vessels; Phi {G.total:.0f} ({G.matched} "
+                         f"matched of {G.n_facing} facing pairs); {self.n_evaluated} local fits")
         return dict(steps=step + 1, accepted=acc, stays=stays)
+
+    def _batch(self, res, dE):
+        """At T = 0: the improving moves to take in one step, best first,
+        each only if its window (padded by join_gap while Phi is on, as Phi
+        couples ends that far apart) overlaps no window taken before it and
+        it touches no vessel taken before.  Moves on disjoint windows do not
+        interact, so their scores add exactly."""
+        pad = self.cfg.join_gap if self._phi_on() else 0.0
+        taken, boxes, used = [], [], set()
+        for i in np.argsort(dE, kind="stable"):
+            if dE[i] >= -1e-3 or (taken and not self.cfg.greedy_batch):
+                break
+            prop = res[i][2]
+            x0, y0, x1, y1 = prop[3]
+            box = (x0 - pad, y0 - pad, x1 + pad, y1 + pad)
+            ids = set(prop[0])
+            if ids & used or any(box[0] < b[2] and b[0] < box[2] and box[1] < b[3] and b[1] < box[3]
+                                 for b in boxes):
+                continue
+            taken.append(int(i))
+            boxes.append(box)
+            used |= ids
+        return taken
 
     def _attach_scorer(self, log):
         """accept() for to_through: an edit of the representation (a branch
@@ -1553,14 +1654,22 @@ class VesselSearch:
                  f"Phi {E0['frag']:.0f}: {E0['matched_pairs']} matched of "
                  f"{E0['facing_pairs']} facing pairs)")
         T0 = cfg.t_start * self.tau * cfg.t_scale
+        if cfg.births:
+            self.refresh_births()
         hist = [self.anneal(T0, max(10, int(cfg.hot_steps * n0)))]
         self.log(f"annealed: {hist[-1]}; {len(self.net.edges)} vessels")
+        for _ in range(cfg.birth_rounds if cfg.births else 0):
+            self.refresh_births()               # what the map still leaves unexplained
+            hist.append(self.anneal(0.0, 0))
+            self.log(f"with fresh births: {hist[-1]}; {len(self.net.edges)} vessels")
         if cfg.global_iters > 0:
             phi = self._graph().total
             self.global_fit(cfg.global_iters)
             # the fits do not see Phi (in the gradient it would dim the
             # ends of fragments), so it may jump here
             self.log(f"joint fit: Phi {phi:.0f} -> {self._graph().total:.0f}")
+            if cfg.births:
+                self.refresh_births()
             hist.append(self.anneal(0.0, 0))
             self.log(f"after the joint fit: {hist[-1]}; {len(self.net.edges)} vessels")
         E_an = self.energy_total()

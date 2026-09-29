@@ -58,16 +58,19 @@ def profile(d, r, s):
     return (0.5 * (torch.erf((rr - dd) / ss) + torch.erf((rr + dd) / ss)) * w).sum(-1)
 
 
-def _entry_core(xy, C, T, R, S, A, arc, Le):
+def _entry_core(xy, C, T, R, S, A, arc, Le, O0, O1):
     """Optical density contributed by one (pixel, edge) pair (sharp core of
-    the PSF; the halo is applied to the whole vessel image, see predict)."""
+    the PSF; the halo is applied to the whole vessel image, see predict).
+    A vessel fades out at its ends, except at an open end (O0 / O1 = 1: an
+    end on the image border, where the vessel runs on out of the image)."""
     dv = xy - C
     u = (dv * T).sum(1)
     d = (dv[:, 0] * T[:, 1] - dv[:, 1] * T[:, 0]).abs()
     along = arc + u
     ss = SQRT2 * S
-    taper = 0.25 * torch.erfc(-along / ss) * torch.erfc((along - Le) / ss)
-    return A * profile(d, R, S) * taper
+    t0 = O0 + (1 - O0) * 0.5 * torch.erfc(-along / ss)
+    t1 = O1 + (1 - O1) * 0.5 * torch.erfc((along - Le) / ss)
+    return A * profile(d, R, S) * t0 * t1
 
 
 _CORE = None
@@ -85,7 +88,7 @@ def entry_core(*args):
             try:
                 cc = torch.compile(_entry_core, dynamic=True)
                 t = [torch.zeros(4, 2), torch.zeros(4, 2), torch.ones(4, 2) / SQRT2] + \
-                    [torch.ones(4) for _ in range(5)]
+                    [torch.ones(4) for _ in range(5)] + [torch.zeros(4), torch.zeros(4)]
                 t[3].requires_grad_(True)
                 cc(*t).sum().backward()
                 _CORE = cc
@@ -175,10 +178,15 @@ class NetworkModel(torch.nn.Module):
     def __init__(self, net: VesselNetwork, logI: np.ndarray, weight: np.ndarray,
                  stride: int = 1, sample_spacing: float = 0.75,
                  bg_spacing: float = 64.0, ref: VesselNetwork | None = None,
-                 fit_background: bool = True):
+                 fit_background: bool = True, image_box=None, open_px: float = 1.0):
         super().__init__()
         self.net = net
         self.H, self.W = logI.shape
+        # the image's bounds in this model's frame (a model of a crop of the
+        # image is told them): a vessel end within open_px of them runs on
+        # out of the image, and is not faded out
+        self.image_box = image_box if image_box is not None else (0.0, 0.0, self.W - 1.0, self.H - 1.0)
+        self.open_px = float(open_px)
         self.stride = int(stride)
         self.sample_spacing = sample_spacing
         self.logI = torch.as_tensor(logI, dtype=torch.float32)
@@ -301,13 +309,14 @@ class NetworkModel(torch.nn.Module):
         g = torch.tensor(g0, requires_grad=True)
         target = torch.tensor(img, dtype=torch.float32)
         opt = torch.optim.Adam([g], lr=0.01)
-        for _ in range(60):
-            opt.zero_grad()
-            up = F.interpolate(g[None, None], size=(self.H, self.W), mode="bicubic",
-                               align_corners=True)[0, 0]
-            loss = ((up - target) ** 2).mean()
-            loss.backward()
-            opt.step()
+        with torch.enable_grad():                   # also when built under no_grad
+            for _ in range(60):
+                opt.zero_grad()
+                up = F.interpolate(g[None, None], size=(self.H, self.W), mode="bicubic",
+                                   align_corners=True)[0, 0]
+                loss = ((up - target) ** 2).mean()
+                loss.backward()
+                opt.step()
         return g.detach().numpy()
 
     def background(self):
@@ -378,6 +387,16 @@ class NetworkModel(torch.nn.Module):
                                         else np.zeros(0, int), dtype=torch.long)
         self.samp_first_t = torch.tensor(self.samp_first, dtype=torch.long)
         self.samp_last_t = torch.tensor(self.samp_last, dtype=torch.long)
+        x0, y0, x1, y1 = self.image_box
+        b = self.open_px
+        at_border = lambda p: float(p[0] <= x0 + b or p[1] <= y0 + b or p[0] >= x1 - b or p[1] >= y1 - b)
+        o0, o1 = [], []
+        for k in range(len(self.eids)):
+            c = ctrl[self.edge_ctrl_off[k]:self.edge_ctrl_off[k] + self.edge_nctrl[k]]
+            o0.append(at_border(c[0]))
+            o1.append(at_border(c[-1]))
+        self.edge_open0 = torch.tensor(o0, dtype=torch.float32)
+        self.edge_open1 = torch.tensor(o1, dtype=torch.float32)
         self._associate()
         self._associate_through()
 
@@ -468,8 +487,9 @@ class NetworkModel(torch.nn.Module):
         j = self.e_samp
         if len(j) == 0:
             return torch.zeros(0)
-        return entry_core(self.e_xy, C[j], T[j], R[j], S[j], A[j], arc[j],
-                          Ledge[self.samp_edge_t[j]])
+        k = self.samp_edge_t[j]
+        return entry_core(self.e_xy, C[j], T[j], R[j], S[j], A[j], arc[j], Ledge[k],
+                          self.edge_open0[k], self.edge_open1[k])
 
     def vessel_image(self, entries=None):
         m = self.vessel_entries() if entries is None else entries

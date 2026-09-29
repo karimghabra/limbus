@@ -273,6 +273,183 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
                 spurious_len=round(float(elen[spurious].sum() * spacing), 1))
 
 
+def _true_runs(vessels, shape, margin=2.0, visible=False):
+    """Each true vessel's in-image runs: (vessel index, points 1 px apart,
+    radius per point).  A vessel leaving the image and coming back is two
+    runs: no map can join them.  visible: also keep the stretches outside
+    the image whose body still shows in it (within r + 3 blur of the
+    border)."""
+    H, W = shape
+    out = []
+    for k, v in enumerate(vessels):
+        xy = np.asarray(v["xy"], float)
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        s_ = np.r_[0, np.cumsum(seg)]
+        q = np.arange(0, s_[-1], 1.0)
+        p = np.stack([np.interp(q, s_, xy[:, 0]), np.interp(q, s_, xy[:, 1])], 1)
+        r = np.interp(q, s_, v["r"])
+        m = -(r + 3.0 * v.get("blur", 0.0)) if visible else np.full(len(p), margin)
+        ok = (p[:, 0] >= m) & (p[:, 0] < W - 1 - m + 1e-9) & \
+             (p[:, 1] >= m) & (p[:, 1] < H - 1 - m + 1e-9) if visible else \
+            (p[:, 0] >= margin) & (p[:, 0] < W - margin) & \
+            (p[:, 1] >= margin) & (p[:, 1] < H - margin)
+        idx = np.flatnonzero(ok)
+        for run in np.split(idx, np.flatnonzero(np.diff(idx) > 1) + 1):
+            if len(run) >= 2:
+                out.append((k, p[run], r[run]))
+    return out
+
+
+def truth_network(vessels, shape):
+    """The ground truth as a map: one edge per run of every vessel that
+    shows in the image (its true centreline, radius, blur and amplitude;
+    the centreline may run just outside the image where the vessel's body
+    still shows in it), no branch points."""
+    from .network import VesselNetwork
+    net = VesselNetwork(shape)
+    net.meta["optics"] = dict(halo_weight=0.02, halo_sigma=3.0)
+    for k, p, r in _true_runs(vessels, shape, visible=True):
+        if len(p) < 4:
+            continue
+        v = vessels[k]
+        n = len(p)
+        net.add_edge_dense(p, r, np.full(n, v["blur"]), np.full(n, v["amp"]),
+                           info=dict(true_vessel=int(k)), faithful=True)
+    return net
+
+
+def resolution_report(net, vessels, shape, tol_min=1.5, tol_frac=0.5, min_frac=0.97,
+                      slack=2.0, min_len=10.0, margin=2.0):
+    """Whether a map resolves the scene exactly: every true vessel one
+    spline, and nothing else.
+
+    The units are the in-image runs of the true vessels (a vessel leaving
+    the image and coming back is two).  A run's centreline (1 px apart),
+    less the stretch at either end that lies inside another vessel (a
+    branch starts on its parent's centreline, where either may be traced),
+    is compared with the edge covering most of it, point by point within
+    tol = max(tol_min, tol_frac * max(r, blur)) (a blurred vessel's
+    centreline is known less precisely):
+
+    * cover: the fraction of the run's points that edge comes within tol of
+    * own: the fraction of that edge's length in the image (beyond margin)
+      within tol of this vessel, less a stretch at either end lying inside
+      another vessel (where one vessel ends in another's lumen, the image
+      cannot say where)
+
+    A run is resolved when both are at least min_frac (or miss at most
+    slack px) and its edge is the best edge of no other vessel's run.  Edges that are no run's best edge are extra
+    (fragments, duplicates, spurious, mixed pieces), unless they trace a
+    run too short to be required (under min_len px).  exact: every
+    required run resolved and no extra edge."""
+    H, W = shape
+    eids = list(net.edges)
+    esmp = {}
+    for k in eids:
+        xy = net.sample(k, 1.0)["xy"]
+        inn = (xy[:, 0] >= margin) & (xy[:, 0] < W - margin) & \
+              (xy[:, 1] >= margin) & (xy[:, 1] < H - margin)
+        esmp[k] = (xy, xy[inn])
+    etree = {k: cKDTree(esmp[k][0]) for k in eids}
+    runs = _true_runs(vessels, shape, margin)
+    vpts = {}
+    for k, p, r in runs:
+        P, R = vpts.get(k, (np.zeros((0, 2)), np.zeros(0)))
+        vpts[k] = (np.vstack([P, p]), np.r_[R, r])
+    vtree = {k: cKDTree(P) for k, (P, _) in vpts.items()}
+
+    blur = {k: float(vessels[k].get("blur", 0.0)) for k in vpts}
+    tol_of = lambda k, r: np.maximum(tol_min, tol_frac * np.maximum(r, blur[k]))
+
+    def inside_others(xy, k):
+        """Per sample, the half-width r + blur + 1 of another vessel (than
+        k) whose footprint it lies in (0: none)."""
+        out = np.zeros(len(xy))
+        for j, (Pj, Rj) in vpts.items():
+            if j == k:
+                continue
+            fw = Rj + blur[j] + 1.0
+            d, i = vtree[j].query(xy, distance_upper_bound=float(fw.max()) + 1.0)
+            hit = np.isfinite(d)
+            h = np.flatnonzero(hit)
+            inn = d[hit] <= fw[i[hit]]
+            out[h[inn]] = np.maximum(out[h[inn]], fw[i[hit]][inn])
+        return out
+
+    def end_trim(inside):
+        """True where a sample is not in a stretch at either end lying
+        inside another vessel, of at most twice that vessel's half-width
+        (where one vessel ends in another's lumen, the image cannot say
+        where)."""
+        keep = np.ones(len(inside), bool)
+        for order in (list(range(len(inside))), list(range(len(inside) - 1, -1, -1))):
+            if not len(order) or inside[order[0]] <= 0:
+                continue
+            cap = 2.0 * inside[order[0]]
+            for n, i in enumerate(order):
+                if inside[i] <= 0 or n >= cap:
+                    break
+                keep[i] = False
+        return keep if keep.any() else np.ones(len(inside), bool)
+
+    def own_frac(e, k):
+        xy = esmp[e][1]
+        if not len(xy):
+            return 0.0
+        xy = xy[end_trim(inside_others(xy, k))]
+        d, i = vtree[k].query(xy)
+        return float((d <= tol_of(k, vpts[k][1][i])).mean())
+
+    def ok_frac(f, n):                              # at least min_frac, or all but slack px
+        return f >= min(min_frac, 1.0 - slack / max(n, 1.0))
+
+    rows, best_of, allowed = [], {}, set()
+    for u, (k, p, r) in enumerate(runs):
+        tol = tol_of(k, r)
+        inside = inside_others(p, k)
+        if (inside > 0).all():                      # all inside other vessels
+            need = np.ones(len(p), bool)
+            short = True
+        else:
+            need = end_trim(inside)
+            short = need.sum() < min_len
+        best = None
+        for e in eids:
+            d, _ = etree[e].query(p[need])
+            c = float((d <= tol[need]).mean())
+            if best is None or c > best[0]:
+                best = (c, e)
+        cover, e = best if best else (0.0, None)
+        own = own_frac(e, k) if e is not None else 0.0
+        if short:                                   # not required; may be traced
+            for f in eids:
+                d, _ = etree[f].query(p[need])
+                if ok_frac((d <= tol[need]).mean(), need.sum()) and \
+                        ok_frac(own_frac(f, k), len(esmp[f][1])):
+                    allowed.add(f)
+            continue
+        rows.append(dict(vessel=k, run=u, length=int(need.sum()),
+                         edge_len=int(len(esmp[e][1])) if e is not None else 0,
+                         r=round(float(np.median(r)), 2), blur=round(float(vessels[k]["blur"]), 2),
+                         amp=round(float(vessels[k]["amp"]), 3), edge=e,
+                         cover=round(cover, 3), own=round(own, 3), _c=cover, _o=own))
+        if e is not None:
+            best_of.setdefault(e, []).append(u)
+    run_vessel = {row["run"]: row["vessel"] for row in rows}
+    for row in rows:
+        e = row["edge"]
+        # an edge may cover several runs of one vessel (one dipping into the margin)
+        row["resolved"] = bool(e is not None and ok_frac(row.pop("_c"), row["length"]) and
+                               ok_frac(row.pop("_o"), row["edge_len"]) and
+                               len({run_vessel[u] for u in best_of[e]}) == 1)
+    extra = [e for e in eids if e not in best_of and e not in allowed and len(esmp[e][1])]
+    n_res = sum(r["resolved"] for r in rows)
+    return dict(n_runs=len(rows), resolved=n_res, extra_edges=len(extra),
+                extra_len=round(float(sum(len(esmp[e][1]) for e in extra)), 1),
+                exact=bool(n_res == len(rows) and not extra),
+                unresolved=[r for r in rows if not r["resolved"]], runs=rows, extra=extra)
+
+
 def search_report(net, vessels, shape, tol_min=2.0, tol_frac=0.5):
     """What the energy search (search.py) did, against the ground truth,
     from net.meta["search"]:
