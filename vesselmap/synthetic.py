@@ -168,6 +168,30 @@ def centreline_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1
     return out
 
 
+def _true_points(vessels, shape, spacing=1.0, margin=2):
+    """Ground-truth centreline points inside the image, 1 px apart, with the
+    vessel index, unit tangent and radius of each point."""
+    H, W = shape
+    pts, vid, tan, rad = [], [], [], []
+    for k, v in enumerate(vessels):
+        xy = v["xy"]
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        s = np.r_[0, np.cumsum(seg)]
+        q = np.arange(0, s[-1], spacing)
+        p = np.stack([np.interp(q, s, xy[:, 0]), np.interp(q, s, xy[:, 1])], 1)
+        t = np.gradient(p, axis=0)
+        t /= np.linalg.norm(t, axis=1, keepdims=True) + 1e-9
+        ok = (p[:, 0] >= margin) & (p[:, 0] < W - margin) & \
+             (p[:, 1] >= margin) & (p[:, 1] < H - margin)
+        pts.append(p[ok])
+        tan.append(t[ok])
+        rad.append(np.interp(q, s, v["r"])[ok])
+        vid.append(np.full(ok.sum(), k))
+    return (np.concatenate(pts), np.concatenate(vid), np.concatenate(tan),
+            np.concatenate(rad))
+
+
+
 def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
                    min_piece=10.0, min_frac=0.2):
     """How completely single splines annotate single vessels.

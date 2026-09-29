@@ -149,3 +149,14 @@ def test_search_reduces_fragmentation_on_a_scene():
     assert after["best_cover"] > before["best_cover"] + 0.15, (before, after)
     assert after["purity"] > 0.93, after
     assert out.meta["search"]["energy_after"]["nll"] <= nll0 * 1.02
+
+
+def test_truth_panels_draw(tmp_path):
+    from vesselmap.draw import truth_panels
+    I, vessels, _ = make_scene(0, shape=(128, 192), n_trees=1, n_cross=1, n_capillary=2)
+    net = fragment_network(vessels, I.shape, np.random.default_rng(0))
+    p = tmp_path / "panels.png"
+    truth_panels(I, vessels, [net, VesselNetwork(I.shape)], p)
+    import cv2
+    img = cv2.imread(str(p))
+    assert img.shape[0] == 3 * 2 * 128 and img.shape[1] == 2 * 192
