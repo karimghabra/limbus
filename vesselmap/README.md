@@ -280,7 +280,15 @@ and a fragmentation term Phi on vessel ends.
   move lowers E. A joint fit of every vessel and the background follows,
   then a last greedy pass.
 * *Output.* A branch end lying on another vessel becomes a node that vessel
-  passes through (`info["through"]`), as in consolidation. Every join
+  passes through (`info["through"]`), as in consolidation; ends lying on
+  each other share a node. This is a change of representation, so it must
+  not change what the map renders. Each such edit is bounded (an end moves
+  at most about the footprint it lies in), fitted near the junction like a
+  move, and undone if it costs more than `attach_max` vessels' worth of NLL
+  + prior; that end then stays free. (Unscored, the edits cost frame 20 3 %
+  of its NLL: the renderer adds the densities of vessels that overlap at a
+  junction, so an end pulled onto its parent's centreline darkens the
+  parent.) Every join
   records `evidence="energy"`, its dE and the part of it due to Phi
   (`frag`) in `info["links"]`. `map_summary.json` holds the search's
   energies, temperature and price; `meta["search"]["moves"]` logs every

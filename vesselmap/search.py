@@ -143,8 +143,10 @@ class SearchConfig:
     init_iters: int = 0             # joint fit before the search (unfitted input)
     global_iters: int = 150         # joint fit of everything after the search
     attach_tol: float = 1.5         # px beyond a vessel's r + s where a branch end attaches
-    attach_max: float = 1.0         # ... unless attaching it changes NLL + prior by more than
-                                    # this (x tau * lam_vessel): the end then stays free
+    attach_max: float = 15.0        # ... unless attaching it (fitted) changes NLL + prior by
+                                    # more than this (x tau * lam_vessel): the end then stays
+                                    # free (frame 20: median cost 150-200 nats, a tail of 10%
+                                    # beyond 2000 that makes a third of the damage)
     through_iters: int = 40         # joint fit once branch ends sit on their parents
     calibre_window: int = 4         # profile knots the calibre prior averages over (as in
                                     # consolidation: a long vessel may taper)
