@@ -248,10 +248,11 @@ def cmd_consolidate_eval(a):
     from .image import prepare
     from .network import VesselNetwork
     from .search import SearchConfig, search_map
-    from .synthetic import centreline_metrics, fragment_network, make_scene, vessel_metrics
+    from .synthetic import (centreline_metrics, fragment_network, make_scene, search_report,
+                            vessel_metrics)
     os.makedirs(a.out, exist_ok=True)
-    cols = ("n_edges", "excess", "fragments_weighted", "best_cover", "purity", "spurious",
-            "recall", "precision", "nll")
+    cols = ("n_edges", "excess", "fragments_weighted", "best_cover", "purity", "mixed_edges",
+            "spurious", "spurious_len", "recall", "precision", "nll")
     res = []
     for seed in a.seeds:
         I, vessels, _ = make_scene(seed, shape=tuple(a.shape))
@@ -288,8 +289,9 @@ def cmd_consolidate_eval(a):
             m = vessel_metrics(n, vessels, I.shape)
             c = centreline_metrics(n, vessels, I.shape)
             nll = n.meta.get("final_nll", float("nan"))
-            row[tag] = dict(**{k: m[k] for k in cols[:6]}, recall=c["recall"],
+            row[tag] = dict(**{k: m[k] for k in cols[:8]}, recall=c["recall"],
                             precision=c["precision"], nll=nll)
+        row["search"] = search_report(searched, vessels, I.shape)
         res.append(row)
         truth_panels(I, vessels, [n for _, n in stages], os.path.join(a.out, f"seed{seed}_panels.png"))
         searched.save(os.path.join(a.out, f"seed{seed}_searched.json"))
@@ -302,6 +304,8 @@ def cmd_consolidate_eval(a):
     for row in res:
         for tag in ("map", "matched", "searched"):
             print(f"{row['seed']:>4} {tag:9} " + " ".join(fmt(k, row[tag][k]) for k in cols))
+    for row in res:
+        print(f"{row['seed']:>4} search: {json.dumps(row['search'])}")
 
 
 def cmd_fit_frames(a):

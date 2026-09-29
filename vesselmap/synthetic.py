@@ -273,6 +273,56 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
                 spurious_len=round(float(elen[spurious].sum() * spacing), 1))
 
 
+def search_report(net, vessels, shape, tol_min=2.0, tol_frac=0.5):
+    """What the energy search (search.py) did, against the ground truth,
+    from net.meta["search"]:
+
+    * deletions: how many, how many of vessels (half their length or more
+      on a true vessel), and what decided each of those: the price alone
+      (it explained less than price * L), the vessel cost (less than that
+      plus tau * lam_vessel), or the fragmentation term it released (Phi);
+      with the evidence per px of the true ones, next to the price
+    * fidelity: what the accepted joins cost in NLL + prior, next to the
+      signal energy of the ends they joined (their S)
+    * stranding joins: accepted joins that released more Phi than their
+      own pair's weight (they left other facing ends unmatched)"""
+    from scipy.spatial import cKDTree
+    meta = net.meta.get("search", {})
+    tx, tv, _, tr = _true_points(vessels, shape)
+    tree = cKDTree(tx)
+    tol = np.maximum(tol_min, tol_frac * 2 * tr)
+    price, tau = meta.get("price_per_px", 0.0), meta.get("tau", 1.0)
+    lam_v = meta.get("config", {}).get("lam_vessel", 0.0)
+    dels = []
+    for r in meta.get("deleted", []):
+        xy = np.asarray(r.get("xy", []), float).reshape(-1, 2)
+        if not len(xy):
+            continue
+        d, j = tree.query(xy)
+        on = float((d <= tol[j]).mean())
+        L, loss = r["L"], r["loss"]
+        driver = "price" if loss < price * L else \
+            "lam" if loss < price * L + tau * lam_v else "phi"
+        dels.append(dict(on_truth=round(on, 2), true=on >= 0.5, L=L,
+                         per_px=round(loss / max(L, 1.0), 2), driver=driver, dE=r["dE"],
+                         frag=r["frag"]))
+    true = [x for x in dels if x["true"]]
+    joins = [r for r in meta.get("moves", []) if r["kind"] == "join"]
+    return dict(
+        deleted=len(dels), deleted_true=len(true),
+        deleted_true_by=dict(price=sum(x["driver"] == "price" for x in true),
+                             lam=sum(x["driver"] == "lam" for x in true),
+                             phi=sum(x["driver"] == "phi" for x in true)),
+        deleted_true_per_px=sorted(x["per_px"] for x in true), price=round(price, 2),
+        joins=len(joins),
+        join_cost=round(sum(r["nll"] + r["prior"] for r in joins), 1),
+        joined_ends_S=round(sum(sum(r.get("ends_S", [])) for r in joins), 1),
+        stranding_joins=sum(-r["frag"] > r.get("pair_weight", 0.0) + 1.0 for r in joins
+                            if "pair_weight" in r),
+        accepted={k: sum(r["kind"] == k for r in meta.get("moves", []))
+                  for k in ("join", "delete", "split", "reroute", "revive")})
+
+
 def fragment_network(vessels, shape, rng, piece_len=(25.0, 80.0), gap=(0.0, 6.0),
                      jitter=0.3, dup_frac=0.15, n_spurious=6, min_len=12.0):
     """A deliberately fragmented network built from the ground truth, as a

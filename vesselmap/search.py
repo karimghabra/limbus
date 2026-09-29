@@ -7,21 +7,38 @@ stays in pieces, and nothing removes a vessel that is too weak to be one.
 ``search_map`` goes further by minimising one explicit objective over the
 structure of the map:
 
-    E(M) = NLL(image | M) + prior(M) + sum_v (tau * lam_vessel + price * L_v)
+    E(M) = NLL(image | M) + prior(M) + sum_v (tau * lam_vessel + price * L_v) + Phi(M)
 
 * NLL and prior are exactly the renderer's score (render.py), with the
   windowed calibre prior of consolidation (a long vessel may taper).
-* The last term is new.  Every vessel pays a fixed ``tau * lam_vessel``, so
-  two pieces cost more than the one vessel they belong to.  ``tau`` is the
-  data temperature, the reduced chi-square of the map's residual:
-  structured misfit inflates NLL differences by about that factor.
-* Every pixel of centreline pays ``price``, so a vessel must explain enough
-  of the image per pixel to be kept.  The price is set by the *texture
+* Existence.  Every vessel pays a fixed ``tau * lam_vessel``, and every
+  pixel of centreline pays ``price``, so a vessel must explain enough of
+  the image per pixel to be kept.  ``tau`` is the data temperature, the
+  reduced chi-square of the map's residual: structured misfit inflates NLL
+  differences by about that factor.  The price is set by the *texture
   null*: tissue texture makes bright ridges as often as dark ones, and
   vessels are only dark, so 'anti-vessels' fitted to the bright ridges of
   the residual show how much a dark trace of texture explains per pixel.
   A vessel that explains no more than that (``null_quantile``) is not told
   apart from texture.  (At least ``tau * lam_length``.)
+* Consolidation.  No cost per vessel can make fragments join without also
+  deleting them: for any cost c, c(a) + c(b) - c(a + b) <= c(b), so
+  deleting a piece always saves at least what joining it saves.  The
+  pieces of a vessel are instead told by their ends: Phi charges vessel
+  ends that face each other (the pairs a join would try), each pair
+  g * min(om, om'), over a maximum-weight matching of the ends (so an end
+  pays once, and at a fork or crossing any buildable join pays about the
+  same: the data picks the partner).  om = lam_frag times the evidence of
+  the end's last frag_len px above the price (end_evidence; at most
+  tau * lam_cap), so an end of texture-grade junk earns a join nothing, and
+  deleting a vessel releases at most lam_frag of its evidence: a vessel
+  survives whenever (1 - lam_frag) of what it explains beyond the price
+  exceeds tau * lam_vessel.  g in [0, 1] is how clearly the ends face each
+  other: across a gap only up to frag_gap (farther apart, facing ends are
+  as often two vessels as one: the data decides those joins alone), and
+  overlapping ends only when each lies on the other's line.  Phi depends
+  on the map alone (no history), so the search still samples one E, and
+  the fits do not see it (in the gradient it would dim fragment ends).
 
 Moves.  Each move is followed by a short gradient fit of what it changes:
 
@@ -42,15 +59,17 @@ reroute is fitted cheaply: only the parameters within ``focus_radius`` of
 the junction, on a window around it (joined vessels are rebuilt
 faithfully, so elsewhere they render as their pieces did).  The fitted
 result is then scored on the whole footprint, so dE is exactly the change
-the move makes.
+the move makes.  The change of Phi is exact too (EndGraph.delta: only
+the matching components a move touches are matched again), and computed
+afresh at every step, as it depends on ends up to join_gap away.
 
 Search.  Rejection-free annealing: at every step every candidate move is
 scored and one is drawn with probability proportional to exp(-dE / T),
-staying put (dE = 0) included.  A score is cached until the optical
-density of the other vessels in its window changes, and stale scores are
-re-fitted in parallel worker processes.  At a high temperature the search
-can leave a local minimum, e.g. join two pieces whose join only pays once
-a duplicate between them is gone.  As T falls it becomes steepest descent,
+staying put (dE = 0) included; T starts at t_start * tau * t_scale.  A
+data score is cached and corrected exactly for changes around it, and
+re-fitted (in parallel worker processes) when the correction is large.
+At a high temperature the search can leave a local minimum, e.g. join two
+pieces whose join only pays once a duplicate between them is gone.  As T falls it becomes steepest descent,
 and ends when no move lowers E.  A joint fit of every vessel and the
 background follows, then a last greedy pass.
 
@@ -85,20 +104,31 @@ BG_SPACING = 64.0
 
 @dataclass
 class SearchConfig:
-    lam_vessel: float = 150.0       # cost of one vessel (x tau)
+    lam_vessel: float = 50.0        # existence cost of one vessel (x tau)
     lam_length: float = 1.0         # cost per px of centreline (x tau), at least ...
     texture_null: bool = True       # ... what background texture alone explains per px:
     null_quantile: float = 0.9      # this quantile of the evidence per px of 'anti-vessels'
     null_bands: tuple = ((1.2, 2.5), (2.5, 5.0), (5.0, 10.0))   # fitted to bright ridges
+    lam_frag: float = 0.4           # fragmentation: a vessel end facing another pays this
+                                    # share of its evidence (Phi, see the module docstring) ...
+    lam_cap: float = 400.0          # ... at most this (x tau) per end ...
+    lam_pair: float = 0.0           # ... plus this (x tau), up to the end's own evidence
+    frag_len: float = 30.0          # the evidence of an end: its last frag_len px (<= L / 2)
+    frag_margin: float = 0.25       # a facing pair counts fully this far inside the join test,
+    frag_gap: float = 6.0           # and across a gap up to this (px), not at all beyond twice it
+    frag_mode: str = "match"        # "match": Phi over a matching of facing ends; "ends":
+                                    # every end pays (an ablation)
     tau: float = 0.0                # data temperature; <= 0: reduced chi-square of the map
-    t_start: float = 0.1            # first temperature, as a fraction of tau * lam_vessel
+    t_scale: float = 150.0          # energy scale (x tau) of the schedule and the cache:
+    t_start: float = 0.1            # first temperature (x tau * t_scale)
     hot_steps: float = 0.5          # annealing steps (x number of input edges) before T = 0
-    hopeless: float = 10.0          # a move scored worse than this (x tau * lam_vessel) is
-                                    # not re-fitted while its vessels exist
+    hopeless: float = 10.0          # a move scored worse than this (x tau * t_scale), even
+                                    # with all the Phi it may release, is not re-fitted while
+                                    # its vessels exist
     sens_budget: float = 0.5        # nats a cached score's correction may lose to sparsity
     refit_tol: float = 0.05         # a cached score is corrected for changes around the move
                                     # (exact for the fitted vessels); beyond this (x tau *
-                                    # lam_vessel) the move is re-fitted, as its fit may adapt
+                                    # t_scale) the move is re-fitted, as its fit may adapt
     local_iters: int = 40           # gradient steps after a move
     focus_radius: float = 30.0      # a join / split / reroute re-fits the vessel within this
                                     # distance (px) of the junction; the rest stays as it was
@@ -161,6 +191,263 @@ def _direction(xy, i, forward=True, look=4):
         v = xy[-1] - xy[0]
         n = np.linalg.norm(v) + 1e-9
     return v / n
+
+
+def _faces(p1, t1, w1, p2, t2, w2, cfg, gap=True) -> bool:
+    """The join test of end 1 (position, outward tangent, width) towards
+    end 2, as join_moves applies it: the ends are close, or face each other
+    across a gap (roughly straight ahead), or overlap.  (gap: also test the
+    distance, which join_moves leaves to its ball query.)"""
+    v = p2 - p1
+    d = float(np.linalg.norm(v))
+    if gap and d > min(cfg.join_gap, max(8.0, cfg.join_gap_factor * w1)):
+        return False
+    if np.dot(t1, t2) > 0.5:                        # both ends point the same way
+        return False
+    if d <= max(2.0, 0.5 * (w1 + w2)):
+        return True
+    u = v / d
+    cone = math.cos(math.radians(cfg.join_cone_deg))
+    ahead = np.dot(t1, u) > cone and np.dot(t2, -u) > cone
+    overlap = np.dot(t1, t2) < -0.7 and d <= cfg.trim_max and \
+        abs(t1[0] * v[1] - t1[1] * v[0]) <= max(w1, w2) + 2.0
+    return bool(ahead or overlap)
+
+
+def face_weight(a, b, cfg):
+    """Continuity weight g in [0, 1] of two vessel ends a, b = (position,
+    outward tangent, width) that face each other (the join test passes in
+    either direction), None when they do not.  g is how far inside the
+    test the pair lies, over frag_margin: 0 at its edge, 1 once the pair is
+    well inside, so a small refit never switches a pair's weight on or off
+    at once.  Two relations are held to more than the join test, which
+    only proposes: ends across a gap count fully up to frag_gap and not at
+    all beyond twice it (facing ends farther apart are as often two vessels
+    as one), and overlapping ends must each lie on the other's line and
+    have passed each other (a vessel found twice), not merely one of them."""
+    (p1, t1, w1), (p2, t2, w2) = a, b
+    if not (_faces(p1, t1, w1, p2, t2, w2, cfg) or _faces(p2, t2, w2, p1, t1, w1, cfg)):
+        return None
+    fm = cfg.frag_margin
+    v = p2 - p1
+    d = float(np.linalg.norm(v))
+    c12 = float(np.dot(t1, t2))
+    near = max(2.0, 0.5 * (w1 + w2))
+    G = min(cfg.join_gap, max(8.0, cfg.join_gap_factor * max(w1, w2)))
+    m_ahead = m_ov = -1.0
+    if d > 0:
+        u = v / d
+        cone = math.cos(math.radians(cfg.join_cone_deg))
+        m_ahead = (min(float(np.dot(t1, u)), float(np.dot(t2, -u))) - cone) / (1.0 - cone)
+        cross = max(abs(t1[0] * v[1] - t1[1] * v[0]), abs(t2[0] * v[1] - t2[1] * v[0]))
+        m_ov = min((-0.7 - c12) / 0.3, 1.0 - d / cfg.trim_max,
+                   1.0 - cross / (max(w1, w2) + 2.0))
+        D0 = max(cfg.frag_gap, near)
+        taper = fm * (2.0 * D0 - d) / D0
+        m_ahead = min(m_ahead, taper)
+        if np.dot(t1, v) > 0 or np.dot(t2, -v) > 0:     # not passed each other: a gap
+            m_ov = min(m_ov, taper)
+    m = min(1.0 - d / G, (0.5 - c12) / 1.5, max(1.0 - d / near, m_ahead, m_ov))
+    return float(min(1.0, max(0.0, m) / fm))
+
+
+def _mwm(edges):
+    """Value of a maximum-weight matching of a graph given as edges
+    (i, j, w > 0): a bitmask recursion for components of up to 12 nodes,
+    networkx beyond."""
+    if not edges:
+        return 0.0
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, j, _ in edges:
+        parent[find(i)] = find(j)
+    comps = {}
+    for e in edges:
+        comps.setdefault(find(e[0]), []).append(e)
+    total = 0.0
+    for ce in comps.values():
+        nodes = sorted({x for i, j, _ in ce for x in (i, j)})
+        if len(nodes) <= 12:
+            pos = {x: q for q, x in enumerate(nodes)}
+            adj = [dict() for _ in nodes]
+            for i, j, w in ce:
+                a, b = pos[i], pos[j]
+                if w > adj[a].get(b, 0.0):
+                    adj[a][b] = adj[b][a] = w
+            memo = {0: 0.0}
+
+            def f(mask):
+                if mask in memo:
+                    return memo[mask]
+                i = (mask & -mask).bit_length() - 1
+                rest = mask & ~(1 << i)
+                best = f(rest)
+                for j, w in adj[i].items():
+                    if rest >> j & 1:
+                        best = max(best, w + f(rest & ~(1 << j)))
+                memo[mask] = best
+                return best
+
+            total += f((1 << len(nodes)) - 1)
+        else:
+            import networkx as nx
+            G = nx.Graph()
+            for i, j, w in ce:
+                if w > G.get_edge_data(i, j, {}).get("weight", 0.0):
+                    G.add_edge(i, j, weight=w)
+            total += float(sum(G[i][j]["weight"] for i, j in nx.max_weight_matching(G)))
+    return total
+
+
+@torch.no_grad()
+def end_evidence(m: NetworkModel, hw: float, frag_len: float, entries=None):
+    """(S0, S1, l) for every edge of a model, in the order of m.eids: the
+    signal energy 0.5 * sum w ((1 - hw) m)^2 of the pixels whose nearest
+    centreline sample lies within arclength l = min(frag_len, L / 2) of the
+    start (S0) and of the end (S1).  It is the first term of the NLL gain
+    of those pixels (render._entry_gains), what the stretch explains when
+    its amplitude is fitted, and depends on the vessel's own rendering
+    only."""
+    n = len(m.eids)
+    if n == 0:
+        return []
+    ent = m.vessel_entries() if entries is None else torch.as_tensor(entries)
+    if len(m.e_samp) == 0:
+        return [(0.0, 0.0, 0.0)] * n
+    arc, Ledge = m.samples()[5:7]
+    j = m.e_samp
+    w = m.weight.reshape(-1)[m.e_pix]
+    v = 0.5 * w * ((1 - hw) * ent) ** 2 * m.stride ** 2
+    le = torch.clamp(0.5 * Ledge, max=frag_len)
+    a, L, l = arc[j], Ledge[m.e_edge], le[m.e_edge]
+    S0 = torch.zeros(n, dtype=v.dtype).index_add(0, m.e_edge, v * (a <= l))
+    S1 = torch.zeros(n, dtype=v.dtype).index_add(0, m.e_edge, v * (L - a <= l))
+    return [(float(S0[k]), float(S1[k]), float(le[k])) for k in range(n)]
+
+
+class EndGraph:
+    """The facing-end graph of a map and its fragmentation term Phi.
+
+    Nodes are vessel ends not at the image border, as rows (vessel id,
+    position, outward tangent, width, om, end); edges are the pairs
+    join_moves would try (the join test passes in either direction; ends
+    of one vessel never pair), weighted g * min(om, om').  Phi is the value
+    of a maximum-weight matching (mode "match"), or the sum of om over all
+    ends (mode "ends").  Components of the positive-weight graph are
+    matched separately, so the change of Phi by a move is computed on the
+    components it touches alone (delta)."""
+
+    def __init__(self, rows, cfg):
+        self.cfg, self.rows = cfg, rows
+        n = len(rows)
+        self.by_vid, self.by_end = {}, {}
+        for i, r in enumerate(rows):
+            self.by_vid.setdefault(r[0], []).append(i)
+            self.by_end[(r[0], r[5])] = i
+        self.tree = cKDTree(np.array([r[1] for r in rows]).reshape(-1, 2)) if n else None
+        self.adj = [dict() for _ in range(n)]
+        self.n_facing = 0
+        if n:
+            for a, b in sorted(self.tree.query_pairs(cfg.join_gap)):
+                if rows[a][0] == rows[b][0]:
+                    continue
+                g = face_weight(rows[a][1:4], rows[b][1:4], cfg)
+                if g is None:
+                    continue
+                self.n_facing += 1
+                w = g * min(rows[a][4], rows[b][4])
+                if w > 0:
+                    self.adj[a][b] = self.adj[b][a] = w
+        self.comp = list(range(n))
+        for a in range(n):                          # components: label propagation
+            if self.comp[a] != a:
+                continue
+            stack = [a]
+            while stack:
+                x = stack.pop()
+                for y in self.adj[x]:
+                    if self.comp[y] != a:
+                        self.comp[y] = a
+                        stack.append(y)
+        self.members = {}
+        for i, c in enumerate(self.comp):
+            self.members.setdefault(c, []).append(i)
+        self.value = {c: _mwm(self._edges(ms)) for c, ms in self.members.items()
+                      if len(ms) > 1}
+        self._matched = None
+        self.total = sum(r[4] for r in rows) if cfg.frag_mode == "ends" else \
+            float(sum(self.value.values()))
+
+    def _edges(self, nodes, gone=()):
+        s = set(nodes)
+        return [(i, j, w) for i in nodes if i not in gone
+                for j, w in self.adj[i].items() if j > i and j in s and j not in gone]
+
+    @property
+    def matched(self):
+        """Number of pairs in the maximum-weight matching (for the logs)."""
+        if self._matched is None:
+            import networkx as nx
+            n = 0
+            for ms in self.members.values():
+                if len(ms) > 1:
+                    G = nx.Graph()
+                    G.add_weighted_edges_from(self._edges(ms))
+                    n += len(nx.max_weight_matching(G))
+            self._matched = n
+        return self._matched
+
+    def weight(self, a, b):
+        """Weight of the pair of ends a, b = (vessel id, end), 0 if none."""
+        i, j = self.by_end.get(a), self.by_end.get(b)
+        return 0.0 if i is None or j is None else self.adj[i].get(j, 0.0)
+
+    def bound(self, vids):
+        """-dPhi of any move removing the vessels vids is at most this."""
+        return float(sum(self.rows[i][4] for v in vids for i in self.by_vid.get(v, [])))
+
+    def delta(self, gone, new):
+        """Change of Phi when the rows `gone` (indices) are removed and the
+        rows `new` added (their vessel ids distinct from the current ones).
+        Exact: a component that loses no node and gains no edge keeps its
+        matching value."""
+        gone = set(gone)
+        if self.cfg.frag_mode == "ends":
+            return sum(r[4] for r in new) - sum(self.rows[i][4] for i in gone)
+        n0 = len(self.rows)
+        comps = {self.comp[i] for i in gone}
+        add = []
+        for q, r in enumerate(new):
+            if r[4] <= 0:
+                continue
+            if self.tree is not None:
+                for i in self.tree.query_ball_point(r[1], self.cfg.join_gap):
+                    if i in gone or self.rows[i][4] <= 0:
+                        continue
+                    g = face_weight(self.rows[i][1:4], r[1:4], self.cfg)
+                    if g:
+                        add.append((i, n0 + q, g * min(self.rows[i][4], r[4])))
+                        comps.add(self.comp[i])
+            for q2 in range(q + 1, len(new)):
+                r2 = new[q2]
+                if r2[0] == r[0] or r2[4] <= 0 or \
+                        np.linalg.norm(r2[1] - r[1]) > self.cfg.join_gap:
+                    continue
+                g = face_weight(r[1:4], r2[1:4], self.cfg)
+                if g:
+                    add.append((n0 + q, n0 + q2, g * min(r[4], r2[4])))
+        if not comps and not add:
+            return 0.0
+        nodes = [i for c in comps for i in self.members[c]]
+        after = _mwm(self._edges(nodes, gone) + add)
+        return after - sum(self.value.get(c, 0.0) for c in comps)
 
 
 def join_path(A: dict, B: dict, trim_max: float, max_turn_deg: float, spacing=0.7):
@@ -358,6 +645,9 @@ class VesselSearch:
         self._gid = 0
         self._index = None
         self.n_evaluated = 0
+        self.endS = {}                  # (S0, S1, l) of every vessel's ends (end_evidence)
+        self._egraph = None
+        self.move_log = []
         if cfg.init_iters > 0:
             self.global_fit(cfg.init_iters)
         else:
@@ -404,9 +694,12 @@ class VesselSearch:
         self.V = np.zeros(self.H * self.W, np.float32)
         for p, v in self.patch.values():
             self.V[p] += v
+        self.endS = dict(zip(model.eids, end_evidence(model, self.hw, self.cfg.frag_len,
+                                                      torch.as_tensor(ent))))
         self._smp.clear()
         self._cache.clear()
         self._index = None
+        self._egraph = None
 
     def optical_density(self):
         V = self.V.reshape(self.H, self.W)
@@ -486,7 +779,63 @@ class VesselSearch:
         with torch.no_grad():
             pr = float(m.prior(**self.priors))
         cst = sum(self.cost(e, self.samples(k)["L"]) for k, e in self.net.edges.items())
-        return dict(total=nll + pr + cst, nll=nll, prior=pr, cost=cst)
+        G = self._graph()
+        return dict(total=nll + pr + cst + G.total, nll=nll, prior=pr, cost=cst, frag=G.total,
+                    matched_pairs=G.matched, facing_pairs=G.n_facing)
+
+    # ------------------------------------------------------------ fragmentation
+    def _phi_on(self):
+        return self.cfg.lam_frag > 0 or self.cfg.lam_pair > 0
+
+    def _omega(self, S, l):
+        """What an end facing another pays: lam_frag of its evidence above
+        the price of its stretch (plus lam_pair, up to that evidence), at
+        most lam_cap."""
+        cfg = self.cfg
+        if not self._phi_on():
+            return 0.0
+        St = max(0.0, S - self.price * l)
+        return min(self.tau * cfg.lam_cap, cfg.lam_frag * St + min(St, self.tau * cfg.lam_pair))
+
+    def _end_rows(self, vid, smp, S):
+        """EndGraph rows of a vessel's ends that are not at the image border
+        (geometry as in _ends)."""
+        out = []
+        for end in (0, 1):
+            i = 0 if end == 0 else -1
+            p = smp["xy"][i]
+            if self._border(p):
+                continue
+            t = -_direction(smp["xy"], 0, True) if end == 0 else \
+                _direction(smp["xy"], len(smp["xy"]) - 1, False)
+            out.append((vid, p, t, float(smp["r"][i] + smp["s"][i]),
+                        self._omega(S[end], S[2]), end))
+        return out
+
+    def _graph(self):
+        """EndGraph of the current map (rebuilt after every change)."""
+        if self._egraph is None:
+            rows = []
+            for k in self.net.edges:
+                rows += self._end_rows(k, self.samples(k), self.endS[k])
+            self._egraph = EndGraph(rows, self.cfg)
+        return self._egraph
+
+    def _phi_delta(self, prop):
+        """Change of Phi a proposal makes.  Computed afresh for the current
+        state (Phi depends on ends up to join_gap away), never cached."""
+        if not self._phi_on():
+            return 0.0
+        G = self._graph()
+        gone = [i for k in prop[0] for i in G.by_vid.get(k, [])]
+        new = [(-1 - q, p, t, w, self._omega(S[end], S[2]), end)
+               for q, (S, ends) in enumerate(zip(prop[5]["S"], prop[5]["ends"]))
+               for end, p, t, w in ends]
+        return G.delta(gone, new)
+
+    def _release_bound(self, old):
+        """-dPhi of any move removing the vessels old is at most this."""
+        return self._graph().bound(old) if self._phi_on() else 0.0
 
     # ------------------------------------------------------------ local model
     def _window(self, smps, extra=4.0):
@@ -604,8 +953,9 @@ class VesselSearch:
             return False, None
         idx, vals, S0 = prop[4]
         delta = float(vals @ self.V[idx]) - S0 if len(idx) else 0.0
-        scale = self.tau * self.cfg.lam_vessel
-        if abs(delta) > self.cfg.refit_tol * scale and dE + delta < self.cfg.hopeless * scale:
+        scale = self.tau * self.cfg.t_scale
+        if abs(delta) > self.cfg.refit_tol * scale and \
+                dE + delta - self._release_bound(prop[0]) < self.cfg.hopeless * scale:
             return False, None
         return True, (dE + delta, prop)
 
@@ -618,10 +968,14 @@ class VesselSearch:
 
     # ------------------------------------------------------------ moves
     def evaluate(self, move):
-        """dE of a move, with the new vessels fitted locally.  Returns
-        (dE, proposal) with proposal = (old ids, new edges, patches of the
-        new edges or None, window, sensitivity), or None when the move cannot
-        be built.  Cached, and corrected for later changes (see _lookup)."""
+        """Data and cost part of a move's dE, with the new vessels fitted
+        locally (the change of Phi is added by _phi_delta).  Returns (dE,
+        proposal) with proposal = (old ids, new edges, patches of the new
+        edges or None, window, sensitivity, dict(S=their end_evidence,
+        ends=their non-border ends (end, position, tangent, width),
+        parts=dE split into nll / prior / cost)), or None when the move
+        cannot be built.  Cached, and corrected for later changes (see
+        _lookup)."""
         hit, out = self._lookup(move)
         if hit:
             return out
@@ -699,12 +1053,19 @@ class VesselSearch:
         m_new = self._local(new, win, old)
         n1, p1 = self._local_energy(m_new)
         c1 = sum(self.cost(e) for e in new)
-        self.last_parts = dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
+        parts = dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
+        self.last_parts = parts
         sens = self._sensitivity(m_old, m_new, win)
         # full-footprint patches are kept only for moves without a focus (few);
         # a join / split / reroute is rendered again when it is applied
         patches = self._patches(m_new, win) if new and focus is None else ([] if not new else None)
-        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, win, sens))
+        ends = []
+        for e in new:
+            s = edge_samples(e, 1.0)
+            ends.append([(r[5], r[1], r[2], r[3]) for r in self._end_rows(-1, s, (0.0, 0.0, 0.0))])
+        extra = dict(S=end_evidence(m_new, self.hw, self.cfg.frag_len) if new else [],
+                     ends=ends, parts=parts)
+        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, win, sens, extra))
 
     def _focus_window(self, focus, R):
         R = R + 3 * self.hs + 4.0
@@ -764,8 +1125,9 @@ class VesselSearch:
             self.V[p] -= v
             self.net.remove_edge(k)
             self._smp.pop(k, None)
+            self.endS.pop(k, None)
         ids = []
-        for e, (p, v) in zip(new, patches):
+        for e, (p, v), S in zip(new, patches, proposal[5]["S"]):
             e = e.copy()
             u = self.net.add_node(*e.ctrl[0])
             w = self.net.add_node(*e.ctrl[-1])
@@ -776,8 +1138,10 @@ class VesselSearch:
             self.net._touch()
             self.patch[k] = (p, v)
             self.V[p] += v
+            self.endS[k] = S
             ids.append(k)
         self._index = None
+        self._egraph = None
         return ids
 
     def _ends(self):
@@ -803,7 +1167,6 @@ class VesselSearch:
             return []
         P = np.array([e[2] for e in ends])
         tree = cKDTree(P)
-        cone = math.cos(math.radians(cfg.join_cone_deg))
         moves, seen = [], set()
         for i, (k1, end1, p1, t1, w1) in enumerate(ends):
             G = min(cfg.join_gap, max(8.0, cfg.join_gap_factor * w1))
@@ -814,18 +1177,8 @@ class VesselSearch:
                 pair = tuple(sorted([(k1, end1), (k2, end2)]))
                 if pair in seen:
                     continue
-                d = float(np.linalg.norm(p2 - p1))
-                if np.dot(t1, t2) > 0.5:                  # both ends point the same way
+                if not _faces(p1, t1, w1, p2, t2, w2, cfg, gap=False):
                     continue
-                close = d <= max(2.0, 0.5 * (w1 + w2))
-                if not close:
-                    v = p2 - p1
-                    u = v / d
-                    ahead = np.dot(t1, u) > cone and np.dot(t2, -u) > cone
-                    overlap = np.dot(t1, t2) < -0.7 and d <= cfg.trim_max and \
-                        abs(t1[0] * v[1] - t1[1] * v[0]) <= max(w1, w2) + 2.0
-                    if not (ahead or overlap):
-                        continue
                 seen.add(pair)
                 moves.append(dict(kind="join", anchor=[k1, k2], key=("join",) + pair,
                                   focus=0.5 * (p1 + p2),
@@ -1054,7 +1407,8 @@ class VesselSearch:
             for m in moves:
                 r = self._lookup(m)[1]
                 if r is not None:
-                    res.append((r[0], m, r[1]))
+                    dp = self._phi_delta(r[1])
+                    res.append((r[0] + dp, m, r[1], dp))
             live = {m["key"] for m in moves}
             self._cache = {k: v for k, v in self._cache.items() if k in live}
             if not res:
@@ -1072,46 +1426,87 @@ class VesselSearch:
                 if i == len(res):
                     stays += 1
                     continue
-            d, m, prop = res[i]
+            d, m, prop, dp = res[i]
+            rec = self._record(step, T, m, prop, d, dp)
             if m["kind"] == "delete":
                 self.graveyard[self._gid] = self.net.edges[m["anchor"][0]].copy()
                 self._gid += 1
             elif m["kind"] == "revive":
                 del self.graveyard[m["grave"]]
             ids = self.apply(prop)
+            rec["new"] = [int(k) for k in ids]
+            self.move_log.append(rec)
             if m["kind"] in ("join", "reroute") and ids:
                 e = self.net.edges[ids[0]]
                 e.info["links"] = list(e.info.get("links", [])) + [dict(
                     kind=m["kind"], evidence="energy", dE=round(float(d), 1),
-                    xy=[round(float(v), 1) for v in m["focus"]])]
+                    frag=round(float(dp), 1), xy=[round(float(v), 1) for v in m["focus"]])]
             acc[m["kind"]] = acc.get(m["kind"], 0) + 1
             if self.cfg.verbose and (step % 25 == 0):
+                G = self._graph()
                 self.log(f"step {step}: T = {T:.1f}, {len(res)} moves, took {m['kind']} "
-                         f"(dE = {d:.0f}); {len(self.net.edges)} vessels; "
+                         f"(dE = {d:.0f}, of which Phi {dp:.0f}); {len(self.net.edges)} vessels; "
+                         f"Phi {G.total:.0f} ({G.matched} matched of {G.n_facing} facing pairs); "
                          f"{self.n_evaluated} local fits")
         return dict(steps=step + 1, accepted=acc, stays=stays)
+
+    def _record(self, step, T, m, prop, d, dp):
+        """move_log entry of an accepted move (before it is applied): its
+        dE split into data (nll, prior), cost and Phi; for a join the
+        weight of the pair it joins (a join releasing more Phi than that
+        strands other ends), for a delete what the vessel explained."""
+        parts = prop[5]["parts"]
+        rec = dict(step=int(step), T=round(float(T), 2), kind=m["kind"],
+                   anchor=[int(k) for k in m["anchor"]], dE=round(float(d), 1),
+                   nll=round(parts["nll"], 1), prior=round(parts["prior"], 1),
+                   cost=round(parts["cost"], 1), frag=round(float(dp), 1))
+        if m["kind"] == "join" and self._phi_on():
+            a, b = m["key"][1:]
+            G = self._graph()
+            rec["pair_weight"] = round(G.weight(a, b), 1)
+            rec["ends_S"] = [round(self.endS[k][e], 1) for k, e in (a, b)]
+        if m["kind"] == "delete":
+            k = m["anchor"][0]
+            s = self.samples(k)
+            rec.update(L=round(float(s["L"]), 1), vessel_cost=round(self.cost(self.net.edges[k],
+                                                                              s["L"]), 1),
+                       loss=round(parts["nll"] + parts["prior"], 1),
+                       release=round(self._release_bound(prop[0]), 1),
+                       duplicates=[int(j) for j in prop[0][1:]],
+                       xy=np.round(edge_samples(self.net.edges[k], 2.0)["xy"], 1).tolist())
+        return rec
 
     def run(self):
         cfg = self.cfg
         n0 = len(self.net.edges)
         E0 = self.energy_total()
+        oms = [r[4] for r in self._graph().rows]
         self.log(f"search: {n0} vessels, tau = {self.tau:.2f}, price {self.price:.1f} per px, "
-                 f"E = {E0['total']:.0f} "
-                 f"(nll {E0['nll']:.0f}, prior {E0['prior']:.0f}, cost {E0['cost']:.0f})")
-        T0 = cfg.t_start * self.tau * cfg.lam_vessel
+                 f"vessel {self.tau * cfg.lam_vessel:.0f}, end om median "
+                 f"{np.median(oms) if oms else 0:.0f}; E = {E0['total']:.0f} "
+                 f"(nll {E0['nll']:.0f}, prior {E0['prior']:.0f}, cost {E0['cost']:.0f}, "
+                 f"Phi {E0['frag']:.0f}: {E0['matched_pairs']} matched of "
+                 f"{E0['facing_pairs']} facing pairs)")
+        T0 = cfg.t_start * self.tau * cfg.t_scale
         hist = [self.anneal(T0, max(10, int(cfg.hot_steps * n0)))]
         self.log(f"annealed: {hist[-1]}; {len(self.net.edges)} vessels")
         if cfg.global_iters > 0:
+            phi = self._graph().total
             self.global_fit(cfg.global_iters)
+            # the fits do not see Phi (in the gradient it would dim the
+            # ends of fragments), so it may jump here
+            self.log(f"joint fit: Phi {phi:.0f} -> {self._graph().total:.0f}")
             hist.append(self.anneal(0.0, 0))
             self.log(f"after the joint fit: {hist[-1]}; {len(self.net.edges)} vessels")
+        E_an = self.energy_total()
         to_through(self.net, cfg.attach_tol)
         self.net.snap_through_nodes()
         self.global_fit(cfg.through_iters)
-        self.net.orient_structural()
         E1 = self.energy_total()
+        self.net.orient_structural()
         m = NetworkModel(self.net, self.P.logI, self.P.weight, stride=1,
                          bg_spacing=self.net.bg_spacing or BG_SPACING)
+        self._render_all(m)              # edges may be reversed: renew what is kept per end
         gains, _ = m.edge_gains()
         for k, eid in enumerate(m.eids):
             L = max(self.samples(eid)["L"], 1.0)
@@ -1120,8 +1515,10 @@ class VesselSearch:
             config={k: v for k, v in asdict(cfg).items()}, tau=self.tau,
             texture_null=self.null, price_per_px=self.price,
             vessels_before=n0, vessels_after=len(self.net.edges),
-            energy_before=E0, energy_after=E1, steps=hist, local_fits=self.n_evaluated,
-            seconds=round(time.time() - self.t0, 1))
+            energy_before=E0, energy_annealed=E_an, energy_after=E1, steps=hist,
+            local_fits=self.n_evaluated, seconds=round(time.time() - self.t0, 1),
+            moves=[{k: v for k, v in r.items() if k != "xy"} for r in self.move_log],
+            deleted=[r for r in self.move_log if r["kind"] == "delete"])
         self.net.meta["final_nll"] = E1["nll"]
         self.log(f"done: {n0} -> {len(self.net.edges)} vessels; E {E0['total']:.0f} -> "
                  f"{E1['total']:.0f} (nll {E0['nll']:.0f} -> {E1['nll']:.0f}); "

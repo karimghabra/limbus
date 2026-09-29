@@ -179,12 +179,26 @@ def test_join_dE_is_the_energy_change_apply_makes():
     _edge(net, np.stack([xs[left], ys[left]], 1), r=2.0)
     _edge(net, np.stack([xs[right], ys[right]], 1), r=2.0)
     C = VesselSearch(net, P, _cfg(init_iters=80, workers=1))
+
+    def check(move):
+        dE, prop = C.evaluate(move)
+        dE += C._phi_delta(prop)
+        E0 = C.energy_total()["total"]
+        C.apply(prop)
+        E1 = C.energy_total()["total"]
+        assert abs((E1 - E0) - dE) < 0.02 * abs(dE) + 25.0, (move["kind"], E1 - E0, dE)
+        return prop
+
     (move,) = [m for m in C.join_moves()]
-    dE, prop = C.evaluate(move)
-    E0 = C.energy_total()["total"]
-    C.apply(prop)
-    E1 = C.energy_total()["total"]
-    assert abs((E1 - E0) - dE) < 0.02 * abs(dE) + 25.0, (E1 - E0, dE)
+    check(move)
+    assert C.energy_total()["frag"] == 0.0         # one vessel, its ends at the border
+    (k,) = C.net.edges                              # split it again where it was joined
+    s = C.samples(k)
+    i = int(np.argmin(np.abs(s["xy"][:, 0] - 160)))
+    check(dict(kind="split", anchor=[k], key=("split", k, i), focus=s["xy"][i],
+               build=C._split_builder(k, s["s_arc"][i])))
+    assert len(C.net.edges) == 2 and C.energy_total()["frag"] > 0
+    check(C.delete_moves()[0])
 
 
 def _straight(net, p, q, r=2.5, s=1.0, n=60):
@@ -309,27 +323,35 @@ def test_split_and_rejoin_keeps_link_records_once():
 
 
 def test_cached_join_score_follows_changes_around_it():
-    """A join is scored, then a vessel crossing the junction's surroundings
-    is deleted.  The cached score, corrected through its sensitivity, must
-    be the energy change applying the join then makes, although the stale
-    score is far off."""
+    """A join is scored, then a vessel next to the junction, whose end
+    faces it, is deleted.  The cached data score, corrected through its
+    sensitivity, plus a fresh change of Phi must be the energy change
+    applying the join then makes, although the stale score is far off."""
     H, W = 140, 360
     x = np.linspace(-10, 370, 400)
     v = dict(xy=np.stack([x, 70 + 0 * x], 1), r=np.full(400, 2.0), blur=1.0, amp=0.3)
     cross = dict(xy=np.stack([190 + 0 * x[:200], np.linspace(-10, 150, 200)], 1),
                  r=np.full(200, 1.5), blur=1.0, amp=0.25)
-    I, P = _scene([v, cross], (H, W))
+    side = dict(xy=np.stack([178 + 0 * x[:100], np.linspace(-10, 62, 100)], 1),
+                r=np.full(100, 2.0), blur=1.0, amp=0.35)
+    I, P = _scene([v, cross, side], (H, W))
     net = VesselNetwork((H, W))
-    _edge(net, _line((0, 70), (170, 70), 200))
-    _edge(net, _line((186, 70), (359, 70), 200))
+    _edge(net, _line((0, 70), (168, 70), 200))
+    _edge(net, _line((188, 70), (359, 70), 200))
     xk = _edge(net, _line((190, 0), (190, 139), 150), r=1.5, a=0.25)
+    xs = _edge(net, _line((178, 0), (178, 62), 70), r=2.0, a=0.35)  # its end faces the junction
     C = VesselSearch(net, P, _cfg(init_iters=60, workers=1, refit_tol=1e9))
-    (join,) = [m for m in C.join_moves() if xk not in m["anchor"]]
-    stale = C.evaluate(join)[0]
-    (dele,) = [m for m in C.delete_moves() if m["anchor"] == [xk]]
-    C.apply(C.evaluate(dele)[1])                   # the crossing vessel goes
+    (join,) = [m for m in C.join_moves() if xk not in m["anchor"] and xs not in m["anchor"]]
+    dE0, prop0 = C.evaluate(join)
+    phi0 = C._phi_delta(prop0)
+    stale = dE0 + phi0
+    (dele,) = [m for m in C.delete_moves() if m["anchor"] == [xs]]
+    C.apply(C.evaluate(dele)[1])                   # the side vessel goes
     hit, (dE, prop) = C._lookup(join)
     assert hit
+    phi1 = C._phi_delta(prop)
+    assert abs(phi1 - phi0) > 100, (phi0, phi1)    # the side end mattered to Phi too
+    dE += phi1
     E0 = C.energy_total()["total"]
     C.apply(prop)
     change = C.energy_total()["total"] - E0
@@ -408,3 +430,149 @@ def test_cached_score_is_refitted_when_the_sparse_correction_would_mislead():
     change = C.energy_total()["total"] - E0
     tol = C.cfg.refit_tol * C.tau * C.cfg.lam_vessel
     assert abs(change - dE) < tol, (hit, change, dE, tol)
+
+
+def _rand_rows(rng, vids, box=90.0):
+    rows = []
+    for v in vids:
+        for end in (0, 1):
+            a = rng.uniform(0, 2 * np.pi)
+            rows.append((v, rng.uniform(0, box, 2), np.array([np.cos(a), np.sin(a)]),
+                         float(rng.uniform(1, 4)), float(rng.choice([0.0, rng.uniform(0, 500)],
+                                                                    p=[0.15, 0.85])), end))
+    return rows
+
+
+def test_mwm_matches_networkx():
+    import networkx as nx
+    from vesselmap.search import _mwm
+    rng = np.random.default_rng(0)
+    for trial in range(200):
+        n = int(rng.integers(2, 16))
+        edges = [(i, j, float(rng.uniform(0.1, 10))) for i in range(n) for j in range(i + 1, n)
+                 if rng.random() < 0.35]
+        G = nx.Graph()
+        G.add_weighted_edges_from(edges)
+        ref = sum(G[i][j]["weight"] for i, j in nx.max_weight_matching(G)) if edges else 0.0
+        assert abs(_mwm(edges) - ref) < 1e-9, (trial, n)
+
+
+def test_phi_delta_is_exact_and_bounded():
+    """The change of Phi a move makes, computed on the components it
+    touches, is the change of Phi over the whole map; removing a vessel
+    releases at most its ends' om, adding ends never lowers Phi, and
+    removing then re-adding ends restores it (split and join are exact
+    inverses)."""
+    from vesselmap.search import EndGraph, SearchConfig
+    cfg = SearchConfig()
+    rng = np.random.default_rng(1)
+    for trial in range(300):
+        nv = int(rng.integers(10, 21))
+        rows = _rand_rows(rng, range(nv))
+        G = EndGraph(rows, cfg)
+        gone_v = set(rng.choice(nv, int(rng.integers(0, 4)), replace=False).tolist())
+        nn = int(rng.integers(0, 4))
+        new = _rand_rows(rng, range(-1, -1 - nn, -1))
+        gone = [i for i, r in enumerate(rows) if r[0] in gone_v]
+        d = G.delta(gone, new)
+        after = [r for r in rows if r[0] not in gone_v] + \
+            [(1000 - r[0],) + r[1:] for r in new]
+        assert abs(d - (EndGraph(after, cfg).total - G.total)) < 1e-6, trial
+        assert G.delta([], new) >= -1e-9                           # monotone
+        v = int(rng.integers(nv))
+        gv = G.by_vid[v]
+        assert -G.delta(gv, []) <= G.bound([v]) + 1e-9             # existence bound
+        G1 = EndGraph([r for r in rows if r[0] != v], cfg)          # remove, then re-add
+        back = [(-1,) + rows[i][1:] for i in gv]
+        assert abs(G1.delta([], back) + G.delta(gv, [])) < 1e-6, trial
+
+
+def test_phi_off_is_zero():
+    H, W = 120, 240
+    I, P = _scene([_vessel(_line((-10, 60), (250, 60)))], (H, W))
+    net = VesselNetwork((H, W))
+    _edge(net, _line((0, 60), (100, 60)))
+    _edge(net, _line((108, 60), (239, 60)))
+    C = VesselSearch(net, P, _cfg(workers=1, lam_frag=0.0, lam_pair=0.0))
+    assert C.energy_total()["frag"] == 0.0
+    for m in C.all_moves():
+        r = C.evaluate(m)
+        if r is not None:
+            assert C._phi_delta(r[1]) == 0.0
+    C2 = VesselSearch(net, P, _cfg(workers=1))
+    E = C2.energy_total()
+    assert E["frag"] > 0 and E["matched_pairs"] == 1 and E["facing_pairs"] == 1
+
+
+def _faint_scene(pieces):
+    """A faint straight vessel (r 1.5, amplitude 0.15) across a 320 px wide
+    image, mapped as the given pieces (x ranges)."""
+    H, W = 100, 320
+    I, P = _scene([_vessel(_line((-10, 50), (330, 50)), r=1.5, amp=0.15)], (H, W))
+    net = VesselNetwork((H, W))
+    for a, b in pieces:
+        _edge(net, _line((a, 50), (b, 50), int(b - a)), r=1.5, a=0.15)
+    return P, net
+
+
+def test_faint_fragmented_vessel_joins_not_deleted():
+    """What no per-vessel cost can do: a vessel cost high enough to join
+    the pieces of a faint vessel deletes them first; Phi joins them and
+    leaves existence to the price."""
+    from vesselmap.render import NetworkModel
+    P, net = _faint_scene([(5, 100), (108, 203), (211, 306)])
+    kw = dict(workers=1, texture_null=False, lam_length=1.0)
+    C = VesselSearch(net, P, _cfg(**kw))
+    g, _ = C._global_model().edge_gains()
+    ratio = g / np.array([C.samples(k)["L"] for k in C.net.edges]) / C.price
+    assert np.all((ratio > 2) & (ratio < 6)), ratio          # faint, but above the price
+    old = VesselSearch(net, P, _cfg(lam_vessel=1500.0, lam_frag=0.0, **kw)).run()
+    assert len(old.edges) == 0, old.summary()
+    out = VesselSearch(net, P, _cfg(**kw)).run()
+    assert len(out.edges) == 1, out.summary()
+    (k,) = out.edges
+    assert out.length(k) > 0.9 * 300, out.length(k)
+
+
+def test_isolated_faint_vessel_survives():
+    P, net = _faint_scene([(5, 306)])
+    out = VesselSearch(net, P, _cfg(workers=1, texture_null=False, lam_length=1.0,
+                                    lam_frag=0.6)).run()
+    assert len(out.edges) == 1 and out.length(list(out.edges)[0]) > 290
+
+
+def test_no_junk_tail_on_a_strong_end():
+    """A strong vessel ending where a texture-grade piece continues it: the
+    junk end's om is 0, so joining it earns nothing (the min) and it goes."""
+    H, W = 100, 320
+    I, P = _scene([_vessel(_line((-10, 50), (200, 50)), r=2.0, amp=0.35)], (H, W))
+    net = VesselNetwork((H, W))
+    _edge(net, _line((0, 50), (200, 50), 200), r=2.0, a=0.35)
+    _edge(net, _line((206, 50), (236, 50), 30), r=1.5, a=0.02)
+    out = VesselSearch(net, P, _cfg(workers=1)).run()
+    assert len(out.edges) == 1, out.summary()
+    xy = out.sample(list(out.edges)[0], 1.0)["xy"]
+    assert abs(xy[:, 0].max() - 200) < 4, xy[:, 0].max()
+
+
+def test_face_weight_gap_taper_and_mutual_overlap():
+    """Every pair here passes the join test (it stays a candidate), but the
+    fragmentation weight counts a gap only up to frag_gap (full) .. twice
+    it (none), and an overlap only when each end lies on the other's line."""
+    from vesselmap.search import SearchConfig, _faces, face_weight
+    cfg = SearchConfig()
+    E = lambda p, t, w=3.0: (np.array(p, float), np.array(t, float) / np.linalg.norm(t), w)
+    faces = lambda a, b: _faces(*a, *b, cfg) or _faces(*b, *a, cfg)
+    for gap, want in ((0.0, 1.0), (4.0, 1.0), (9.0, 0.5), (12.0, 0.0), (16.0, 0.0)):
+        a, b = E((100, 50), (1, 0)), E((100 + gap, 50), (-1, 0))
+        assert faces(a, b)
+        assert abs(face_weight(a, b, cfg) - want) < 1e-6, (gap, face_weight(a, b, cfg))
+    a, b = E((100, 50), (1, 0)), E((88, 50.5), (-1, 0))             # a vessel found twice
+    assert faces(a, b) and face_weight(a, b, cfg) == 1.0
+    # a branch leaving a parent 14 px before the parent's end: from the
+    # parent's end the branch start lies behind it on its line, but not
+    # the other way round
+    parent_end = E((297.8, 240.5), (-0.41, 0.91), 3.7)
+    branch_start = E((302.8, 227.3), (0.70, -0.71), 3.7)
+    assert faces(parent_end, branch_start)
+    assert face_weight(parent_end, branch_start, cfg) < 0.1
