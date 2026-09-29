@@ -2,7 +2,8 @@
 
     python -m vesselmap map IMAGE -o OUT [--set key=value ...]
     python -m vesselmap refine MAP.json IMAGE -o OUT
-    python -m vesselmap consolidate MAP.json IMAGE -o OUT
+    python -m vesselmap consolidate MAP.json IMAGE -o OUT [--no-search]
+    python -m vesselmap consolidate-eval [--seeds 0 1 2] [--source map|fragmented] -o OUT
     python -m vesselmap faint MAP.json IMAGE -o OUT
     python -m vesselmap flow MAP.json --burst DIR --reference IMAGE -o OUT
     python -m vesselmap video FLOWMAP.json --burst DIR --registration REG.npz -o OUT.mp4
@@ -220,11 +221,81 @@ def cmd_consolidate(a):
     cc = _apply_sets(ConsolidateConfig(verbose=not a.quiet), a.consolidate_set)
     t = time.time()
     out = consolidate_map(I, net, cfg, cc, prepared=P)
+    c = out.meta["consolidation"]
+    msg = f"{c['edges_before']} segments -> {c['edges_after']} vessels by matching"
+    if not a.no_search:
+        from .search import SearchConfig, search_map
+        sc = _apply_sets(SearchConfig(verbose=not a.quiet), a.search_set)
+        out = search_map(I, out, sc, prepared=P)
+        msg += f" -> {len(out.edges)} by the energy search"
     out.meta["source_image"] = os.path.abspath(a.image)
     write_outputs(out, I, P, a.out)
-    c = out.meta["consolidation"]
-    print(f"consolidated map written to {a.out} in {time.time() - t:.0f}s: "
-          f"{c['edges_before']} segments -> {c['edges_after']} vessels; {out.summary()}")
+    print(f"consolidated map written to {a.out} in {time.time() - t:.0f}s: {msg}; {out.summary()}")
+
+
+def cmd_consolidate_eval(a):
+    """Test harness: consolidation against synthetic ground truth, after
+    the matching alone and after the energy search."""
+    import numpy as np
+    from .consolidate import ConsolidateConfig, consolidate_map
+    from .draw import truth_panels
+    from .fit import MapConfig, build_map
+    from .image import prepare
+    from .network import VesselNetwork
+    from .search import SearchConfig, search_map
+    from .synthetic import centreline_metrics, fragment_network, make_scene, vessel_metrics
+    os.makedirs(a.out, exist_ok=True)
+    cols = ("n_edges", "excess", "fragments_weighted", "best_cover", "purity", "spurious",
+            "recall", "precision", "nll")
+    res = []
+    for seed in a.seeds:
+        I, vessels, _ = make_scene(seed, shape=tuple(a.shape))
+        P = prepare(I)
+        cfg = MapConfig(verbose=False)
+        if a.source == "fragmented":
+            # the ground truth cut into pieces, with duplicates and spurious edges
+            net0 = fragment_network(vessels, I.shape, np.random.default_rng(seed + 1))
+            from .fit import optimize
+            from .render import NetworkModel
+            m = NetworkModel(net0, P.logI, P.weight, stride=1, bg_spacing=cfg.bg_spacing)
+            optimize(m, 200, cfg.lr_pos * 0.5, cfg.lr_prof, cfg.lr_bg, priors=cfg.priors())
+            m.write_back()
+        else:
+            cache = os.path.join(a.out, f"seed{seed}_map.json")
+            if os.path.exists(cache):
+                net0 = VesselNetwork.load(cache)
+            else:
+                net0 = build_map(I, cfg, prepared=P)
+                net0.save(cache)
+        t = time.time()
+        stages = [("map", net0)]
+        matched = consolidate_map(I, net0, cfg, ConsolidateConfig(verbose=False), prepared=P)
+        stages.append(("matched", matched))
+        t_match = time.time() - t
+        sc = _apply_sets(SearchConfig(verbose=not a.quiet, seed=seed), a.set)
+        searched = search_map(I, matched, sc, prepared=P)
+        stages.append(("searched", searched))
+        row = dict(seed=seed, source=a.source, seconds_match=round(t_match, 1),
+                   seconds_search=round(time.time() - t - t_match, 1),
+                   tau=searched.meta["search"]["tau"])
+        for tag, n in stages:
+            m = vessel_metrics(n, vessels, I.shape)
+            c = centreline_metrics(n, vessels, I.shape)
+            nll = n.meta.get("final_nll", float("nan"))
+            row[tag] = dict(**{k: m[k] for k in cols[:6]}, recall=c["recall"],
+                            precision=c["precision"], nll=nll)
+        res.append(row)
+        truth_panels(I, vessels, [n for _, n in stages], os.path.join(a.out, f"seed{seed}_panels.png"))
+        searched.save(os.path.join(a.out, f"seed{seed}_searched.json"))
+        print(json.dumps(row), flush=True)
+    with open(os.path.join(a.out, "consolidate_eval.json"), "w") as f:
+        json.dump(res, f, indent=1)
+    fmt = lambda k, v: f"{v:>10.0f}" if k == "nll" else f"{v:>10.3f}" if isinstance(v, float) \
+        else f"{v:>10}"
+    print(f"{'seed':>4} {'':9} " + " ".join(f"{k[:10]:>10}" for k in cols))
+    for row in res:
+        for tag in ("map", "matched", "searched"):
+            print(f"{row['seed']:>4} {tag:9} " + " ".join(fmt(k, row[tag][k]) for k in cols))
 
 
 def cmd_fit_frames(a):
@@ -321,8 +392,22 @@ def main(argv=None):
     c.add_argument("-o", "--out", required=True)
     c.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
     c.add_argument("--consolidate-set", nargs="*", help="ConsolidateConfig overrides key=value")
+    c.add_argument("--search-set", nargs="*", help="SearchConfig overrides key=value")
+    c.add_argument("--no-search", action="store_true",
+                   help="only match continuations; skip the energy search (search.py)")
     c.add_argument("--quiet", action="store_true")
     c.set_defaults(func=cmd_consolidate)
+    ce = sub.add_parser("consolidate-eval", help="score consolidation against synthetic ground "
+                                                 "truth (matching alone, and with the search)")
+    ce.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    ce.add_argument("--source", choices=["map", "fragmented"], default="map",
+                    help="consolidate the mapper's output (built once, cached in OUT) or the "
+                         "ground truth cut into pieces (fast)")
+    ce.add_argument("--shape", type=int, nargs=2, default=[512, 768])
+    ce.add_argument("-o", "--out", required=True)
+    ce.add_argument("--set", nargs="*", help="SearchConfig overrides key=value")
+    ce.add_argument("--quiet", action="store_true")
+    ce.set_defaults(func=cmd_consolidate_eval)
     fa = sub.add_parser("faint", help="add a recall tier of faint vessels traced along their "
                                       "length (for the search mask)")
     fa.add_argument("map")

@@ -37,8 +37,13 @@ python -m vesselmap flow out/faint/map.json --burst BURST_DIR --reference IMAGE 
 #     flicker, and tracer dots moving at the measured velocity (add --crop to zoom)
 python -m vesselmap video out/flow/map.json --burst BURST_DIR --registration out/flow/registration.npz -o out/flow.mp4
 
-# 3. optional: one spline per vessel instead of one per segment
+# 3. optional: one spline per vessel instead of one per segment: continuations
+#    are matched, then an energy search (search.py) joins, splits and deletes
+#    to the fewest vessels that render the image (--no-search: matching only)
 python -m vesselmap consolidate out/refined/map.json reference_data/burst_2026-09-16_15-50-52/frame_000020.tif -o out/vessels
+
+# score consolidation on synthetic images with known ground truth
+python -m vesselmap consolidate-eval --seeds 0 1 2 -o out/consolidate-eval
 
 # 4. adjust it to other (stabilised) frames: same ids, small moves
 python -m vesselmap fit-frames out/vessels/map.json stabilized/frame_*.tif -o out/frames --chain --overlays
@@ -194,6 +199,61 @@ graph: every segment carries `vessel`, the id of the spline it belongs to.
 `map_overlay_vessels.png` colours each vessel differently. `refine` accepts
 a consolidated map and works on its segments; run `consolidate` again after
 it.
+
+**Energy search** (`search_map`, `search.py`). `consolidate` runs it after
+the matching (`--no-search` skips it). The matching joins only what passes
+fixed thresholds, and removes nothing. The search goes on from the matched
+vessels by minimising one explicit objective over the *structure* of the
+map:
+
+    E(M) = NLL(image | M) + prior(M) + sum_v (tau * lam_vessel + price * L_v)
+
+NLL and prior are the renderer's score, with the windowed calibre prior of
+consolidation. The last term is new.
+
+* *A cost per vessel.* Every vessel pays `tau * lam_vessel` (`lam_vessel`
+  = 150), so two pieces of one vessel cost more than the vessel.
+  `tau` is the data temperature, the reduced chi-square of the map's
+  residual: structured misfit inflates NLL differences by about that
+  factor.
+* *A price per px of centreline*, so a vessel must explain enough of the
+  image per px to be kept. The NLL alone cannot say what is too weak to be
+  a vessel: its noise is the sensor's, and in a 12-bit frame any texture
+  ridge is overwhelmingly significant. On frame 20 the median segment
+  explains 34 NLL per px, the weakest 5 % still 7.5. So the price is set
+  by the *texture null*. Tissue texture makes bright ridges as often as
+  dark ones, and vessels are only dark. 'Anti-vessels' are therefore
+  fitted by the same renderer to the bright ridges of the map's residual,
+  away from mapped vessels. The price is the 90th percentile of their
+  evidence per px (length-weighted). A vessel that explains no more per
+  px than that is not told apart from texture.
+* *Moves.* `join` two vessel ends into one spline: ends that met at a node,
+  a bridged gap, or overlapping ends of a vessel found twice. `delete` a
+  vessel; any vessel duplicating it is re-fitted to take over. `split` a
+  vessel at a sharp bend, and `reroute` which arm of a branch point
+  continues the parent. `revive` a deleted vessel. No move is limited by a
+  turn, calibre or blur threshold: every candidate is judged by the change
+  of E.
+* *Exact local energy.* A move changes the image only near the vessels it
+  touches. Its energy change is computed on a window, rendering only those
+  vessels over the fixed rest of the model: the other vessels' optical
+  density, halo included, and the background. A join, split or reroute
+  re-fits only the parameters within 30 px of the junction and scores the
+  pixels around it, so its cost does not depend on the vessel's length.
+* *Search.* Rejection-free annealing. At every step every candidate move is
+  scored, and one is drawn with probability proportional to exp(-dE / T),
+  staying put (dE = 0) included. A score stays cached until the optical
+  density of the other vessels in its window changes; stale scores are
+  re-fitted in worker processes. At a high temperature the search can
+  leave a local minimum, for example join two pieces only after a
+  duplicate between them has gone, or delete a weak vessel and later
+  revive it. As T falls it becomes steepest descent, and it stops when no
+  move lowers E. A joint fit of every vessel and the background follows,
+  then a last greedy pass.
+* *Output.* A branch end lying on another vessel becomes a node that vessel
+  passes through (`info["through"]`), as in consolidation. Every join
+  records `evidence="energy"` and its dE in `info["links"]`, and
+  `map_summary.json` holds the search's energies, temperature and price.
 
 **Per-frame fitting** (`fit_frame`) first aligns the map to the frame
 globally. Phase correlation between the rendered vessel image and the frame's
@@ -530,7 +590,8 @@ frame fits about as well as the frame the map was built from.
 B-splines · `network.py` graph and topology · `render.py` differentiable
 renderer and score · `fit.py` discovery and per-frame fitting ·
 `refine.py` fine detail · `faint.py` faint tier and search mask · `flow.py` velocity and flow-informed consolidation · `video.py` flow video · `report.py` HTML report of a run ·
-`consolidate.py` one spline per vessel · `draw.py`
+`consolidate.py` one spline per vessel · `search.py` energy search over the
+vessels (fewest that render the image) · `draw.py`
 figures and HTML · `synthetic.py` ground-truth scenes and metrics ·
 `tests/` (`python -m pytest vesselmap/tests`; add `-m "not slow"` for the
 fast ones).

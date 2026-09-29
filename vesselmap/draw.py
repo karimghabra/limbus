@@ -300,3 +300,34 @@ const k=D.summary.node_kinds;document.getElementById('stats').textContent=
  `${D.summary.n_edges} edges · ${D.summary.n_nodes} nodes (${Object.entries(k).map(([a,b])=>b+' '+a).join(', ')}) · ${D.crossings.length} crossings · ${Math.round(D.summary.total_length_px)} px centreline · direction = structural convention (wide→narrow), not flow`;
 </script></body></html>
 """
+
+
+def truth_panels(intensity, vessels, nets, path, scale=2.0, labels=False):
+    """Ground truth (green) above one panel per network, each vessel in its
+    own colour and the true centreline points it misses in red: fragmented
+    vessels show as runs of colours, missed ones as red dots."""
+    from scipy.spatial import cKDTree
+    from .synthetic import _true_points
+    base = overlay(VesselNetwork(intensity.shape), intensity, scale=scale, nodes=False,
+                   arrows=False, crossings=False)
+    for v in vessels:
+        cv2.polylines(base, [np.round(v["xy"] * scale * 8).astype(np.int32)], False,
+                      (0, 255, 0), 1, cv2.LINE_AA, shift=3)
+    tiles = [base]
+    tp, _, _, tr = _true_points(vessels, intensity.shape)
+    for net in nets:
+        img = overlay(net, intensity, color_by="vessel", scale=scale, arrows=False,
+                      thickness=2, crossings=False)
+        if net.edges:
+            X = np.concatenate([net.sample(k, 1.0)["xy"] for k in net.edges])
+            d, _ = cKDTree(X).query(tp)
+            for p in tp[d > np.maximum(2.0, tr)]:
+                cv2.circle(img, tuple(np.round(p * scale).astype(int)), 1, (0, 0, 255), -1)
+        if labels:
+            for k in net.edges:
+                x, y = net.sample(k, 1.0)["xy"].mean(0) * scale
+                cv2.putText(img, str(k), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.35,
+                            (255, 255, 255), 1)
+        tiles.append(img)
+    cv2.imwrite(str(path), np.vstack(tiles))
+

@@ -185,6 +185,11 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
                         to its main vessel, length-weighted (1 is ideal:
                         no edge mixes two vessels)
     * mixed_edges       edges that annotate two or more vessels
+    * excess            n_edges - n_vessels_seen: splines beyond one per
+                        vessel found (0 is ideal: no fragments, nothing
+                        spurious)
+    * spurious          edges with less than half their length on any true
+                        vessel (and their total length, spurious_len)
 
     A vessel that forks keeps its identity through the fork in the ground
     truth (the parent runs on, the branch is a separate vessel), which is
@@ -208,7 +213,8 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
     eids = list(net.edges)
     if not eids:
         return dict(fragments=0.0, fragments_weighted=0.0, best_cover=0.0, purity=0.0,
-                    mixed_edges=0, n_edges=0)
+                    mixed_edges=0, n_edges=0, n_vessels_seen=0, excess=0, spurious=0,
+                    spurious_len=0.0)
     tree = cKDTree(tx)
     counts = np.zeros((len(eids), nv))
     cover = np.zeros((len(eids), nv))
@@ -224,6 +230,8 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
         hit = d2 <= tol_t
         cover[i] = np.bincount(tv[hit], minlength=nv)
     annot = counts >= np.maximum(min_piece, min_frac * elen)[:, None]
+    # splines with less than half their length on any vessel annotate nothing
+    spurious = counts.sum(1) < 0.5 * elen
     n_frag = annot.sum(0)
     seen = n_frag > 0
     frag = float(n_frag[seen].mean()) if seen.any() else 0.0
@@ -236,4 +244,61 @@ def vessel_metrics(net, vessels, shape, tol_min=2.0, tol_frac=0.5, spacing=1.0,
     return dict(fragments=round(frag, 3), fragments_weighted=round(frag_w, 3),
                 best_cover=round(best_cover, 4), purity=round(purity, 4),
                 mixed_edges=int((annot.sum(1) >= 2).sum()), n_edges=len(eids),
-                n_vessels_seen=int(seen.sum()))
+                n_vessels_seen=int(seen.sum()),
+                excess=len(eids) - int(seen.sum()), spurious=int(spurious.sum()),
+                spurious_len=round(float(elen[spurious].sum() * spacing), 1))
+
+
+def fragment_network(vessels, shape, rng, piece_len=(25.0, 80.0), gap=(0.0, 6.0),
+                     jitter=0.3, dup_frac=0.15, n_spurious=6, min_len=12.0):
+    """A deliberately fragmented network built from the ground truth, as a
+    fast stand-in for a noisy map: every true vessel is cut into pieces of
+    random length separated by small gaps, some pieces get a slightly
+    offset duplicate (as found again in another scale band), and a few short
+    faint edges are scattered over the background.  Profiles are the true
+    ones (r, blur, peak density)."""
+    from scipy.ndimage import gaussian_filter1d
+    from .network import VesselNetwork
+    H, W = shape
+    net = VesselNetwork(shape)
+    net.meta["optics"] = dict(halo_weight=0.02, halo_sigma=3.0)
+    for v in vessels:
+        xy = np.asarray(v["xy"], float)
+        seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+        s = np.r_[0, np.cumsum(seg)]
+        q = np.arange(0, s[-1], 0.7)
+        p = np.stack([np.interp(q, s, xy[:, 0]), np.interp(q, s, xy[:, 1])], 1)
+        r = np.interp(q, s, v["r"])
+        inside = (p[:, 0] >= 0) & (p[:, 0] <= W - 1) & (p[:, 1] >= 0) & (p[:, 1] <= H - 1)
+        if inside.sum() < 2:
+            continue
+        idx = np.flatnonzero(inside)
+        p, r, q = p[idx[0]:idx[-1] + 1], r[idx[0]:idx[-1] + 1], q[idx[0]:idx[-1] + 1]
+        q = q - q[0]
+        off = gaussian_filter1d(rng.standard_normal((len(p), 2)), 8.0, axis=0) * jitter * 4
+        p = p + off
+        a0 = 0.0
+        while a0 < q[-1]:
+            a1 = min(q[-1], a0 + rng.uniform(*piece_len))
+            if q[-1] - a1 < min_len:
+                a1 = q[-1]
+            m = (q >= a0) & (q <= a1)
+            if m.sum() >= 3 and a1 - a0 >= min_len:
+                n = int(m.sum())
+                amp = np.full(n, v["amp"])
+                net.add_edge_dense(p[m], r[m], np.full(n, v["blur"]), amp,
+                                   info=dict(true_id=int(id(v) % 100000)))
+                if rng.random() < dup_frac:
+                    shift = rng.normal(0, 0.8, 2)
+                    net.add_edge_dense(p[m] + shift, r[m] * 1.2, np.full(n, v["blur"] * 1.1),
+                                       amp * 0.5)
+            a0 = a1 + rng.uniform(*gap)
+    for _ in range(n_spurious):
+        c = rng.uniform([20, 20], [W - 20, H - 20])
+        ang = rng.uniform(0, math.pi)
+        L = rng.uniform(15, 40)
+        t = np.linspace(-L / 2, L / 2, int(L))
+        p = c + np.stack([t * math.cos(ang), t * math.sin(ang)], 1)
+        n = len(p)
+        net.add_edge_dense(p, np.full(n, 1.0), np.full(n, 1.0), np.full(n, 0.02))
+    return net
