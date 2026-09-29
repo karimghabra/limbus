@@ -62,6 +62,7 @@ image are used.
 """
 from __future__ import annotations
 
+import json
 import math
 import multiprocessing
 import os
@@ -93,7 +94,10 @@ class SearchConfig:
     t_start: float = 0.1            # first temperature, as a fraction of tau * lam_vessel
     hot_steps: float = 0.5          # annealing steps (x number of input edges) before T = 0
     hopeless: float = 10.0          # a move scored worse than this (x tau * lam_vessel) is
-                                    # not re-scored while its vessels exist
+                                    # not re-fitted while its vessels exist
+    refit_tol: float = 0.05         # a cached score is corrected for changes around the move
+                                    # (exact for the fitted vessels); beyond this (x tau *
+                                    # lam_vessel) the move is re-fitted, as its fit may adapt
     local_iters: int = 40           # gradient steps after a move
     focus_radius: float = 30.0      # a join / split / reroute re-fits the vessel within this
                                     # distance (px) of the junction; the rest stays as it was
@@ -249,6 +253,49 @@ def _join_profiles(A, ia, B, jb, nb):
     return out
 
 
+def _link_pos(L):
+    for k in ("xy", "xy0"):
+        if L.get(k) is not None:
+            return np.asarray(L[k], float)[:2]
+    return None
+
+
+def _dedup_links(links):
+    seen, out = set(), []
+    for L in links:
+        key = json.dumps(L, sort_keys=True, default=str)
+        if key not in seen:
+            seen.add(key)
+            out.append(L)
+    return out
+
+
+def _links_on(links, xy, tol=8.0):
+    """The link records whose position lies on a vessel with samples xy
+    (records without a position stay with every piece)."""
+    out, tree = [], None
+    for L in links:
+        p = _link_pos(L)
+        if p is None:
+            out.append(L)
+            continue
+        tree = tree or cKDTree(xy)
+        if tree.query(p)[0] <= tol:
+            out.append(L)
+    return out
+
+
+def _piece_info(info, xy):
+    """Info of a piece cut from a vessel: its link records only."""
+    out = dict(info)
+    links = _links_on(info.get("links", []), xy)
+    if links:
+        out["links"] = links
+    else:
+        out.pop("links", None)
+    return out
+
+
 def _merge_info(infos):
     info = {}
     bands = [i["band"] for i in infos if i.get("band")]
@@ -256,7 +303,7 @@ def _merge_info(infos):
         info["band"] = [min(b[0] for b in bands), max(b[1] for b in bands)]
     info["consolidated_from"] = sorted({f for i in infos for f in i.get("consolidated_from", [])})
     info["spacing"] = min(i.get("spacing", 12.0) for i in infos)
-    links = [L for i in infos for L in i.get("links", [])]
+    links = _dedup_links([L for i in infos for L in i.get("links", [])])
     if links:
         info["links"] = links
     return info
@@ -535,45 +582,30 @@ class VesselSearch:
               (bb[:, 3] >= lo[1] - margin) & (bb[:, 1] <= hi[1] + margin)
         return I["ids"][sel]
 
-    def _move_window(self, move):
-        """The window a move is scored on (known before it is built)."""
-        if move.get("focus") is not None:
-            return self._focus_window(np.asarray(move["focus"], float), self._focus_reach(move))
-        if move["anchor"]:
-            return self._window([self.samples(k) for k in move["anchor"]])
-        return self._window([move["smp"]])
-
-    def _signature(self, win):
-        """Fingerprint of the fixed optical density a move sees in its
-        window: total, and its centroid."""
-        x0, y0, x1, y1 = win
-        V = self.V.reshape(self.H, self.W)[y0:y1, x0:x1].astype(np.float64)
-        m = V.sum()
-        if m <= 0:
-            return (0.0, 0.0, 0.0)
-        return (m, float(V.sum(0) @ np.arange(x0, x1)) / m, float(V.sum(1) @ np.arange(y0, y1)) / m)
-
-    def _cached(self, move):
-        """The cached score of a move if its context has not changed: the
-        vessels it involves all exist and the fixed optical density in its
-        window is the same (total within 0.2 %, centroid within 0.05 px).
-        Joins far away replace vessels by new ids without changing what a
-        move here sees, so their scores stay valid.  A hopeless move (e.g.
-        deleting a strong vessel) keeps its score while its vessels exist:
-        nothing nearby can bring it within reach."""
-        c = self._cache.get(move["key"])
-        if c is None:
-            return None
-        sig, win, r = c
-        if r is not None and any(k not in self.net.edges for k in r[1][0]):
-            return None
-        if r is not None and r[0] > self.cfg.hopeless * self.tau * self.cfg.lam_vessel:
-            return c            # far out of reach at any temperature the search uses
-        now = self._signature(win)
-        if abs(now[0] - sig[0]) > 2e-3 * max(sig[0], 1e-9) + 1e-6 or \
-                abs(now[1] - sig[1]) > 0.05 or abs(now[2] - sig[2]) > 0.05:
-            return None
-        return c
+    def _lookup(self, move):
+        """(True, result) for a usable cached score, (False, None) when the
+        move must be scored.  A move's dE depends on the other vessels only
+        through the target of its local models, and linearly: with the new
+        vessels' parameters fixed, dNLL changes by sens . (V_now - V_then)
+        (see _sensitivity).  So a cached dE is corrected exactly for every
+        change around the move since it was scored, and the move is only
+        re-fitted when that correction is large enough for the fit itself
+        to adapt (refit_tol), or when a vessel it involves has gone."""
+        key = move["key"]
+        if key not in self._cache:
+            return False, None
+        out = self._cache[key]
+        if out is None:                    # cannot be built: depends on its own vessels only
+            return True, None
+        dE, prop = out
+        if any(k not in self.net.edges for k in prop[0]):
+            return False, None
+        idx, vals, S0 = prop[4]
+        delta = float(vals @ self.V[idx]) - S0 if len(idx) else 0.0
+        scale = self.tau * self.cfg.lam_vessel
+        if abs(delta) > self.cfg.refit_tol * scale and dE + delta < self.cfg.hopeless * scale:
+            return False, None
+        return True, (dE + delta, prop)
 
     def _focus_reach(self, move):
         """Radius of a move's focus window: the re-fitted stretch plus the
@@ -586,19 +618,38 @@ class VesselSearch:
     def evaluate(self, move):
         """dE of a move, with the new vessels fitted locally.  Returns
         (dE, proposal) with proposal = (old ids, new edges, patches of the
-        new edges or None, window), or None when the move cannot be built.
-        Cached (see _cached)."""
-        c = self._cached(move)
-        if c is not None:
-            return c[2]
+        new edges or None, window, sensitivity), or None when the move cannot
+        be built.  Cached, and corrected for later changes (see _lookup)."""
+        hit, out = self._lookup(move)
+        if hit:
+            return out
         out = self._compute(move)
-        self._store(move, out)
+        self._cache[move["key"]] = out
         self.n_evaluated += 1
         return out
 
-    def _store(self, move, out):
-        win = out[1][3] if out is not None else self._move_window(move)
-        self._cache[move["key"]] = (self._signature(win), win, out)
+    @torch.no_grad()
+    def _sensitivity(self, m_old, m_new, win):
+        """d(dE)/dV, V the sharp-core image of the fixed vessels, as sparse
+        (pixel indices, values) plus their dot product with V now.  The local
+        models are fitted against target = logI - B + OD_fixed, and dNLL =
+        sum w (OD_new - OD_old) target + (a term without target), so the
+        derivative w.r.t. OD_fixed is A = w dOD, and w.r.t. V the halo
+        operator's adjoint (itself) applied to A."""
+        d = (m_new.optical_density() - m_old.optical_density()).numpy()
+        A = m_new.weight.numpy() * d
+        x0, y0, x1, y1 = win
+        pad = int(math.ceil(3 * self.hs)) + 2
+        X0, Y0 = max(0, x0 - pad), max(0, y0 - pad)
+        X1, Y1 = min(self.W, x1 + pad), min(self.H, y1 + pad)
+        Ap = np.zeros((Y1 - Y0, X1 - X0), np.float32)
+        Ap[y0 - Y0:y1 - Y0, x0 - X0:x1 - X0] = A
+        Ap = (1 - self.hw) * Ap + self.hw * _cv_blur(Ap, self.hs)
+        m = float(np.abs(Ap).max()) if Ap.size else 0.0
+        ys, xs = np.nonzero(np.abs(Ap) > 1e-3 * m) if m > 0 else (np.zeros(0, int),) * 2
+        idx = ((ys + Y0) * self.W + xs + X0).astype(np.int64)
+        vals = Ap[ys, xs].astype(np.float32)
+        return idx, vals, float(vals @ self.V[idx]) if len(idx) else 0.0
 
     def _compute(self, move):
         """(dE, (old ids, new edges, their patches, window)) of a move.
@@ -608,8 +659,8 @@ class VesselSearch:
         otherwise all of them, on the whole footprint.  dE is then always
         scored on the whole footprint of the old and new vessels, so it is
         exactly the change of E that apply() makes, wherever the new
-        vessels differ from the old.  The window returned is the one whose
-        optical density the result depends on (see _cached)."""
+        vessels differ from the old.  The proposal carries the sensitivity
+        of dE to the other vessels (see _sensitivity, _lookup)."""
         built = move["build"]()
         if built is None:
             return None
@@ -636,8 +687,11 @@ class VesselSearch:
         n1, p1 = self._local_energy(m_new)
         c1 = sum(self.cost(e) for e in new)
         self.last_parts = dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0)
-        patches = self._patches(m_new, win) if new else []
-        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, wfit if focus is not None else win))
+        sens = self._sensitivity(m_old, m_new, win)
+        # full-footprint patches are kept only for moves without a focus (few);
+        # a join / split / reroute is rendered again when it is applied
+        patches = self._patches(m_new, win) if new and focus is None else ([] if not new else None)
+        return (n1 + p1 + c1 - n0 - p0 - c0, (old, new, patches, win, sens))
 
     def _focus_window(self, focus, R):
         R = R + 3 * self.hs + 4.0
@@ -689,7 +743,9 @@ class VesselSearch:
         m.rebuild()
 
     def apply(self, proposal):
-        old, new, patches, _ = proposal
+        old, new, patches, win = proposal[:4]
+        if patches is None:            # scored on win: render the new vessels there again
+            patches = self._patches(self._local(new, win, old), win)
         for k in old:
             p, v = self.patch.pop(k)
             self.V[p] -= v
@@ -860,7 +916,7 @@ class VesselSearch:
                 ctrl, r, s_, a = _fit_edge_params(s["xy"][sl], s["r"][sl], s["s"][sl],
                                                   s["a"][sl], e.info.get("spacing", 12.0),
                                                   faithful=True)
-                out.append(Edge(-1, -1, ctrl, r, s_, a, dict(e.info)))
+                out.append(Edge(-1, -1, ctrl, r, s_, a, _piece_info(e.info, s["xy"][sl])))
             return [k], out
         return build
 
@@ -916,12 +972,12 @@ class VesselSearch:
             path = join_path(A, cont, self.cfg.trim_max, self.cfg.max_turn_deg)
             if path is None:
                 return None
-            info = _merge_info([e.info, v.info])
+            info = _piece_info(_merge_info([e.info, v.info]), path[0])
             ctrl, r, s_, a = fit_vessel(*path, info["spacing"])
             c2, r2, s2, a2 = _fit_edge_params(stay["xy"], stay["r"], stay["s"], stay["a"],
                                               v.info.get("spacing", 12.0), faithful=True)
             return [k, j], [Edge(-1, -1, ctrl, r, s_, a, info),
-                            Edge(-1, -1, c2, r2, s2, a2, dict(v.info))]
+                            Edge(-1, -1, c2, r2, s2, a2, _piece_info(v.info, stay["xy"]))]
         return build
 
     def all_moves(self, kinds=("join", "delete", "split", "reroute", "revive")):
@@ -945,7 +1001,7 @@ class VesselSearch:
         when there are enough of them.  The workers are forked from the
         current state, so they see it without copying; only the results
         come back."""
-        todo = [i for i, m in enumerate(moves) if self._cached(m) is None]
+        todo = [i for i, m in enumerate(moves) if not self._lookup(m)[0]]
         nw = self.cfg.workers or os.cpu_count() or 1
         if nw <= 1 or len(todo) < 2 * nw:
             for i in todo:
@@ -958,7 +1014,7 @@ class VesselSearch:
         with ctx.Pool(nw) as pool:
             for part in pool.map(_evaluate_chunk, chunks):
                 for i, r in part:
-                    self._store(moves[i], r)
+                    self._cache[moves[i]["key"]] = r
         _SHARED = None
         self.n_evaluated += len(todo)
 
@@ -979,7 +1035,7 @@ class VesselSearch:
             self._evaluate_all(moves)
             res = []
             for m in moves:
-                r = self._cache[m["key"]][2]
+                r = self._lookup(m)[1]
                 if r is not None:
                     res.append((r[0], m, r[1]))
             live = {m["key"] for m in moves}
@@ -1066,12 +1122,89 @@ def _evaluate_chunk(idx):
     return [(i, C._compute(moves[i])) for i in idx]
 
 
+def _move_end(net: VesselNetwork, k, a, p) -> bool:
+    """Move end a of edge k to the point p along the edge's own course: the
+    edge is cut at its sample nearest p (or extended to p) and re-fitted
+    faithfully, so it never folds back on itself as it would if only its
+    end node moved.  Returns False (and changes nothing) if too little of
+    the edge would remain."""
+    e = net.edges[k]
+    smp = net.sample(k, 0.5)
+    i = int(np.argmin(np.linalg.norm(smp["xy"] - p, axis=1)))
+    sl = slice(i, None) if a == 0 else slice(0, i + 1)
+    xy = smp["xy"][sl].copy()
+    if len(xy) < 3:
+        return False
+    xy[0 if a == 0 else -1] = p
+    nid = e.u if a == 0 else e.v
+    net.nodes[nid].x, net.nodes[nid].y = float(p[0]), float(p[1])
+    net.refit_edge(k, xy, smp["r"][sl], smp["s"][sl], smp["a"][sl], faithful=True)
+    for kk, _ in net.incident(nid):
+        net.sync_ends(kk)
+    return True
+
+
+def _can_merge(net: VesselNetwork, keep, drop) -> bool:
+    """Whether node drop may be merged into keep without breaking the
+    representation: no edge ending at both (a loop), no edge ending at a node
+    it passes through, no vessel attached to the image border."""
+    if keep == drop or keep not in net.nodes or drop not in net.nodes:
+        return False
+    if "border" in (net.node_kind(keep, 1), net.node_kind(drop, 1)):
+        return False
+    for f_id, end in net.incident(drop):
+        f = net.edges[f_id]
+        other = f.v if end == 0 else f.u
+        if other == keep or keep in f.through:
+            return False
+    for f_id in net.passing(drop):
+        if keep in (net.edges[f_id].u, net.edges[f_id].v):
+            return False
+    for f_id, end in net.incident(keep):
+        if drop in net.edges[f_id].through:
+            return False
+    return True
+
+
+def _merge_ends(net: VesselNetwork, keep, drop, k=None, a=None) -> bool:
+    """Merge node drop into keep if _can_merge allows it; first, if given,
+    end a of edge k (which ends at drop) is moved along its course onto
+    keep.  Through lists that named drop name keep.  Returns whether the
+    nodes were merged."""
+    if not _can_merge(net, keep, drop):
+        return False
+    if "border" in (net.node_kind(keep, 1), net.node_kind(drop, 1)):
+        return False
+    for f_id, end in net.incident(drop):
+        f = net.edges[f_id]
+        other = f.v if end == 0 else f.u
+        if other == keep or keep in f.through:
+            return False
+    if k is not None and not _move_end(net, k, a, net.nodes[keep].xy):
+        return False
+    for f_id in net.passing(drop):
+        f = net.edges[f_id]
+        f.info["through"] = [keep if n == drop else n for n in f.through]
+    net.merge_nodes(keep, drop)
+    return True
+
+
 def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
-    """Branch points in the map's representation (network.py).  A vessel end
-    lying on another vessel (within that vessel's r + s + tol) becomes a
-    node the other vessel passes through (``info["through"]``), moved onto
-    its centreline; near the other vessel's own end, the two ends share one
-    node instead.  Closest contacts are settled first."""
+    """Branch points in the map's representation (network.py), from vessel
+    ends lying on other vessels (within that vessel's r + s + tol):
+
+    * two ends that lie on each other's vessel (the vessels overlap at their
+      ends, however long the overlap) become one shared node, a joint,
+      midway between them;
+    * an end on another vessel's own end (within end_tol px of arclength)
+      shares that end's node;
+    * an end on another vessel's interior becomes a node that vessel passes
+      through (``info["through"]``), moved onto its centreline, or joins a
+      through node already within 3 px.
+
+    Closest contacts are settled first, and a merge that would make an edge
+    end at a node it passes through, form a loop, or attach to the image
+    border is not made (see _merge_ends)."""
     smp = {k: net.sample(k, 1.0) for k in net.edges}
     if len(smp) < 2:
         return
@@ -1080,12 +1213,13 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
     lab = np.concatenate([np.full(len(smp[k]["xy"]), k) for k in ids])
     idx = np.concatenate([np.arange(len(smp[k]["xy"])) for k in ids])
     tree = cKDTree(X)
-    contacts = []
+    node_of = lambda k, a: net.edges[k].u if a == 0 else net.edges[k].v
+    contact = {}                       # (edge, end) -> (distance, other edge, sample on it)
     for k, e in net.edges.items():
-        for nid in (e.u, e.v):
-            p = net.nodes[nid].xy
+        for a, nid in ((0, e.u), (1, e.v)):
             if net.node_kind(nid, 1) == "border":
                 continue
+            p = net.nodes[nid].xy
             best = None
             for c in tree.query_ball_point(p, 30.0):
                 j, i = int(lab[c]), int(idx[c])
@@ -1095,35 +1229,43 @@ def to_through(net: VesselNetwork, tol=1.5, end_tol=3.0):
                 if d <= smp[j]["r"][i] + smp[j]["s"][i] + tol and (best is None or d < best[0]):
                     best = (d, j, i)
             if best is not None:
-                contacts.append((best[0], k, nid, best[1], best[2]))
-    for _, k, nid, j, i in sorted(contacts):
-        if k not in net.edges or j not in net.edges or nid not in net.nodes:
+                contact[(k, a)] = best
+    near_end = lambda j, i: 0 if smp[j]["s_arc"][i] < 0.5 * smp[j]["s_arc"][-1] else 1
+    # 1. mutual contacts: k's end a lies on j near j's end b, and b lies on k near a
+    mutual = []
+    for (k, a), (d, j, i) in contact.items():
+        b = near_end(j, i)
+        c = contact.get((j, b))
+        if c is None or c[1] != k or near_end(k, c[2]) != a or (k, a) > (j, b):
             continue
-        e, ej = net.edges[k], net.edges[j]
-        if nid not in (e.u, e.v):
+        mutual.append((d + c[0], k, a, j, b))
+    settled = set()
+    for _, k, a, j, b in sorted(mutual):
+        if k not in net.edges or j not in net.edges:
             continue
+        n1, n2 = node_of(k, a), node_of(j, b)
+        mid = 0.5 * (net.nodes[n1].xy + net.nodes[n2].xy)
+        if n1 != n2 and _can_merge(net, n2, n1) and _move_end(net, j, b, mid):
+            _merge_ends(net, n2, n1, k, a)
+        settled |= {(k, a), (j, b)}
+    # 2. every other contact, closest first
+    for (k, a), (d, j, i) in sorted(contact.items(), key=lambda t: t[1][0]):
+        if (k, a) in settled or k not in net.edges or j not in net.edges:
+            continue
+        nid, ej = node_of(k, a), net.edges[j]
         s = smp[j]
         L, sa = float(s["s_arc"][-1]), float(s["s_arc"][i])
-        # within one footprint of j's own end (ends that meet or overlap):
-        # the two ends share one node, a joint, rather than each passing
-        # through the other's end
-        if min(sa, L - sa) < max(end_tol, float(s["r"][i] + s["s"][i]) + tol + 2.0):
-            keep = ej.u if sa < 0.5 * L else ej.v
-            if keep != nid and keep not in e.through and nid not in ej.through:
-                net.merge_nodes(keep, nid)
+        if min(sa, L - sa) < end_tol:                  # on j's own end: share its node
+            _merge_ends(net, ej.u if sa < 0.5 * L else ej.v, nid, k, a)
             continue
         p = s["xy"][i]
         near = [t for t in ej.through if t in net.nodes and
                 np.linalg.norm(net.nodes[t].xy - p) < 3.0]
         if near:                                        # two branches leave at one point
-            if near[0] != nid and near[0] not in e.through:
-                net.merge_nodes(near[0], nid)
+            _merge_ends(net, near[0], nid, k, a)
             continue
-        if nid in ej.through or nid in (ej.u, ej.v):
+        if nid in ej.through or nid in (ej.u, ej.v) or not _move_end(net, k, a, p):
             continue
-        net.nodes[nid].x, net.nodes[nid].y = float(p[0]), float(p[1])
-        for kk, _ in net.incident(nid):
-            net.sync_ends(kk)
         ej.info["through"] = list(ej.through) + [nid]
         net._touch()
     # an edge never passes through its own end, nor twice through a node

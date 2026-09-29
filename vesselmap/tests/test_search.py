@@ -192,25 +192,120 @@ def _straight(net, p, q, r=2.5, s=1.0, n=60):
     return net.add_edge_dense(xy, np.full(n, r), np.full(n, s), np.full(n, 0.3))
 
 
+def _valid_through(net):
+    """The representation's invariants after to_through."""
+    for k, e in net.edges.items():
+        assert e.u != e.v, ("loop", k)
+        assert not set(e.through) & {e.u, e.v}, ("ends at its own through node", k)
+        assert len(set(e.through)) == len(e.through)
+        assert all(n in net.nodes for n in e.through)
+    for k in net.edges:                            # no end folded back onto its own vessel
+        smp = net.sample(k, 1.0)
+        for end_xy, far in ((smp["xy"][0], smp["s_arc"] > 5.0),
+                            (smp["xy"][-1], smp["s_arc"] < smp["s_arc"][-1] - 5.0)):
+            d = np.linalg.norm(smp["xy"][far] - end_xy, axis=1)
+            assert not len(d) or d.min() > 1.0, ("fold-back", k, float(d.min()))
+    segs = net.to_segments()
+    assert all(e.u != e.v for e in segs.edges.values())
+    return segs
+
+
 def test_to_through_never_ends_an_edge_at_its_own_through_node():
     from vesselmap.search import to_through
     net = VesselNetwork((200, 200))
-    k = _straight(net, (60, 100), (120, 100))
-    j = _straight(net, (64, 140), (64, 100.5))      # ends just inside k, near k's end
+    _straight(net, (60, 100), (120, 100))
+    _straight(net, (64, 140), (64, 100.5))          # ends just inside k, near k's end
     to_through(net, 1.5)
-    for e in net.edges.values():
-        assert not set(e.through) & {e.u, e.v}, (e.u, e.v, e.through)
-    kinds = net.summary()["node_kinds"]
-    assert "junction" not in kinds, kinds
+    _valid_through(net)
+    assert "junction" not in net.summary()["node_kinds"]
 
 
-def test_to_through_overlapping_ends_share_a_joint():
+@pytest.mark.parametrize("overlap, rk, rj", [(6, 2.5, 2.5), (15, 2.5, 2.5), (7, 4.0, 1.5),
+                                             (7, 1.5, 4.0)])
+def test_to_through_overlapping_ends_share_one_joint(overlap, rk, rj):
+    """However long the overlap and whatever the widths, two vessel ends
+    lying on each other become one shared joint, never mutual through nodes."""
     from vesselmap.search import to_through
     net = VesselNetwork((200, 200))
-    k = _straight(net, (60, 100), (120, 100))
-    j = _straight(net, (10, 100.3), (66, 100.3))    # ends overlap by 6 px
+    k = _straight(net, (60, 100), (120, 100), r=rk)
+    j = _straight(net, (10, 100.3), (60 + overlap, 100.3), r=rj)
     to_through(net, 1.5)
+    segs = _valid_through(net)
     assert not net.edges[k].through and not net.edges[j].through
     shared = {net.edges[k].u, net.edges[k].v} & {net.edges[j].u, net.edges[j].v}
     assert len(shared) == 1
-    assert net.to_segments().summary()["n_edges"] == 2
+    assert len(segs.edges) == 2
+
+
+def test_to_through_short_fragment_in_a_vessel_end_is_no_loop():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (60, 100), (120, 100), r=4.0, s=1.5)
+    _straight(net, (61, 102), (69, 102), r=3.0, s=1.0, n=12)
+    to_through(net, 1.5)
+    _valid_through(net)
+
+
+def test_to_through_three_edges_no_fold_back():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    _straight(net, (60, 100), (100, 100))
+    _straight(net, (91, 100), (119.3, 71.7))
+    _straight(net, (95, 95.5), (125, 125))
+    to_through(net, 1.5)
+    _valid_through(net)
+
+
+def test_to_through_keeps_border_ends():
+    from vesselmap.search import to_through
+    net = VesselNetwork((200, 200))
+    j = _straight(net, (100, 100), (100, 0))        # leaves the image at the top
+    _straight(net, (60, 30), (99.5, 3.0))           # a branch landing next to the border end
+    to_through(net, 1.5)
+    _valid_through(net)
+    deg = net.degrees()
+    top = net.edges[j].v
+    assert net.node_kind(top, deg[top]) == "border"
+
+
+def test_split_and_rejoin_keeps_link_records_once():
+    from vesselmap.search import _merge_info, _piece_info
+    xy = np.stack([np.linspace(0, 100, 101), np.zeros(101)], 1)
+    info = dict(links=[dict(kind="join", evidence="energy", xy=[20.0, 0.0]),
+                       dict(kind="join", evidence="energy", xy=[80.0, 0.0])],
+                consolidated_from=[1, 2], spacing=6.0)
+    a, b = _piece_info(info, xy[:51]), _piece_info(info, xy[50:])
+    assert len(a["links"]) == 1 and len(b["links"]) == 1
+    merged = info
+    for _ in range(5):              # repeated split / join cycles
+        merged = _merge_info([_piece_info(merged, xy[:51]), _piece_info(merged, xy[50:])])
+    assert len(merged["links"]) == 2
+
+
+def test_cached_join_score_follows_changes_around_it():
+    """A join is scored, then a vessel crossing the junction's surroundings
+    is deleted.  The cached score, corrected through its sensitivity, must
+    be the energy change applying the join then makes, although the stale
+    score is far off."""
+    H, W = 140, 360
+    x = np.linspace(-10, 370, 400)
+    v = dict(xy=np.stack([x, 70 + 0 * x], 1), r=np.full(400, 2.0), blur=1.0, amp=0.3)
+    cross = dict(xy=np.stack([190 + 0 * x[:200], np.linspace(-10, 150, 200)], 1),
+                 r=np.full(200, 1.5), blur=1.0, amp=0.25)
+    I, P = _scene([v, cross], (H, W))
+    net = VesselNetwork((H, W))
+    _edge(net, _line((0, 70), (170, 70), 200))
+    _edge(net, _line((186, 70), (359, 70), 200))
+    xk = _edge(net, _line((190, 0), (190, 139), 150), r=1.5, a=0.25)
+    C = VesselSearch(net, P, _cfg(init_iters=60, workers=1, refit_tol=1e9))
+    (join,) = [m for m in C.join_moves() if xk not in m["anchor"]]
+    stale = C.evaluate(join)[0]
+    (dele,) = [m for m in C.delete_moves() if m["anchor"] == [xk]]
+    C.apply(C.evaluate(dele)[1])                   # the crossing vessel goes
+    hit, (dE, prop) = C._lookup(join)
+    assert hit
+    E0 = C.energy_total()["total"]
+    C.apply(prop)
+    change = C.energy_total()["total"] - E0
+    assert abs(change - stale) > 30, (change, stale)          # the context mattered
+    assert abs(change - dE) < 0.005 * abs(dE) + 3.0, (change, dE)
