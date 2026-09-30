@@ -41,3 +41,16 @@ def test_completeness_flags_a_parallel_pair_annotated_as_one_vessel():
         merged[t["value"]] = completeness(P.logI, P.sigma, mid, rm)["score"]
     assert merged[2.4] == 1.0                        # lumens touch: no gap to see
     assert merged[4.2] < 0.3 and merged[5.5] < 0.3 and merged[7.5] < 0.3
+
+
+def test_crossing_rows_mark_every_crossing():
+    """Twisted pairs, weaves and ladders cross as often as their parameter
+    says, and every crossing is marked as an ambiguous spot; the calibre
+    rows span thin to thick vessels."""
+    from vesselmap.zoo import ROWS_CALIBRE, ROWS_CROSSINGS
+    I, V, tiles = zoo_sheet(0, rows=ROWS_CROSSINGS[:4])
+    for t in tiles:
+        assert len(t["ambiguous"]) == int(t["value"]), (t["name"], t["value"], len(t["ambiguous"]))
+    I, V, tiles = zoo_sheet(0, rows=ROWS_CALIBRE)
+    radii = np.concatenate([v["r"] for v in V])
+    assert radii.min() < 0.8 and radii.max() > 5.0

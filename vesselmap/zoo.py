@@ -113,7 +113,8 @@ def bifurcation_asym(T, f, rng):
     return bifurcation(T, 70.0, rng, f=f)
 
 
-def crossing(T, angle, rng, depth=False):
+def crossing(T, angle, rng, depth=False, ra=1.6, rb=1.2):
+    """Two vessels crossing at angle (deg), radii ra and rb (same depth)."""
     c = np.array([T / 2, T / 2])
     a = math.radians(angle)
     v1 = _path([c + [-80, 0], c, c + [80, 0]])
@@ -121,7 +122,7 @@ def crossing(T, angle, rng, depth=False):
     v2 = _path([c - 80 * d, c, c + 80 * d])
     if depth:        # a sharp capillary over a blurred vessel at another depth
         return [_vessel(v1, 4.0, 4.0, 4.0, 0.35, rng), _vessel(v2, 0.9, 0.9, 1.0, 0.3, rng)], [c]
-    return [_vessel(v1, 1.6, 1.5, 1.0, 0.4, rng), _vessel(v2, 1.2, 1.1, 1.0, 0.35, rng)], [c]
+    return [_vessel(v1, ra, ra * 0.95, 1.0, 0.4, rng), _vessel(v2, rb, rb * 0.95, 1.0, 0.35, rng)], [c]
 
 
 def crossing_depth(T, angle, rng):
@@ -148,15 +149,15 @@ def kissing(T, gap, rng, r=1.3):
     return [_vessel(a, r, r, 1.0, 0.35, rng), _vessel(b, r, r, 1.0, 0.35, rng)], [c]
 
 
-def ends_on(T, angle, rng):
-    """A vessel whose end lies on the side of another (angle to it, deg)."""
+def ends_on(T, angle, rng, r_h=2.2, r_a=1.0):
+    """A vessel (radius r_a) whose end lies on the side of another (r_h), at
+    angle (deg) to it."""
     c = np.array([T / 2, T * 0.6])
     host = _path([c + [-80, 0], c, c + [80, 0]])
     a = math.radians(180 + angle)
-    r_h = 2.2
     tip = c + [0, -r_h * 0.5]
     arm = _path([tip + 80 * np.array([math.cos(a), -abs(math.sin(a))]), tip + 30 * np.array([math.cos(a), -abs(math.sin(a))]), tip])
-    return [_vessel(host, r_h, r_h, 1.0, 0.4, rng), _vessel(arm, 1.0, 1.0, 1.0, 0.35, rng)], [tip]
+    return [_vessel(host, r_h, r_h, 1.0, 0.4, rng), _vessel(arm, r_a, r_a, 1.0, 0.35, rng)], [tip]
 
 
 def hairpin(T, radius, rng, r=0.8):
@@ -189,11 +190,19 @@ def faint_under_blurred(T, amp, rng):
     return [_vessel(wide, 5.0, 5.0, 5.0, 0.35, rng), _vessel(cap, 0.8, 0.8, 1.0, amp, rng)], [c]
 
 
-def complex_node(T, case, rng):
+def parallel_rel(T, k, rng, r=1.2):
+    """A parallel pair of radii r and 0.9 r whose centres are k times the sum
+    of their radii apart (k = 1: the lumens touch)."""
+    return parallel(T, k * 1.9 * r, rng, r=r)
+
+
+def complex_node(T, case, rng, k=1.0):
     """Several junctions at one place: 0 two bifurcations 4 px apart,
     1 a bifurcation with a crossing through it, 2 three vessels crossing at
     one point, 3 a trifurcation, 4 a crossing 6 px from a bifurcation."""
     c = np.array([T / 2, T / 2])
+    _v = _vessel
+    _vessel_k = lambda xy, r0, r1, blur, amp, rng: _v(xy, r0 * k, r1 * k, blur, amp, rng)
     ray = lambda ang, L=75, p=c: _path([p, p + L / 2 * np.array([math.cos(ang), math.sin(ang)]),
                                         p + L * np.array([math.cos(ang), math.sin(ang)])])
     thru = lambda ang, p=c: _path([p - 75 * np.array([math.cos(ang), math.sin(ang)]), p,
@@ -201,22 +210,95 @@ def complex_node(T, case, rng):
     case = int(case)
     if case == 0:
         p2 = c + [4, 0]
-        vs = [_vessel(ray(math.pi), 2.4, 2.4, 1.0, 0.4, rng), _vessel(ray(-0.9), 1.6, 1.4, 1.0, 0.4, rng),
-              _vessel(ray(0.1, 75, p2), 1.7, 1.5, 1.0, 0.4, rng), _vessel(ray(1.0, 75, p2), 1.2, 1.1, 1.0, 0.35, rng)]
+        vs = [_vessel_k(ray(math.pi), 2.4, 2.4, 1.0, 0.4, rng), _vessel_k(ray(-0.9), 1.6, 1.4, 1.0, 0.4, rng),
+              _vessel_k(ray(0.1, 75, p2), 1.7, 1.5, 1.0, 0.4, rng), _vessel_k(ray(1.0, 75, p2), 1.2, 1.1, 1.0, 0.35, rng)]
     elif case == 1:
-        vs = [_vessel(ray(math.pi), 2.2, 2.2, 1.0, 0.4, rng), _vessel(ray(-0.5), 1.6, 1.4, 1.0, 0.4, rng),
-              _vessel(ray(0.6), 1.6, 1.4, 1.0, 0.4, rng), _vessel(thru(1.5), 1.0, 1.0, 1.0, 0.35, rng)]
+        vs = [_vessel_k(ray(math.pi), 2.2, 2.2, 1.0, 0.4, rng), _vessel_k(ray(-0.5), 1.6, 1.4, 1.0, 0.4, rng),
+              _vessel_k(ray(0.6), 1.6, 1.4, 1.0, 0.4, rng), _vessel_k(thru(1.5), 1.0, 1.0, 1.0, 0.35, rng)]
     elif case == 2:
-        vs = [_vessel(thru(a), 1.2, 1.2, 1.0, 0.35, rng) for a in (0.0, 1.05, 2.1)]
+        vs = [_vessel_k(thru(a), 1.2, 1.2, 1.0, 0.35, rng) for a in (0.0, 1.05, 2.1)]
     elif case == 3:
-        vs = [_vessel(ray(math.pi), 2.4, 2.4, 1.0, 0.4, rng)] + \
-             [_vessel(ray(a), 1.5, 1.3, 1.0, 0.4, rng) for a in (-0.8, 0.0, 0.8)]
+        vs = [_vessel_k(ray(math.pi), 2.4, 2.4, 1.0, 0.4, rng)] + \
+             [_vessel_k(ray(a), 1.5, 1.3, 1.0, 0.4, rng) for a in (-0.8, 0.0, 0.8)]
     else:
         p2 = c + [6, 0]
-        vs = [_vessel(ray(math.pi), 2.2, 2.2, 1.0, 0.4, rng), _vessel(ray(-0.6), 1.6, 1.4, 1.0, 0.4, rng),
-              _vessel(ray(0.6), 1.6, 1.4, 1.0, 0.4, rng), _vessel(thru(1.4, p2), 1.0, 1.0, 1.0, 0.35, rng)]
+        vs = [_vessel_k(ray(math.pi), 2.2, 2.2, 1.0, 0.4, rng), _vessel_k(ray(-0.6), 1.6, 1.4, 1.0, 0.4, rng),
+              _vessel_k(ray(0.6), 1.6, 1.4, 1.0, 0.4, rng), _vessel_k(thru(1.4, p2), 1.0, 1.0, 1.0, 0.35, rng)]
     return vs, [c]
 
+
+def _crossings(vessels, tol=1.0):
+    """Where the centrelines of two vessels cross or touch (within tol px):
+    one point per contiguous contact."""
+    from scipy.spatial import cKDTree
+    out = []
+    for i in range(len(vessels)):
+        for j in range(i + 1, len(vessels)):
+            a, b = vessels[i]["xy"], vessels[j]["xy"]
+            d, _ = cKDTree(b).query(a)
+            hit = np.flatnonzero(d <= tol)
+            if not len(hit):
+                continue
+            for run in np.split(hit, np.flatnonzero(np.diff(hit) > 2) + 1):
+                out.append(a[run[len(run) // 2]])
+    return out
+
+
+def twisted(T, n, rng, ra=2.0, rb=1.0):
+    """Two vessels (radii ra, rb) winding round each other, crossing n times."""
+    x = np.arange(4.0, T - 4.0, 1.0)
+    L = x[-1] - x[0]
+    y = 9.0 * np.cos(math.pi * (x - x[0]) * n / L)      # n zeros inside, ends apart
+    a = np.stack([x, T / 2 + y], 1)
+    b = np.stack([x, T / 2 - y], 1)
+    vs = [_vessel(a, ra, ra, 1.0, 0.4, rng), _vessel(b, rb, rb, 1.0, 0.35, rng)]
+    return vs, [np.array([x[0] + L * (q + 0.5) / n, T / 2]) for q in range(int(n))]
+
+
+def weave(T, n, rng, r_host=3.0, r_cap=0.9):
+    """A capillary weaving across a straight thick vessel, crossing it n times."""
+    x = np.arange(4.0, T - 4.0, 1.0)
+    L = x[-1] - x[0]
+    host = np.stack([x, np.full_like(x, T / 2)], 1)
+    cap = np.stack([x, T / 2 + 12.0 * np.cos(math.pi * (x - x[0]) * n / L)], 1)
+    vs = [_vessel(host, r_host, r_host, 1.0, 0.4, rng), _vessel(cap, r_cap, r_cap, 1.0, 0.3, rng)]
+    return vs, [np.array([x[0] + L * (q + 0.5) / n, T / 2]) for q in range(int(n))]
+
+
+def ladder(T, k, rng, radii=(0.8, 3.5, 1.5, 4.5, 1.0, 2.5)):
+    """One vessel crossing k parallel vessels of different thicknesses."""
+    k = int(k)
+    xs = np.linspace(T * 0.15, T * 0.85, k)
+    vs = [_vessel(_path([[x0, 4], [x0 + 3, T / 2], [x0, T - 4]]), radii[q % len(radii)],
+                  radii[q % len(radii)], 1.0, 0.4, rng) for q, x0 in enumerate(xs)]
+    a = math.radians(20)
+    cross = _path([[4, T / 2 - (T / 2 - 4) * math.tan(a)], [T / 2, T / 2],
+                   [T - 4, T / 2 + (T / 2 - 4) * math.tan(a)]])
+    vs.append(_vessel(cross, 1.4, 1.4, 1.0, 0.35, rng))
+    return vs, _crossings(vs)
+
+
+def mesh(T, case, rng, radii=(0.8, 1.2, 2.0, 3.0, 4.0)):
+    """Straight vessels crossing each other: 0/1/2 a grid of 2/3/4 lines each
+    way, 3/4 lines in three directions (2/3 each), radii drawn from radii."""
+    case = int(case)
+    c = np.array([T / 2, T / 2])
+    if case <= 2:
+        dirs, per = (0.15, 0.15 + math.pi / 2), case + 2
+    else:
+        dirs, per = (0.1, 0.1 + math.pi / 3, 0.1 + 2 * math.pi / 3), case - 1
+    vs = []
+    for a in dirs:
+        d = np.array([math.cos(a), math.sin(a)])
+        nrm = np.array([-d[1], d[0]])
+        for off in np.linspace(-(per - 1) / 2, (per - 1) / 2, per) * (60.0 / max(per, 2)):
+            p = c + nrm * off
+            r = float(rng.choice(radii))
+            vs.append(_vessel(_path([p - 90 * d, p, p + 90 * d]), r, r, 1.0, 0.35, rng))
+    return vs, _crossings(vs)
+
+
+from functools import partial as _p
 
 ROWS = [
     ("bifurcation, branch angle (deg)", bifurcation, (40, 60, 90, 120, 150)),
@@ -231,6 +313,33 @@ ROWS = [
     ("faint capillary under blurred vessel, contrast", faint_under_blurred, (0.06, 0.1, 0.15, 0.2, 0.3)),
     ("complex node (see complex_node)", complex_node, (0, 1, 2, 3, 4)),
 ]
+
+# the same structures over the range of calibres, and thin with thick
+ROWS_CALIBRE = [
+    ("thin bifurcation (parent r 1.2), branch angle", _p(bifurcation, r0=1.2), (40, 60, 90, 120, 150)),
+    ("thick bifurcation (parent r 5.5), branch angle", _p(bifurcation, r0=5.5), (40, 60, 90, 120, 150)),
+    ("thin crossing (r 0.9 and 0.7), angle", _p(crossing, ra=0.9, rb=0.7), (10, 20, 35, 60, 90)),
+    ("thick crossing (r 4.5 and 3.5), angle", _p(crossing, ra=4.5, rb=3.5), (10, 20, 35, 60, 90)),
+    ("thin over thick, same depth (r 0.9 / 4.5), angle", _p(crossing, ra=4.5, rb=0.9), (10, 20, 35, 60, 90)),
+    ("thin parallel pair (r 0.8), separation / (r1 + r2)", _p(parallel_rel, r=0.8), (1.0, 1.3, 1.7, 2.2, 3.0)),
+    ("thick parallel pair (r 3), separation / (r1 + r2)", _p(parallel_rel, r=3.0), (1.0, 1.3, 1.7, 2.2, 3.0)),
+    ("thick kissing pair (r 3.5), closest lumen gap", _p(kissing, r=3.5), (-1.0, 0.0, 1.0, 2.0, 4.0)),
+    ("thick vessel ending on a thick one (r 2 / 4.5), angle", _p(ends_on, r_h=4.5, r_a=2.0), (30, 50, 70, 90, 110)),
+    ("thick hairpin (r 1.6), turn radius", _p(hairpin, r=1.6), (3.0, 4.0, 5.0, 7.0, 10.0)),
+    ("thick fork then side by side (parent r 4), separation", _p(fork_parallel, r0=4.0), (6.0, 8.0, 10.0, 13.0, 16.0)),
+    ("thick complex node (radii x 2)", _p(complex_node, k=2.0), (0, 1, 2, 3, 4)),
+]
+
+# several crossings in one place
+ROWS_CROSSINGS = [
+    ("twisted pair (r 2 and 1), crossings", twisted, (1, 2, 3, 4, 6)),
+    ("twisted thin pair (r 0.9 and 0.7), crossings", _p(twisted, ra=0.9, rb=0.7), (1, 2, 3, 4, 6)),
+    ("capillary weaving over a thick vessel (r 0.9 / 3), crossings", weave, (1, 2, 3, 4, 5)),
+    ("ladder: one vessel across k vessels of r 0.8-4.5, k", ladder, (2, 3, 4, 5, 6)),
+    ("mesh: grids 2x2 / 3x3 / 4x4, three directions x2 / x3", mesh, (0, 1, 2, 3, 4)),
+]
+
+ALL_ROWS = ROWS + ROWS_CALIBRE + ROWS_CROSSINGS
 
 
 def _clip(v, box):
@@ -271,8 +380,9 @@ def zoo_sheet(seed=0, tile=128, gap=8, rows=None, texture_scale=1.0, noise=True)
                 if v is not None:
                     ids.append(len(vessels))
                     vessels.append(v)
-            tiles.append(dict(row=i, name=name, value=val, box=box, vessels=ids,
-                              ambiguous=[np.asarray(p, float) + [x0, y0] for p in amb]))
+            amb = [np.asarray(p, float) + [x0, y0] for p in amb]
+            amb = [p for p in amb if x0 <= p[0] <= box[2] and y0 <= p[1] <= box[3]]
+            tiles.append(dict(row=i, name=name, value=val, box=box, vessels=ids, ambiguous=amb))
     tex = texture((H, W), rng, texture_scale)
     I, od = render(vessels, (H, W), rng, texture=tex, noise=noise)
     return I, vessels, tiles
