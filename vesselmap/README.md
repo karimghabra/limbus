@@ -456,21 +456,34 @@ the smaller Hessian eigenvalue of log intensity (the image curves up in
 every direction where vessels meet), scale-normalised and in units of its
 robust spread, where it is at least a quarter of the larger one (a bump of
 contrast along one wide vessel is not). A candidate is kept when at least
-three arms leave it. An arm is a peak of darkness (the local upper envelope
-less the image, which peaks at a vessel's centre however wide it is) on one
-of three circles round it, that the centre reaches without a bright gap,
-and where the vessel runs along the ray (its along-vessel Hessian
-eigenvector within 35 degrees of radial); circles are read from the
-outermost in, where arms have parted most. Arms in two straight pairs make
-a crossing, three a bifurcation, others a node.
+three arms leave it, found on its *ray profile*: darkness (the local upper
+envelope less the image, which peaks at a vessel's centre however wide it
+is) averaged along rays from just outside the junction's core out 20 px,
+per degree. Around a single intersection the local power spectrum shows
+every vessel's orientation as a line through the origin, but it cannot tell
+a vessel ending there from one passing through; the ray profile is the
+one-sided counterpart, and every arm is a clean peak on it:
 
-`intersections.score_zoo()` scores it on the zoo: of 215 marked
-intersections it finds 87 %, with 54 false detections. At those found, arm
-recall is 0.97 and arm precision 0.98 (a true arm is each direction a vessel
-leaves the point, `zoo.true_arms`; matched within 20 degrees, mean error
-2.8 degrees), all arms are exactly right at 82 % and the kind at 85 %. The
-misses are shallow crossings and forks whose arms part only far out, the
-thinnest crossings, and wide vessels crossing at shallow angles.
+* an arm is a peak standing above the dips either side by 4 noise levels and
+  30 % of its height (a wide arm's shoulder is not one), whose ray is dark
+  over its near half too (not another junction met far out);
+* opposite an arm with nothing found there, the vessel may go on through
+  the junction: the darkest direction within 12 degrees is an arm if, less a
+  wide arm's shoulder mirrored about that arm, it is at least 40 % as dark
+  (a thin vessel crossing a wide one);
+* an arm must be dark along its ray without a dip that recovers further out
+  (a ray from one crossing of a mesh to the next has one).
+
+Arms in two straight pairs make a crossing, three a bifurcation, others a
+node. `intersections.score_zoo()` scores it on the zoo: of 215 marked
+intersections it finds 87 %, with 65 false detections. At those found, arm
+recall is 0.997 and arm precision 1.00 (a true arm is each direction a
+vessel leaves the point, `zoo.true_arms`; matched within 20 degrees, mean
+error 2.3 degrees), and the arms are exactly right at 185 of 186. The one
+left is a crossing 6 px from a fork: from the fork's centre that vessel
+passes by rather than leaves. The intersections missed are shallow
+crossings and forks whose arms part only far out, the thinnest crossings,
+and wide vessels crossing at shallow angles.
 
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected

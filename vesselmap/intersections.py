@@ -168,14 +168,158 @@ def _aligned(Th, R, p, a, radius, max_deg):
     return d <= math.radians(max_deg)
 
 
-def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=3.0, scales=SCALES, rings=3,
-           sep_deg=20.0, align_deg=35.0, min_ratio=0.25):
+def ray_profile(D, p, r0, r1, step_deg=1.0):
+    """Darkness along rays from p, r0 to r1 px out, per direction: (angles,
+    mean over each ray, mean over its near half).  A vessel leaving p is a
+    peak in its direction (it darkens the whole ray); a vessel merely
+    passing near p is not."""
+    th = np.radians(np.arange(0.0, 360.0, step_deg))
+    rr = np.arange(r0, r1 + 1e-9, 0.5)
+    H, W = D.shape
+    x = np.clip(p[0] + np.outer(np.cos(th), rr), 0, W - 1)
+    y = np.clip(p[1] + np.outer(np.sin(th), rr), 0, H - 1)
+    v = ndi.map_coordinates(D, [y.ravel(), x.ravel()], order=1).reshape(len(th), -1)
+    return th, v.mean(1), v[:, :v.shape[1] // 2].mean(1)
+
+
+def _prominence(v, i):
+    """How far v[i] stands above the lower of the highest dips on its way to
+    a higher value either side (circular)."""
+    n = len(v)
+    lo = []
+    for step in (1, -1):
+        m, j = v[i], i
+        for _ in range(n - 1):
+            j = (j + step) % n
+            m = min(m, v[j])
+            if v[j] > v[i]:
+                break
+        lo.append(m)
+    return v[i] - max(lo)
+
+
+def _refine(v, i, th):
+    n = len(v)
+    a, b, c = v[i - 1], v[i], v[(i + 1) % n]
+    den = a - 2 * b + c
+    off = 0.5 * (a - c) / den if den < 0 else 0.0
+    return float((th[i] + off * (th[1] - th[0])) % (2 * math.pi))
+
+
+def ray_arms(D, sig, p, r0, r1, z_arm=4.0, rel=0.3, sep_deg=12.0, near=0.35):
+    """The arms at p from the ray profile (darkness above the background's
+    along each direction): its peaks that stand above the dips either side
+    by z_arm noise levels (sensor sigma over the root of the ray length) and
+    by rel of their height (not the shoulder of a wide arm), with the ray's
+    near half dark too (at least near of it: not another junction met far
+    out), at least sep_deg apart, strongest first; angles refined by a
+    parabola."""
+    th, v, vn = ray_profile(D, p, r0, r1)
+    v = ndi.gaussian_filter1d(v, 1.0, mode="wrap")
+    vn = ndi.gaussian_filter1d(vn, 1.0, mode="wrap")
+    n = len(v)
+    H, W = sig.shape
+    noise = float(sig[int(np.clip(p[1], 0, H - 1)), int(np.clip(p[0], 0, W - 1))]) / math.sqrt(max(r1 - r0, 1.0))
+    e = v - float(np.percentile(v, 20))                # darkness above the background's
+    en = vn - float(np.percentile(vn, 20))
+    sep = math.radians(sep_deg)
+    cand = []
+    for i in range(n):
+        if e[i] > e[i - 1] and e[i] >= e[(i + 1) % n]:
+            prom = _prominence(e, i)
+            if prom > max(z_arm * noise, rel * e[i]) and en[i] >= near * e[i]:
+                cand.append((e[i], i))
+    arms, idx = [], []
+    for h, i in sorted(cand, reverse=True):
+        a = _refine(e, i, th)
+        if all(_angdiff(a, b) >= sep for b in arms):
+            arms.append(a)
+            idx.append(i)
+    return sorted(arms)
+
+
+def arms_multi(D, sig, p, r0, reach, z_arm=4.0, sep_deg=12.0):
+    """ray_arms along the reach and the continuations through p of arms
+    found (see continuations), each kept if dark along the ray without a
+    gap (see continuous)."""
+    arms = ray_arms(D, sig, p, r0, r0 + reach, z_arm, sep_deg=sep_deg)
+    arms = arms + continuations(D, sig, p, r0, r0 + reach, arms, sep_deg=sep_deg)
+    return sorted(a for a in arms if continuous(D, p, a, r0, r0 + reach))
+
+
+def continuous(D, p, a, r0, r1, low=0.25, high=0.6, slack_px=2.0, win_px=3.0):
+    """Whether direction a is dark without a gap: along the ray (the darkest
+    within slack_px of arc at each radius: an arm may curve), darkness above
+    the ray profile's background never dips (over win_px) below low of its
+    median and then recovers above high of it.  An arm may fade or curve
+    away; a ray from one crossing of a mesh to the next dips between them."""
+    th, v, _ = ray_profile(D, p, r0, r1)
+    base = float(np.percentile(v, 20))
+    H, W = D.shape
+    rr = np.arange(r0, r1 + 1e-9, 0.5)
+    best = np.full(len(rr), -np.inf)
+    for off in (-1.0, -0.5, 0.0, 0.5, 1.0):
+        da = off * slack_px / np.maximum(rr, 1.0)
+        x = np.clip(p[0] + rr * np.cos(a + da), 0, W - 1)
+        y = np.clip(p[1] + rr * np.sin(a + da), 0, H - 1)
+        best = np.maximum(best, ndi.map_coordinates(D, [y, x], order=1))
+    g = best - base
+    med = float(np.median(g))
+    if med <= 0:
+        return False
+    k = max(1, int(round(win_px / 0.5)))
+    wmin = ndi.minimum_filter1d(g, k, mode="nearest")
+    dip = np.flatnonzero(wmin < low * med)
+    if not len(dip):
+        return True
+    return not np.any(wmin[dip[0]:] > high * med)          # a dip, but no recovery after it
+
+
+def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, near=0.35,
+                  sep_deg=12.0):
+    """Arms opposite found ones that the ray profile shows too weakly on
+    its own: a vessel crossing another goes on through it, so where nothing
+    was found opposite an arm, the darkest direction within window_deg of
+    the opposite is an arm if its darkness above what a wide arm next to it
+    gives there (that arm's darkness mirrored about it) is at least frac of
+    the arm's own, z noise levels, and dark near p too."""
+    th, v, vn = ray_profile(D, p, r0, r1)
+    v = ndi.gaussian_filter1d(v, 1.0, mode="wrap")
+    vn = ndi.gaussian_filter1d(vn, 1.0, mode="wrap")
+    n = len(v)
+    step = th[1] - th[0]
+    H, W = sig.shape
+    noise = float(sig[int(np.clip(p[1], 0, H - 1)), int(np.clip(p[0], 0, W - 1))]) / math.sqrt(max(r1 - r0, 1.0))
+    e = v - float(np.percentile(v, 20))
+    en = vn - float(np.percentile(vn, 20))
+    idx = lambda a: int(round((a % (2 * math.pi)) / step)) % n
+    out = []
+    for a in arms:
+        o = a + math.pi
+        if any(_angdiff(o, b) <= math.radians(25.0) for b in arms + out):
+            continue
+        w = int(round(math.radians(window_deg) / step))
+        cand = [(idx(o) + k) % n for k in range(-w, w + 1)]
+        i = max(cand, key=lambda i: e[i])
+        b = float(th[i])
+        x = e[i]
+        c = [q for q in arms if _angdiff(b, q) <= math.radians(45.0)]
+        if c:                                   # on the shoulder of a wide arm: mirror it
+            q = min(c, key=lambda q: _angdiff(b, q))
+            x = e[i] - e[idx(2 * q - b)]
+        if x >= max(frac * e[idx(a)], z * noise) and en[i] >= near * e[i] and \
+                all(_angdiff(b, q) >= math.radians(sep_deg) for q in arms + out):
+            out.append(b % (2 * math.pi))
+    return out
+
+
+def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALES,
+           min_ratio=0.25, reach=20.0):
     """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind).
-    Candidates are local maxima of the junction z above z_junction; each is
-    kept if at least three arms leave it: darkness peaks on circles round
-    it (rings of them, 4 px + 1.5 scales out and every 6 px + a scale
-    beyond) that the centre reaches without a bright gap, at least sep_deg
-    apart."""
+    Candidates are local maxima of the junction z above z_junction where
+    lambda_2 >= min_ratio lambda_1; each is kept if at least three arms
+    leave it: peaks of darkness averaged along rays from just outside its
+    core out to reach px beyond (ray_arms)."""
     J, Js, R, Th, Ts, Q = maps(logI, valid, scales)
     if sigma is None:
         sigma = np.full(np.shape(logI), 1.4826 * float(np.median(np.abs(np.diff(logI, axis=1)))) / math.sqrt(2))
@@ -189,20 +333,8 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=3.0, scales=SCALE
         s = float(Js[ys[i], xs[i]])
         if any(np.linalg.norm(p - q["xy"]) < 2 * max(s, q["scale"]) + 3 for q in out):
             continue
-        r_in = max(4.0, 1.5 * s + 3.0)
-        radii = [r_in + k * (6.0 + s) for k in range(rings)]    # arms of a shallow crossing
-        found = [_dark_arms(D, sigma, p, rr, z_arm) for rr in radii]    # or slow fork part late
-        # an arm is a darkness peak on any of the circles that the centre
-        # reaches without a bright gap (a vessel passing by is reached across
-        # one); read from the outermost circle in, where arms have parted
-        # most, an inner peak adding an arm only in a new direction
-        best = []
-        for rr, ring in sorted(zip(radii, found), key=lambda x: -x[0]):
-            for a in ring:
-                if all(_angdiff(a, b) >= math.radians(sep_deg) for b in best) and \
-                        _aligned(Th, R, p, a, rr, align_deg) and _connected(D, sigma, p, a, rr):
-                    best.append(a)
-        best.sort()
+        r0 = max(3.0, 1.0 * s + 2.0)                   # outside the junction's own core
+        best = arms_multi(D, sigma, p, r0, reach, z_arm)
         if len(best) < 3:
             continue
         out.append(dict(xy=p, scale=s, z=float(J[ys[i], xs[i]]), arms=best, kind=classify(best)))
