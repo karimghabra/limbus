@@ -367,7 +367,8 @@ def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, nea
 
 
 def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALES,
-           min_ratio=0.0, reach=20.0, texture=True, pair_deg=50.0, pair_len=60.0):
+           min_ratio=0.0, reach=20.0, texture=True, pair_deg=50.0, pair_len=60.0, trace=False,
+           trace_valid=None):
     """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind),
     with parts and span where it is a shallow crossing (pair_ys).
     Candidates are local maxima of the junction z above z_junction where
@@ -376,7 +377,9 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
     its core out to reach px beyond; close pairs of arms checked with
     approach unless pair_deg is 0), then Y-shaped pairs up to pair_len px
     apart joined (none if 0).  texture: arms must stand out of the texture
-    as well as the sensor noise."""
+    as well as the sensor noise.  trace: add the crossings that tracing
+    every vessel finds and these do not (tracing.combine; traces stay
+    within trace_valid, by default valid)."""
     J, Js, R, Th, Ts, Q = maps(logI, valid, scales)
     if sigma is None:
         sigma = np.full(np.shape(logI), 1.4826 * float(np.median(np.abs(np.diff(logI, axis=1)))) / math.sqrt(2))
@@ -399,6 +402,13 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
         out.append(dict(xy=p, scale=s, z=float(J[ys[i], xs[i]]), arms=best, kind=classify(best)))
     if pair_len:
         out = pair_ys(out, D, reach, max_len=pair_len)
+    if trace:
+        from . import tracing
+        vt = (np.ones(D.shape, bool) if valid is None else valid) if trace_valid is None else trace_valid
+        U, S = tracing.orientation_score(logI, valid)
+        traces = tracing.trace_all(U, vt, S)
+        del U
+        out = tracing.combine(out, traces, tracing.trace_events(traces), D)
     return out
 
 
@@ -514,7 +524,14 @@ def score_zoo(seed=0, **detect_kw):
     for k, rows in enumerate((zoo.ROWS, zoo.ROWS_CALIBRE, zoo.ROWS_CROSSINGS)):
         I, V, tiles = zoo.zoo_sheet(seed + k, rows=rows)
         P = prepare(I)
-        dets = detect(P.logI, P.sigma, P.valid, **detect_kw)
+        kw = dict(detect_kw)
+        if kw.get("trace"):              # no scene in the gaps between tiles: traces stop at their edges
+            inside = np.zeros(P.logI.shape, bool)
+            for t in tiles:
+                x0, y0, x1, y1 = t["box"]
+                inside[y0:y1 + 1, x0:x1 + 1] = True
+            kw["trace_valid"] = P.valid & inside
+        dets = detect(P.logI, P.sigma, P.valid, **kw)
         for ri, (name, _, _) in enumerate(rows):
             is_x = any(w in name for w in _INTERSECT) and "parallel pair" not in name
             R = dict(name=name, marks=0, found=0, false=0, arms_true=0, arms_det=0, arms_ok=0,

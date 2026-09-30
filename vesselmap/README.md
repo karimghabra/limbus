@@ -515,6 +515,47 @@ lines of a mesh meet, and a faint capillary's far side under a blurred
 vessel. The false detections are mostly kissing pairs whose lumens touch
 (an X, like a crossing) and hairpin turns.
 
+`tracing.py` traces every vessel and reads junctions off where the traces
+meet (`detect(..., trace=True)` adds what it finds). An orientation score
+lifts the image to orientation x position: at 36 angles, how much a dark
+line runs through each pixel along it (a second derivative across times a
+Gaussian along, the best of three widths). Two vessels crossing are apart
+there however they overlap in the image, so the tracer, which follows the
+score at its own heading and prefers to go on turning as it has been, goes
+straight through a crossing instead of turning onto the other vessel. Every
+line is traced (the strongest point not yet traced at its own orientation,
+again and again, each trace marked across its width; weak or short traces
+are texture), and pieces of one vessel are joined end to end. Then:
+
+* two traces cross where one leaves the other on the opposite side from the
+  one it came from, and the meeting point is at least 0.72 times as dark as
+  the two lines together: overlapping vessels add their darkness, so a real
+  crossing measures about 1 (5 % of them below 0.78) while two vessels that
+  only touch measure about 0.5-0.65;
+* touching and parting on the same side is a kiss, not a junction;
+* two traces ending on the same one from opposite sides, in line, are one
+  vessel passing through it (a shallow crossing, or a thin vessel through a
+  thick or blurred one, which no trace follows across): a crossing where
+  their line meets it;
+* a trace ending on another is a T or a fork (left to the detector).
+
+The detector keeps its detections and adds, from the traces, the pass-
+throughs and the X-shaped crossings it lacks (a trace crossing within 20 px
+of a detection is the same one seen off centre). On seeds 0, 10 and 20 this
+finds 192, 189 and 192 of 203 (94.6, 93.1, 94.6 %) with 16, 33 and 28 false
+detections, against 188, 185 and 186 with 15, 32 and 25 without; arms
+exactly right stay at 95-97 %. What the traces add: thin and faint crossings
+at 10-35 degrees, capillaries through blurred or thick vessels, the tightest
+twisted pairs' crossings. It costs about 15 s a sheet (the score is 36
+orientations x 3 widths). Two cues from the width did not help find
+junctions: centre darkness as a check on the detector's own crossings (real
+ones in dense meshes measure as low as 0.54 on its ray arms, as low as
+kissing pairs), and Murray's law between arm widths (half-maximum widths of
+blurred vessels do not follow it closely enough). The width does tell a T
+from a fork fairly well: a straight pair of arms of equal width (the vessel
+a branch ends on) is found at 28 of 29 Ts and 12 of 60 forks (mostly those
+whose thick child carries straight on).
+
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected
 component, from wide to narrow, with BFS depth breaking ties. Every edge
