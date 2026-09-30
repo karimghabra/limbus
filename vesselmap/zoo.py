@@ -388,6 +388,47 @@ def zoo_sheet(seed=0, tile=128, gap=8, rows=None, texture_scale=1.0, noise=True)
     return I, vessels, tiles
 
 
+# ---------------------------------------------------------------- arms
+def true_arms(vessels, p, reach=14.0, near=4.0):
+    """The directions (rad) in which vessels leave the point p: a vessel
+    whose centreline comes within near + its radius of p leaves it along
+    each side on which it runs on for at least reach / 2 (one arm where it
+    ends at p, two where it passes through); the direction is to its
+    centreline reach px along from its point nearest p (or to its end)."""
+    p = np.asarray(p, float)
+    out = []
+    for v in vessels:
+        xy = v["xy"]
+        d = np.linalg.norm(xy - p, axis=1)
+        i = int(np.argmin(d))
+        if d[i] > near + float(v["r"][i]):
+            continue
+        s = np.r_[0, np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))]
+        for sign in (1, -1):
+            room = (s[-1] - s[i]) if sign > 0 else s[i]
+            if room < reach / 2:
+                continue
+            j = int(np.argmin(np.abs(s - (s[i] + sign * min(reach, room)))))
+            q = xy[j] - p
+            out.append(math.atan2(q[1], q[0]))
+    return out
+
+
+def match_arms(found, truth, tol_deg=20.0):
+    """Greedy one-to-one matching of arm angles within tol_deg: (number
+    matched, angular errors in degrees)."""
+    pairs = sorted((abs((a - b + math.pi) % (2 * math.pi) - math.pi), i, j)
+                   for i, a in enumerate(found) for j, b in enumerate(truth))
+    used_f, used_t, err = set(), set(), []
+    for d, i, j in pairs:
+        if d > math.radians(tol_deg) or i in used_f or j in used_t:
+            continue
+        used_f.add(i)
+        used_t.add(j)
+        err.append(math.degrees(d))
+    return len(err), err
+
+
 # ---------------------------------------------------------------- completeness
 def _bilinear(M, x, y):
     H, W = M.shape

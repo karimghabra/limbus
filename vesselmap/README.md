@@ -454,16 +454,23 @@ touch.
 `intersections.detect()` finds where vessels meet. Candidates are maxima of
 the smaller Hessian eigenvalue of log intensity (the image curves up in
 every direction where vessels meet), scale-normalised and in units of its
-robust spread. A candidate is kept when at least three arms leave it:
-peaks of darkness (the local upper envelope less the image, which peaks at
-a vessel's centre however wide it is) on circles round it, chained from the
-innermost circle out and reached from the centre without a bright gap.
-Arms in two straight pairs make a crossing, three a bifurcation, others a
-node. On the zoo (215 marked intersections) it finds 80 % with 35 false
-detections; the misses are shallow crossings and forks whose arms part only
-far out, the thinnest crossings, and capillaries over thick vessels (with
-four circles it finds 89 %, at about 250 false detections beside wide
-vessels).
+robust spread, where it is at least a quarter of the larger one (a bump of
+contrast along one wide vessel is not). A candidate is kept when at least
+three arms leave it. An arm is a peak of darkness (the local upper envelope
+less the image, which peaks at a vessel's centre however wide it is) on one
+of three circles round it, that the centre reaches without a bright gap,
+and where the vessel runs along the ray (its along-vessel Hessian
+eigenvector within 35 degrees of radial); circles are read from the
+outermost in, where arms have parted most. Arms in two straight pairs make
+a crossing, three a bifurcation, others a node.
+
+`intersections.score_zoo()` scores it on the zoo: of 215 marked
+intersections it finds 87 %, with 54 false detections. At those found, arm
+recall is 0.97 and arm precision 0.98 (a true arm is each direction a vessel
+leaves the point, `zoo.true_arms`; matched within 20 degrees, mean error
+2.8 degrees), all arms are exactly right at 82 % and the kind at 85 %. The
+misses are shallow crossings and forks whose arms part only far out, the
+thinnest crossings, and wide vessels crossing at shallow angles.
 
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected
