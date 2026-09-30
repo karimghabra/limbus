@@ -136,12 +136,13 @@ class SearchConfig:
                                     # fitted again, longer (a join / split / reroute also wider: a
     refine_iters: int = 150         # bend at a junction needs room to relax; the pieces it
     refine_radius: float = 60.0     # replaces were fitted for hundreds of steps)
-    relax_radius: float = 0.0       # a move still scored above 0 (below refine_below) is scored
-    relax_iters: int = 120          # again with the other vessels within this distance (px)
-    relax_below: float = 1.0        # re-fitted too, before and after alike (a branch whose
-    relax_kinds: tuple = ("join", "reroute", "delete", "split", "swap")    # parent changes, a
-                                    # crossing vessel, may have to move for the move to pay);
-                                    # relax_radius 0: off
+    relax_radius: float = 0.0       # a move of relax_kinds scored above 0 but below
+    relax_iters: int = 120          # relax_below (x tau * t_scale) is scored again with the
+    relax_below: float = 1.0        # other vessels within this distance (px) re-fitted too,
+    relax_kinds: tuple = ("join", "reroute", "delete", "split", "swap", "extend")
+                                    # before and after alike (a branch whose parent changes,
+                                    # a crossing vessel, a vessel an end grows into, may have
+                                    # to move for the move to pay); relax_radius 0: off
     lr_pos: float = 0.1
     lr_prof: float = 0.03
     join_gap: float = 40.0          # largest gap bridged (px) ...
@@ -719,7 +720,7 @@ class VesselSearch:
     def _global_model(self):
         net = self.net
         return NetworkModel(net, self.P.logI, self.P.weight, stride=1,
-                            bg_spacing=net.bg_spacing or BG_SPACING, ref=net)
+                            bg_spacing=net.bg_spacing or BG_SPACING, ref=net, inside=True)
 
     @torch.no_grad()
     def _render_all(self, model=None):
@@ -932,7 +933,7 @@ class VesselSearch:
         sub.bg_spacing = spacing
         m = NetworkModel(sub, target, self.P.weight[y0:y1, x0:x1], stride=1,
                          bg_spacing=spacing, fit_background=bg,
-                         image_box=(-x0, -y0, self.W - 1.0 - x0, self.H - 1.0 - y0))
+                         image_box=(-x0, -y0, self.W - 1.0 - x0, self.H - 1.0 - y0), inside=True)
         m.raw_hw.requires_grad_(False)
         m.raw_hs.requires_grad_(False)
         return m
@@ -1128,12 +1129,13 @@ class VesselSearch:
             new = fit(new, self.cfg.refine_radius, self.cfg.refine_iters)
             win, m_old, m_new, parts = score(new)
         nb_S, relaxed = {}, False
-        if self.cfg.relax_radius > 0 and not lbg and move["kind"] in self.cfg.relax_kinds and \
+        if self.cfg.relax_radius > 0 and move["kind"] in self.cfg.relax_kinds and \
                 0 < sum(parts.values()) < self.cfg.relax_below * scale:
             rel = self._relaxed(old, new)
             if rel is not None and sum(rel[4].values()) < sum(parts.values()):
                 old, new, win, m_old, m_new, parts, nb_S = rel[0], rel[1], rel[2], rel[3][0], \
                     rel[3][1], rel[4], rel[5]
+                bg_grid[0] = rel[6]
                 relaxed = True
         self.last_parts = parts
         # full-footprint patches are kept only for moves without a focus (few);
@@ -1167,7 +1169,8 @@ class VesselSearch:
         after the move alike on a window over both.  Returns (old ids and
         the neighbours', new edges and the neighbours re-fitted, window,
         (model before, model after), parts, {index in new: end evidence of
-        a neighbour as it was}), or None without neighbours."""
+        a neighbour as it was}, background correction with local_bg or
+        None), or None without neighbours."""
         R = self.cfg.relax_radius
         smp = [self.samples(k) for k in old] + [edge_samples(e) for e in new]
         pts = np.concatenate([s["xy"] for s in smp])
@@ -1199,12 +1202,17 @@ class VesselSearch:
         m0, m1 = models
         n0, p0 = self._local_energy(m0)
         n1, p1 = self._local_energy(m1)
+        grid = None
+        if self.cfg.local_bg:                 # as in _compute: each with its best correction
+            g0, _ = self._bg_gain(m0)
+            g1, grid = self._bg_gain(m1)
+            n0, n1 = n0 - g0, n1 - g1
         fitted = self._fitted_edges(m1, win)
         c0 = sum(self.cost(self.net.edges[k], self.samples(k)["L"]) for k in removed)
         c1 = sum(self.cost(e) for e in fitted)
         nb_S = {len(new) + q: self.endS[j] for q, j in enumerate(nb) if j in self.endS}
         return (removed, fitted, win, (m0, m1), dict(nll=n1 - n0, prior=p1 - p0, cost=c1 - c0),
-                nb_S)
+                nb_S, grid)
 
     @torch.no_grad()
     def _free_near(self, m, pts, radius):
@@ -1531,9 +1539,31 @@ class VesselSearch:
                     continue
                 moves.append(dict(kind="split", anchor=[k], key=("split", k, i),
                                   focus=xy[i], build=self._split_builder(k, s["s_arc"][i])))
+        return moves + self.border_split_moves()
+
+    def border_split_moves(self, near=3.0):
+        """Split a vessel where it runs along the image border, both new ends
+        put on the border (open there): a vessel that leaves the image and
+        comes back is two traces, not one bridging along the border."""
+        moves = []
+        lo, hi = near, np.array([self.W - 1.0 - near, self.H - 1.0 - near])
+        for k in self.net.edges:
+            s = self.samples(k)
+            xy = s["xy"]
+            at = np.flatnonzero((xy[:, 0] < lo) | (xy[:, 1] < lo) | (xy[:, 0] > hi[0]) |
+                                (xy[:, 1] > hi[1]))
+            at = at[(s["s_arc"][at] >= 6.0) & (s["L"] - s["s_arc"][at] >= 6.0)]
+            if not len(at):
+                continue
+            for run in np.split(at, np.flatnonzero(np.diff(at) > 1) + 1):
+                d = np.minimum.reduce([xy[run, 0], xy[run, 1], self.W - 1.0 - xy[run, 0],
+                                       self.H - 1.0 - xy[run, 1]])
+                i = int(run[np.argmin(d)])
+                moves.append(dict(kind="split", anchor=[k], key=("bsplit", k, i), focus=xy[i],
+                                  build=self._split_builder(k, s["s_arc"][i], border=True)))
         return moves
 
-    def _split_builder(self, k, s_cut):
+    def _split_builder(self, k, s_cut, border=False):
         def build():
             e = self.net.edges[k]
             s = edge_samples(e, 0.7)
@@ -1542,10 +1572,18 @@ class VesselSearch:
             sls = (slice(0, i + 1), slice(i, None))
             links = _split_links(e.info.get("links", []), [s["xy"][sl] for sl in sls],
                                  s["xy"][min(i, len(s["xy"]) - 1)])
-            for sl, lk in zip(sls, links):
+            for n, (sl, lk) in enumerate(zip(sls, links)):
                 if len(s["xy"][sl]) < 4:
                     return None
-                ctrl, r, s_, a = _fit_edge_params(s["xy"][sl], s["r"][sl], s["s"][sl],
+                xy = s["xy"][sl].copy()
+                if border:                      # the cut end onto the nearest border
+                    j = -1 if n == 0 else 0
+                    x, y = xy[j]
+                    d = [x, y, self.W - 1.0 - x, self.H - 1.0 - y]
+                    m = int(np.argmin(d))
+                    xy[j] = [0.0 if m == 0 else self.W - 1.0 if m == 2 else x,
+                             0.0 if m == 1 else self.H - 1.0 if m == 3 else y]
+                ctrl, r, s_, a = _fit_edge_params(xy, s["r"][sl], s["s"][sl],
                                                   s["a"][sl], e.info.get("spacing", 12.0),
                                                   faithful=True)
                 out.append(Edge(-1, -1, ctrl, r, s_, a, _with_links(e.info, lk)))
@@ -1704,26 +1742,31 @@ class VesselSearch:
             return [k], [Edge(-1, -1, ctrl, r, s_, a, dict(e.info))]
         return build
 
-    def swap_moves(self, touch=1.5, max_cos=0.985):
+    def swap_moves(self, touch=1.0, apart=10.0):
         """Two vessels that cross exchange their parts beyond the crossing,
         each part going on with the one that keeps its direction (a trace
-        that switched vessels where two cross at a shallow angle, or run
-        side by side and touch)."""
+        that switched vessels where two cross at a shallow angle: two
+        traces that touch there, centrelines within their radii + touch,
+        and part again within `apart` px either side; one vessel traced
+        twice stays close)."""
         moves = []
         I = self._idx()
         if I["tree"] is None or len(I["ids"]) < 2:
             return moves
         X, lab, idx = I["X"], I["lab"], I["idx"]
+        rmax = max(float(self.samples(j)["r"].max()) for j in self.net.edges)
         seen = set()
         for k in self.net.edges:
             s = self.samples(k)
             best = {}                                   # (j, crossing cluster) -> closest pair
-            for i, h in enumerate(I["tree"].query_ball_point(s["xy"], touch)):
+            for i, h in enumerate(I["tree"].query_ball_point(s["xy"], s["r"].max() + rmax + touch)):
                 for c in h:
                     j = int(lab[c])
                     if j == k:
                         continue
                     d = float(np.linalg.norm(X[c] - s["xy"][i]))
+                    if d > s["r"][i] + self.samples(j)["r"][int(idx[c])] + touch:
+                        continue
                     key = (j, int(s["s_arc"][i] // 12.0))     # one candidate per 12 px of k
                     if key not in best or d < best[key][0]:
                         best[key] = (d, i, int(idx[c]))
@@ -1732,8 +1775,12 @@ class VesselSearch:
                 if min(s["s_arc"][i], s["L"] - s["s_arc"][i], o["s_arc"][ij],
                        o["L"] - o["s_arc"][ij]) < 6.0:
                     continue                            # near an end: a join or reroute
-                if abs(float(np.dot(s["tan"][i], o["tan"][ij]))) > max_cos:
-                    continue                            # one vessel traced twice, not a crossing
+                if "tree" not in o:
+                    o["tree"] = cKDTree(o["xy"])
+                far = [int(np.clip(np.searchsorted(s["s_arc"], s["s_arc"][i] + dd), 0,
+                                   len(s["xy"]) - 1)) for dd in (-apart, apart)]
+                if min(float(o["tree"].query(s["xy"][f])[0]) for f in far) < d + 2.0:
+                    continue                            # still together: one vessel traced twice
                 pair = (min(k, j), max(k, j), round(float(s["xy"][i][0]) / 4),
                         round(float(s["xy"][i][1]) / 4))
                 if pair in seen:

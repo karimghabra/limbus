@@ -178,7 +178,8 @@ class NetworkModel(torch.nn.Module):
     def __init__(self, net: VesselNetwork, logI: np.ndarray, weight: np.ndarray,
                  stride: int = 1, sample_spacing: float = 0.75,
                  bg_spacing: float = 64.0, ref: VesselNetwork | None = None,
-                 fit_background: bool = True, image_box=None, open_px: float = 1.0):
+                 fit_background: bool = True, image_box=None, open_px: float = 1.0,
+                 inside: bool = False):
         super().__init__()
         self.net = net
         self.H, self.W = logI.shape
@@ -187,6 +188,10 @@ class NetworkModel(torch.nn.Module):
         # out of the image, and is not faded out
         self.image_box = image_box if image_box is not None else (0.0, 0.0, self.W - 1.0, self.H - 1.0)
         self.open_px = float(open_px)
+        # inside: control points (so the whole centreline) stay within the
+        # image box; a trace outside it is unobserved, and a wide one there
+        # would only model the background at the edge
+        self.inside = bool(inside)
         self.stride = int(stride)
         self.sample_spacing = sample_spacing
         self.logI = torch.as_tensor(logI, dtype=torch.float32)
@@ -330,9 +335,16 @@ class NetworkModel(torch.nn.Module):
 
     @torch.no_grad()
     def project(self):
-        """Hard limits on calibre and blur (see edge_wmax)."""
+        """Hard limits on calibre and blur (see edge_wmax), and with inside
+        on the image box."""
         self.raw_r.data = torch.minimum(self.raw_r.data, self.raw_r_max)
         self.raw_s.data = torch.minimum(self.raw_s.data, self.raw_s_max)
+        if self.inside:
+            x0, y0, x1, y1 = self.image_box
+            for q in (self.node_xy, self.inner):
+                if len(q):
+                    q.data[:, 0].clamp_(x0, x1)
+                    q.data[:, 1].clamp_(y0, y1)
 
     # ------------------------------------------------------------ geometry
     def ctrl_all(self):

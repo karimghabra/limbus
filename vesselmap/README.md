@@ -257,9 +257,13 @@ and a fragmentation term Phi on vessel ends.
   a bridged gap, or overlapping ends of a vessel found twice. `delete` a
   vessel; any vessel duplicating it is re-fitted to take over. `split` a
   vessel at a sharp bend, and `reroute` which arm of a branch point
-  continues the parent. `revive` a deleted vessel. No move is limited by a
-  turn, calibre or blur threshold: every candidate is judged by the change
-  of E.
+  continues the parent. `swap` the parts of two vessels beyond the point
+  where they cross (a trace that switched vessels at a shallow crossing).
+  `trim` a stretch off a vessel end, or `extend` it along the dark ridge
+  the model leaves unexplained beyond it (4-8 px straight ahead in any
+  case; an end carried to the image border stays open there). `revive` a
+  deleted vessel. No move is limited by a turn, calibre or blur threshold:
+  every candidate is judged by the change of E.
 * *Exact local energy.* A move changes the image only near the vessels it
   touches. Its energy change is computed on a window, rendering only those
   vessels over the fixed rest of the model: the other vessels' optical
@@ -268,6 +272,16 @@ and a fragmentation term Phi on vessel ends.
   are rebuilt faithfully elsewhere). The result is scored on the whole
   footprint of the old and new vessels, so dE is exactly the change the
   move makes.
+* *Relaxed neighbours* (`relax_radius`, 12 px in the synthetic runs). With
+  the rest of the model fixed, a structural move can be refused only
+  because a vessel next to it would have to move too: joining a parent
+  through a branch point pays only once the branch's end and a vessel
+  crossing there follow it. A join, reroute, split, swap or delete scored
+  just above 0 is therefore scored again with every vessel within that
+  distance re-fitted as well, before and after the move alike, and those
+  vessels become part of the move. The score is conservative: applying the
+  move lowers E by at least it. On the small synthetic scene this took a
+  map from E 1995 above the fitted truth to 374 above it.
 * *Search.* Rejection-free annealing. At every step every candidate move is
   scored, and one is drawn with probability proportional to exp(-dE / T),
   staying put (dE = 0) included. A data score is cached and corrected
@@ -431,7 +445,12 @@ carries `orientation="structural"`. `VesselNetwork.reverse_edge` and
 renders 768x512 scenes independently of the fitting model: super-sampled
 cylinders, per-vessel depth blur of 0.6–9 px, bifurcating trees, defocused
 vessels crossing everything, tortuous capillaries of radius 0.6–1.4 px, lumpy
-background texture, illumination fall-off, and shot and read noise. A true
+background texture, illumination fall-off, and shot and read noise. No
+in-focus vessel runs inside another's lumen: the generator cuts a vessel
+where it would run along another for longer than a crossing (a branch
+curving back into its parent), since no image, and no annotator, can tell
+two vessels apart there. (That rule is newer than the tables in this
+section; it shortens or drops 2-7 of the 40-60 vessels of a scene.) A true
 centreline point counts as found within max(2 px, its radius):
 
 | scene | recall | precision | recall by radius <1 / 1–2 / 2–4 / ≥4 px | recall on blur ≥4 px | time |

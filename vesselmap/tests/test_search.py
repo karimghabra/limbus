@@ -792,3 +792,25 @@ def test_vessels_traced_across_a_shallow_crossing_are_swapped_back():
         d = np.abs((xy - xy.mean(0)) @ np.array([-(xy[-1] - xy[0])[1], (xy[-1] - xy[0])[0]])
                    / np.linalg.norm(xy[-1] - xy[0]))
         assert d.max() < 2.0, d.max()                   # straight again
+
+
+def test_vessel_leaving_the_image_and_coming_back_is_two():
+    """A vessel that leaves the image and comes back, traced as one edge
+    bridging along the border, is split there into two open-ended traces."""
+    H, W = 120, 200
+    t = np.linspace(0, np.pi, 400)
+    xy = np.stack([100 - 70 * np.cos(t), 60 - 90 * np.sin(t)], 1)     # dips 30 px above the top
+    I, P = _scene([_vessel(xy, r=1.3, amp=0.35)], (H, W))
+    a = xy[xy[:, 1] >= 0]
+    left, right = a[a[:, 0] < 100], a[a[:, 0] > 100]
+    bridge = np.stack([np.linspace(left[-1, 0], right[0, 0], 40), np.full(40, 1.0)], 1)
+    net = VesselNetwork((H, W))
+    _edge(net, np.vstack([left, bridge[1:-1], right]), r=1.3, s=1.0, a=0.35)
+    C = VesselSearch(net, P, _cfg(workers=1, bg_spacing=32.0, lam_bg=200.0, local_bg=True))
+    assert any(m["key"][0] == "bsplit" for m in C.all_moves(("split",)))
+    C.anneal(0.0, 0, kinds=("split", "trim", "delete"))
+    assert len(C.net.edges) == 2, [C.samples(k)["xy"][[0, -1]].round(0).tolist() for k in C.net.edges]
+    for k in C.net.edges:
+        xy_k = C.samples(k)["xy"]
+        assert xy_k[:, 1].min() < 1.5                   # each reaches the border
+        assert np.abs(xy_k[:, 0] - 100).min() > 15      # and none bridges along it
