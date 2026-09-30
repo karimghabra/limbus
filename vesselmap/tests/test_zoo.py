@@ -54,3 +54,13 @@ def test_crossing_rows_mark_every_crossing():
     I, V, tiles = zoo_sheet(0, rows=ROWS_CALIBRE)
     radii = np.concatenate([v["r"] for v in V])
     assert radii.min() < 0.8 and radii.max() > 5.0
+
+
+def test_complex_nodes_mark_every_junction():
+    """Two forks 4 px apart are two marks; a vessel crossing both branches of
+    a fork is a fork and two crossings; three vessels through one point, a
+    fork with a crossing through it and a trifurcation are one each."""
+    from vesselmap.zoo import complex_node
+    rng = np.random.default_rng(0)
+    counts = [len(complex_node(128, case, rng)[1]) for case in range(5)]
+    assert counts == [2, 1, 1, 1, 3], counts

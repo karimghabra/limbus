@@ -177,8 +177,10 @@ def fork_parallel(T, sep, rng, r0=1.8):
     c = np.array([T * 0.3, T / 2])
     parent = _path([c + [-60, 0], c + [-25, 0], c])
     r1, r2 = _murray(r0, 0.5)
-    k1 = _path([c, c + [15, -sep / 2], c + [40, -sep / 2], c + [100, -sep / 2]])
-    k2 = _path([c, c + [15, sep / 2], c + [40, sep / 2], c + [100, sep / 2]])
+    x = np.arange(0.0, 100.0, 1.0)
+    y = sep / 2 * np.sin(0.5 * math.pi * np.minimum(x / 15.0, 1.0))    # part over 15 px, then straight
+    k1 = np.stack([c[0] + x, c[1] - y], 1)
+    k2 = np.stack([c[0] + x, c[1] + y], 1)
     return [_vessel(parent, r0, r0, 1.0, 0.4, rng), _vessel(k1, r1, r1, 1.0, 0.4, rng),
             _vessel(k2, r2, r2, 1.0, 0.4, rng)], [c, c + [40, 0]]
 
@@ -199,7 +201,9 @@ def parallel_rel(T, k, rng, r=1.2):
 def complex_node(T, case, rng, k=1.0):
     """Several junctions at one place: 0 two bifurcations 4 px apart,
     1 a bifurcation with a crossing through it, 2 three vessels crossing at
-    one point, 3 a trifurcation, 4 a crossing 6 px from a bifurcation."""
+    one point, 3 a trifurcation, 4 a vessel crossing both branches of a
+    bifurcation 6 px past it.  Every place where two of them meet is
+    marked."""
     c = np.array([T / 2, T / 2])
     _v = _vessel
     _vessel_k = lambda xy, r0, r1, blur, amp, rng: _v(xy, r0 * k, r1 * k, blur, amp, rng)
@@ -224,12 +228,26 @@ def complex_node(T, case, rng, k=1.0):
         p2 = c + [6, 0]
         vs = [_vessel_k(ray(math.pi), 2.2, 2.2, 1.0, 0.4, rng), _vessel_k(ray(-0.6), 1.6, 1.4, 1.0, 0.4, rng),
               _vessel_k(ray(0.6), 1.6, 1.4, 1.0, 0.4, rng), _vessel_k(thru(1.4, p2), 1.0, 1.0, 1.0, 0.35, rng)]
-    return vs, [c]
+    return vs, _merge_points(_crossings(vs))
+
+
+def _merge_points(pts, within=2.0):
+    """Points closer than within px to an earlier one merged into it
+    (averaged)."""
+    groups = []
+    for p in pts:
+        for g in groups:
+            if np.linalg.norm(np.mean(g, 0) - p) < within:
+                g.append(p)
+                break
+        else:
+            groups.append([p])
+    return [np.mean(g, 0) for g in groups]
 
 
 def _crossings(vessels, tol=1.0):
     """Where the centrelines of two vessels cross or touch (within tol px):
-    one point per contiguous contact."""
+    one point per contiguous contact, where they are closest."""
     from scipy.spatial import cKDTree
     out = []
     for i in range(len(vessels)):
@@ -240,7 +258,7 @@ def _crossings(vessels, tol=1.0):
             if not len(hit):
                 continue
             for run in np.split(hit, np.flatnonzero(np.diff(hit) > 2) + 1):
-                out.append(a[run[len(run) // 2]])
+                out.append(a[run[np.argmin(d[run])]])
     return out
 
 
@@ -358,10 +376,12 @@ def _clip(v, box):
                 amp=v["amp"][run] if np.ndim(v["amp"]) else v["amp"])
 
 
-def zoo_sheet(seed=0, tile=128, gap=8, rows=None, texture_scale=1.0, noise=True):
-    """One tile per case, a row per structure with its parameter swept.
-    Returns (image, vessels, tiles): tiles is a list of dict(row, name,
-    value, box=(x0, y0, x1, y1), vessels=[indices], ambiguous=[points])."""
+def zoo_sheet(seed=0, tile=128, gap=24, rows=None, texture_scale=1.0, noise=True):
+    """One tile per case, a row per structure with its parameter swept, gap
+    px apart (wider than an intersection's arms reach, so that no tile's
+    vessels seem to meet its neighbour's).  Returns (image, vessels,
+    tiles): tiles is a list of dict(row, name, value, box=(x0, y0, x1, y1),
+    vessels=[indices], ambiguous=[points])."""
     rng = np.random.default_rng(seed)
     rows = ROWS if rows is None else rows
     ncol = max(len(r[2]) for r in rows)

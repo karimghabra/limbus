@@ -442,7 +442,9 @@ capillary under a blurred vessel, complex nodes; the same over thin
 (r ~1 px) to thick (r 3-5.5 px) calibres; and multiple crossings (twisted
 pairs, a capillary weaving over a thick vessel, ladders, meshes). The
 background texture has the power spectrum of frame 20's residual off its
-mapped vessels. Each tile marks its ambiguous spots (junctions, crossings).
+mapped vessels; tiles are 24 px apart, so no tile's vessels seem to meet its
+neighbour's. Each tile marks its ambiguous spots: every junction and
+crossing (a complex node marks each place two of its vessels meet).
 
 `zoo.completeness()` flags two vessels annotated as one: within the
 annotated lumen, a 12 px stretch whose averaged cross-section has two
@@ -454,36 +456,64 @@ touch.
 `intersections.detect()` finds where vessels meet. Candidates are maxima of
 the smaller Hessian eigenvalue of log intensity (the image curves up in
 every direction where vessels meet), scale-normalised and in units of its
-robust spread, where it is at least a quarter of the larger one (a bump of
-contrast along one wide vessel is not). A candidate is kept when at least
-three arms leave it, found on its *ray profile*: darkness (the local upper
-envelope less the image, which peaks at a vessel's centre however wide it
-is) averaged along rays from just outside the junction's core out 20 px,
-per degree. Around a single intersection the local power spectrum shows
-every vessel's orientation as a line through the origin, but it cannot tell
-a vessel ending there from one passing through; the ray profile is the
-one-sided counterpart, and every arm is a clean peak on it:
+robust spread. A candidate is kept when at least three arms leave it, found
+on its *ray profile*: darkness (the local upper envelope less the image,
+which peaks at a vessel's centre however wide it is) averaged along rays
+from just outside the junction's core out 20 px, per degree. Around a single
+intersection the local power spectrum shows every vessel's orientation as a
+line through the origin, but it cannot tell a vessel ending there from one
+passing through; the ray profile is the one-sided counterpart, and every arm
+is a clean peak on it:
 
 * an arm is a peak standing above the dips either side by 4 noise levels and
   30 % of its height (a wide arm's shoulder is not one), whose ray is dark
-  over its near half too (not another junction met far out);
+  over its near half too (not another junction met far out). The noise level
+  is the texture's where that is larger than the sensor's: how much ray
+  averages vary from direction to direction away from vessels, measured on
+  a grid over the image (`texture_noise`; 1.7 times the sensor's on the
+  zoo). Against sensor noise alone, dark streaks of texture pass for arms;
 * opposite an arm with nothing found there, the vessel may go on through
   the junction: the darkest direction within 12 degrees is an arm if, less a
   wide arm's shoulder mirrored about that arm, it is at least 40 % as dark
   (a thin vessel crossing a wide one);
 * an arm must be dark along its ray without a dip that recovers further out
-  (a ray from one crossing of a mesh to the next has one).
+  (a ray from one crossing of a mesh to the next has one);
+* where two arms are within 50 degrees of each other, each one's vessel is
+  traced back from 20 px out, steered by its own Hessian direction and kept
+  on its ridge, and must come within 3 px of the candidate (`approach`). On
+  one vessel of a parallel or kissing pair, or of a fork's branches running
+  on side by side, the other one seen across the gap makes a peak like an
+  arm parting at a small angle; traced back, it runs past at their
+  separation, while a vessel that does leave the point arrives however it
+  curves (within 2 px on the zoo).
+
+Vessels crossing at a small angle lie on top of each other for a stretch
+whose two ends each look like a fork with its trunk pointing at the other
+(a Y and a mirrored Y). Two such three-armed junctions up to 60 px apart,
+each with its other two arms in a narrow V beyond it, and the stretch
+between them darker than their outer arms (two vessels on top of each
+other, not one), become one crossing at the middle with the four outer arms
+(`pair_ys`; the two ends are kept as its `parts`).
 
 Arms in two straight pairs make a crossing, three a bifurcation, others a
-node. `intersections.score_zoo()` scores it on the zoo: of 215 marked
-intersections it finds 87 %, with 65 false detections. At those found, arm
-recall is 0.997 and arm precision 1.00 (a true arm is each direction a
-vessel leaves the point, `zoo.true_arms`; matched within 20 degrees, mean
-error 2.3 degrees), and the arms are exactly right at 185 of 186. The one
-left is a crossing 6 px from a fork: from the fork's centre that vessel
-passes by rather than leaves. The intersections missed are shallow
-crossings and forks whose arms part only far out, the thinnest crossings,
-and wide vessels crossing at shallow angles.
+node. `intersections.score_zoo()` scores it on the zoo. Marks closer than
+their widest radii plus 2 px are one place (their lumens overlap), 203 in
+all. On sheets drawn with seeds 0, 10 and 20 it finds 92.6, 91.1 and 91.6 %
+of them, with 15, 32 and 25 false detections (the previous settings, a
+ratio of the eigenvalues of at least a quarter and sensor noise only, find
+85.2, 82.8 and 84.2 % with 78, 82 and 69). At those found, arm recall is
+0.99 and arm precision 1.00 (a true arm is each direction a vessel leaves
+the point, `zoo.true_arms`; matched within 20 degrees, mean error 2.3
+degrees), and the arms are exactly right at 96 to 97 % of them. What is
+still missed: thin or faint vessels crossing at 10-20 degrees, a capillary
+leaving a thick or blurred vessel at such an angle (it runs inside the
+other's lumen for 30 px or more), forks whose branches never part by a
+visible gap, and the shallowest thick crossings, whose ends lie more than a
+tile's half-width apart. The arms not exactly right are mostly at those
+shallow crossings (one of two arms 20 degrees apart), at points where three
+lines of a mesh meet, and a faint capillary's far side under a blurred
+vessel. The false detections are mostly kissing pairs whose lumens touch
+(an X, like a crossing) and hairpin turns.
 
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected

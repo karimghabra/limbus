@@ -6,11 +6,17 @@ and positive, along it near zero. Where vessels cross or branch, the image
 curves up in every direction: both Hessian eigenvalues are positive. The
 smaller eigenvalue, scale-normalised (s^2 * lambda_2) and divided by its
 robust spread over the image at that scale (sensor noise and texture alike
-set that spread), peaks at such places. A vessel end is blob-like too, so
-each candidate is kept only if vessels leave it in at least three
-directions: ridge strength is sampled on circles around it, and its
-separate angular peaks are the arms, the directions in which to look for
-the vessels that start there.
+set that spread), peaks at such places (and at bumps of contrast along one
+vessel, and at vessel ends).  Each candidate is kept only if vessels leave
+it in at least three directions, its arms: the peaks of darkness averaged
+along rays from it (ray_arms), against the noise that texture as well as
+the sensor puts into such averages (texture_noise), with the vessel's other
+half across a crossing (continuations), no gap along the arm (continuous),
+and, where two arms are close in angle, each one's vessel traced back to
+the candidate (approach: a neighbour running past alongside is not an arm).
+Vessels crossing at a small angle lie on top of each other for a stretch
+whose two ends each look like a fork; such pairs become one crossing
+(pair_ys).
 """
 from __future__ import annotations
 
@@ -101,73 +107,6 @@ def darkness(logI, width=31, smooth=4.0):
     return B - L
 
 
-def _dark_arms(D, sig, p, radius, z_arm, rel=0.0):
-    """Angles (rad) of the separate peaks of darkness on a circle round p
-    whose prominence over the dips either side exceeds z_arm noise levels
-    and rel of the peak's own darkness (a gap between two vessels is nearly
-    as bright as the background; a bump of contrast along one wide vessel
-    is not)."""
-    H, W = D.shape
-    n = int(max(90, round(2 * math.pi * radius * 2)))           # ~0.5 px apart
-    th = np.linspace(0, 2 * math.pi, n, endpoint=False)
-    x = np.clip(p[0] + radius * np.cos(th), 0, W - 1)
-    y = np.clip(p[1] + radius * np.sin(th), 0, H - 1)
-    v = ndi.map_coordinates(D, [y, x], order=1)
-    v = ndi.gaussian_filter1d(v, 1.0 * n / (2 * math.pi * radius), mode="wrap")   # ~1 px
-    noise = float(np.median(ndi.map_coordinates(sig, [y, x], order=1))) / math.sqrt(2.0)
-    peaks = [i for i in range(n) if v[i] > v[i - 1] and v[i] >= v[(i + 1) % n]]
-    out = []
-    for i in peaks:
-        # prominence: the higher of the lowest points on the way to a higher peak either side
-        lo = []
-        for step in (1, -1):
-            m, j = v[i], i
-            for _ in range(n - 1):
-                j = (j + step) % n
-                m = min(m, v[j])
-                if v[j] > v[i]:
-                    break
-            lo.append(m)
-        if v[i] - max(lo) > max(z_arm * noise, rel * v[i]):
-            out.append(float(th[i]))
-    return out
-
-
-def _connected(D, sig, p, a, radius, z_gap=3.0, frac=0.3):
-    """Whether the straight path from p out to the circle at angle a stays
-    dark: no gap brighter than the darker end by more than z_gap noise
-    levels and frac of its darkness (a neighbouring vessel is reached across
-    one)."""
-    t = np.arange(0.0, radius + 1e-9, 0.5)
-    x = p[0] + t * math.cos(a)
-    y = p[1] + t * math.sin(a)
-    H, W = D.shape
-    if x.min() < 0 or y.min() < 0 or x.max() > W - 1 or y.max() > H - 1:
-        return True
-    v = ndi.map_coordinates(D, [y, x], order=1)
-    end = min(v[0], v[-1])
-    noise = float(np.median(ndi.map_coordinates(sig, [y, x], order=1)))
-    return end - v.min() < max(z_gap * noise, frac * end)
-
-
-def _aligned(Th, R, p, a, radius, max_deg):
-    """Whether the vessel at the circle, angle a, runs along the ray from p
-    (its along-vessel eigenvector within max_deg of radial, where the image
-    there looks most like a tube): an arm leaves p, a vessel seen across
-    the ray does not."""
-    H, W = Th.shape
-    best, th = -np.inf, None
-    for da in np.radians((-4.0, 0.0, 4.0)):             # the tube's centre, nearby on the circle
-        x = int(round(p[0] + radius * math.cos(a + da)))
-        y = int(round(p[1] + radius * math.sin(a + da)))
-        if 0 <= x < W and 0 <= y < H and R[y, x] > best:
-            best, th = R[y, x], Th[y, x]
-    if th is None:
-        return True
-    d = abs((th - a + math.pi / 2) % math.pi - math.pi / 2)     # orientation: mod pi
-    return d <= math.radians(max_deg)
-
-
 def ray_profile(D, p, r0, r1, step_deg=1.0):
     """Darkness along rays from p, r0 to r1 px out, per direction: (angles,
     mean over each ray, mean over its near half).  A vessel leaving p is a
@@ -206,11 +145,46 @@ def _refine(v, i, th):
     return float((th[i] + off * (th[1] - th[0])) % (2 * math.pi))
 
 
-def ray_arms(D, sig, p, r0, r1, z_arm=4.0, rel=0.3, sep_deg=12.0, near=0.35):
+def _tail_spread(e):
+    """Spread of a ray profile from its lower tail (30th less 5th
+    percentile, as a Gaussian's standard deviation): the directions
+    without a vessel."""
+    q5, q30 = np.percentile(e, (5.0, 30.0))
+    return float(q30 - q5) / 1.12
+
+
+def texture_noise(D, r0=3.0, reach=20.0, step=16, win=9):
+    """How much the darkness along a ray varies from direction to direction
+    where no vessel is (texture as well as sensor noise): the lower-tail
+    spread of ray profiles at points every step px, its median over win x
+    win of them (most are away from vessels), per pixel."""
+    H, W = D.shape
+    ys = np.arange(step // 2, H, step)
+    xs = np.arange(step // 2, W, step)
+    g = np.zeros((len(ys), len(xs)))
+    for i, y in enumerate(ys):
+        for j, x in enumerate(xs):
+            th, v, _ = ray_profile(D, (float(x), float(y)), r0, r0 + reach, step_deg=3.0)
+            g[i, j] = _tail_spread(v - np.percentile(v, 20))
+    g = ndi.median_filter(g, size=win, mode="nearest")
+    return ndi.zoom(g, (H / len(ys), W / len(xs)), order=1, mode="nearest")[:H, :W]
+
+
+def _profile_noise(sig, p, length, tex=None):
+    """The noise level of a ray profile at p: sensor sigma over the root of
+    the ray length, or the texture's (texture_noise) where larger."""
+    H, W = sig.shape
+    iy, ix = int(np.clip(p[1], 0, H - 1)), int(np.clip(p[0], 0, W - 1))
+    sensor = float(sig[iy, ix]) / math.sqrt(max(length, 1.0))
+    return sensor if tex is None else max(sensor, float(tex[iy, ix]))
+
+
+def ray_arms(D, sig, p, r0, r1, z_arm=4.0, rel=0.3, sep_deg=12.0, near=0.35, tex=None):
     """The arms at p from the ray profile (darkness above the background's
     along each direction): its peaks that stand above the dips either side
-    by z_arm noise levels (sensor sigma over the root of the ray length) and
-    by rel of their height (not the shoulder of a wide arm), with the ray's
+    by z_arm noise levels (_profile_noise: the sensor's, or the texture's
+    where larger) and by rel of their height (not the shoulder of a wide
+    arm), with the ray's
     near half dark too (at least near of it: not another junction met far
     out), at least sep_deg apart, strongest first; angles refined by a
     parabola."""
@@ -218,10 +192,9 @@ def ray_arms(D, sig, p, r0, r1, z_arm=4.0, rel=0.3, sep_deg=12.0, near=0.35):
     v = ndi.gaussian_filter1d(v, 1.0, mode="wrap")
     vn = ndi.gaussian_filter1d(vn, 1.0, mode="wrap")
     n = len(v)
-    H, W = sig.shape
-    noise = float(sig[int(np.clip(p[1], 0, H - 1)), int(np.clip(p[0], 0, W - 1))]) / math.sqrt(max(r1 - r0, 1.0))
     e = v - float(np.percentile(v, 20))                # darkness above the background's
     en = vn - float(np.percentile(vn, 20))
+    noise = _profile_noise(sig, p, r1 - r0, tex)
     sep = math.radians(sep_deg)
     cand = []
     for i in range(n):
@@ -229,22 +202,103 @@ def ray_arms(D, sig, p, r0, r1, z_arm=4.0, rel=0.3, sep_deg=12.0, near=0.35):
             prom = _prominence(e, i)
             if prom > max(z_arm * noise, rel * e[i]) and en[i] >= near * e[i]:
                 cand.append((e[i], i))
-    arms, idx = [], []
+    arms = []
     for h, i in sorted(cand, reverse=True):
         a = _refine(e, i, th)
         if all(_angdiff(a, b) >= sep for b in arms):
             arms.append(a)
-            idx.append(i)
     return sorted(arms)
 
 
-def arms_multi(D, sig, p, r0, reach, z_arm=4.0, sep_deg=12.0):
+def _ridge_point(D, p, a, r, w):
+    """The darkest point across the ray at angle a, r px out, within w px
+    of it."""
+    H, W = D.shape
+    c, sn = math.cos(a), math.sin(a)
+    u = np.arange(-w, w + 1e-9, 0.5)
+    xs, ys = p[0] + r * c - u * sn, p[1] + r * sn + u * c
+    v = ndi.map_coordinates(D, [np.clip(ys, 0, H - 1), np.clip(xs, 0, W - 1)], order=1)
+    k = int(np.argmax(v))
+    return np.array([xs[k], ys[k]])
+
+
+def approach(D, p, a, r1, others=(), Th=None, R=None, w_max=4.0, lost=0.25, blend=0.5,
+             r_tube=2.0, max_dev=45.0, path=None):
+    """How close to p the vessel along arm a comes: from the darkest point
+    across the ray r1 px out (within half the angle to the nearest other
+    arm) its ridge is followed inward a px at a time, steered by the
+    vessel's own direction (Th, where the image looks like a tube: R above
+    r_tube, and within max_dev of the way it was going) and re-centred
+    across it within a px either side, until it has passed p (its distance
+    grown 2 px past the least), fades below lost of where it started, or
+    has gone twice the way; the least distance.  A vessel leaving p comes
+    to it however it curves; a neighbour seen across the gap next to the
+    vessel through p runs past at their separation.  The points followed
+    are appended to path, if given."""
+    H, W = D.shape
+
+    def at(x, y):
+        return ndi.map_coordinates(D, [np.clip(np.atleast_1d(y), 0, H - 1),
+                                       np.clip(np.atleast_1d(x), 0, W - 1)], order=1)
+
+    p = np.asarray(p, float)
+    half = min([_angdiff(a, b) / 2 for b in others] + [math.radians(40.0)])
+    q = _ridge_point(D, p, a, r1, float(np.clip(r1 * math.tan(half), 1.0, w_max)))
+    v0 = float(at(*q)[0])
+    if v0 <= 0:
+        return np.inf
+    d = (p - q) / (np.linalg.norm(p - q) + 1e-9)
+    if path is not None:
+        path.append(q)
+    u = np.arange(-1.0, 1.0 + 1e-9, 0.25)
+    cos_dev = math.cos(math.radians(max_dev))
+    best = np.linalg.norm(q - p)
+    for _ in range(int(2 * r1) + 4):
+        if Th is not None:
+            iy, ix = int(np.clip(round(q[1]), 0, H - 1)), int(np.clip(round(q[0]), 0, W - 1))
+            if R is None or R[iy, ix] > r_tube:
+                t = np.array([math.cos(Th[iy, ix]), math.sin(Th[iy, ix])])
+                c = float(t @ d)
+                t = t if c >= 0 else -t
+                if abs(c) >= cos_dev:
+                    d = (1 - blend) * d + blend * t
+                    d /= np.linalg.norm(d) + 1e-9
+        n = np.array([-d[1], d[0]])
+        c = q + d
+        xs, ys = c[0] + u * n[0], c[1] + u * n[1]
+        vals = at(xs, ys)
+        k = int(np.argmax(vals))
+        if vals[k] < lost * v0:
+            break
+        q = np.array([xs[k], ys[k]])
+        if path is not None:
+            path.append(q)
+        dist = np.linalg.norm(q - p)
+        best = min(best, dist)
+        if dist > best + 2.0:
+            break
+    return float(best)
+
+
+def arms_multi(D, sig, p, r0, reach, z_arm=4.0, sep_deg=12.0, tex=None, Ds=None, Th=None, R=None,
+               pair_deg=50.0, meet_px=3.0):
     """ray_arms along the reach and the continuations through p of arms
     found (see continuations), each kept if dark along the ray without a
-    gap (see continuous)."""
-    arms = ray_arms(D, sig, p, r0, r0 + reach, z_arm, sep_deg=sep_deg)
-    arms = arms + continuations(D, sig, p, r0, r0 + reach, arms, sep_deg=sep_deg)
-    return sorted(a for a in arms if continuous(D, p, a, r0, r0 + reach))
+    gap (see continuous) and, where another arm is within pair_deg of it,
+    if its vessel traced inward comes within meet_px of p (see approach:
+    two vessels side by side past p look like arms parting from it)."""
+    arms = ray_arms(D, sig, p, r0, r0 + reach, z_arm, sep_deg=sep_deg, tex=tex)
+    arms = arms + continuations(D, sig, p, r0, r0 + reach, arms, sep_deg=sep_deg, tex=tex)
+    arms = sorted(a for a in arms if continuous(D, p, a, r0, r0 + reach))
+    if pair_deg and Ds is not None and len(arms) > 1:
+        keep = []
+        for a in arms:
+            others = [b for b in arms if b != a]
+            if min(_angdiff(a, b) for b in others) > math.radians(pair_deg) or \
+                    approach(Ds, p, a, r0 + reach, others, Th, R) <= meet_px:
+                keep.append(a)
+        arms = keep
+    return arms
 
 
 def continuous(D, p, a, r0, r1, low=0.25, high=0.6, slack_px=2.0, win_px=3.0):
@@ -276,7 +330,7 @@ def continuous(D, p, a, r0, r1, low=0.25, high=0.6, slack_px=2.0, win_px=3.0):
 
 
 def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, near=0.35,
-                  sep_deg=12.0):
+                  sep_deg=12.0, tex=None, skip_deg=12.0):
     """Arms opposite found ones that the ray profile shows too weakly on
     its own: a vessel crossing another goes on through it, so where nothing
     was found opposite an arm, the darkest direction within window_deg of
@@ -288,15 +342,14 @@ def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, nea
     vn = ndi.gaussian_filter1d(vn, 1.0, mode="wrap")
     n = len(v)
     step = th[1] - th[0]
-    H, W = sig.shape
-    noise = float(sig[int(np.clip(p[1], 0, H - 1)), int(np.clip(p[0], 0, W - 1))]) / math.sqrt(max(r1 - r0, 1.0))
     e = v - float(np.percentile(v, 20))
     en = vn - float(np.percentile(vn, 20))
+    noise = _profile_noise(sig, p, r1 - r0, tex)
     idx = lambda a: int(round((a % (2 * math.pi)) / step)) % n
     out = []
     for a in arms:
         o = a + math.pi
-        if any(_angdiff(o, b) <= math.radians(25.0) for b in arms + out):
+        if any(_angdiff(o, b) <= math.radians(skip_deg) for b in arms + out):
             continue
         w = int(round(math.radians(window_deg) / step))
         cand = [(idx(o) + k) % n for k in range(-w, w + 1)]
@@ -314,16 +367,22 @@ def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, nea
 
 
 def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALES,
-           min_ratio=0.25, reach=20.0):
-    """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind).
+           min_ratio=0.0, reach=20.0, texture=True, pair_deg=50.0, pair_len=60.0):
+    """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind),
+    with parts and span where it is a shallow crossing (pair_ys).
     Candidates are local maxima of the junction z above z_junction where
-    lambda_2 >= min_ratio lambda_1; each is kept if at least three arms
-    leave it: peaks of darkness averaged along rays from just outside its
-    core out to reach px beyond (ray_arms)."""
+    lambda_2 >= min_ratio lambda_1 (0: any where both are positive); each
+    is kept if at least three arms leave it (arms_multi: from just outside
+    its core out to reach px beyond; close pairs of arms checked with
+    approach unless pair_deg is 0), then Y-shaped pairs up to pair_len px
+    apart joined (none if 0).  texture: arms must stand out of the texture
+    as well as the sensor noise."""
     J, Js, R, Th, Ts, Q = maps(logI, valid, scales)
     if sigma is None:
         sigma = np.full(np.shape(logI), 1.4826 * float(np.median(np.abs(np.diff(logI, axis=1)))) / math.sqrt(2))
     D = darkness(logI)
+    tex = texture_noise(D, reach=reach) if texture else None
+    Ds = ndi.gaussian_filter(D, 1.0)
     peak = (J == ndi.maximum_filter(J, size=7)) & (J > z_junction) & (Q >= min_ratio)
     ys, xs = np.nonzero(peak)
     order = np.argsort(-J[ys, xs])
@@ -334,11 +393,79 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
         if any(np.linalg.norm(p - q["xy"]) < 2 * max(s, q["scale"]) + 3 for q in out):
             continue
         r0 = max(3.0, 1.0 * s + 2.0)                   # outside the junction's own core
-        best = arms_multi(D, sigma, p, r0, reach, z_arm)
+        best = arms_multi(D, sigma, p, r0, reach, z_arm, tex=tex, Ds=Ds, Th=Th, R=R, pair_deg=pair_deg)
         if len(best) < 3:
             continue
         out.append(dict(xy=p, scale=s, z=float(J[ys[i], xs[i]]), arms=best, kind=classify(best)))
+    if pair_len:
+        out = pair_ys(out, D, reach, max_len=pair_len)
     return out
+
+
+def _mean_along(D, a, b, lo=0.0, hi=1.0, step=0.5):
+    """Mean of D along the segment a-b, from lo to hi of the way."""
+    H, W = D.shape
+    L = float(np.linalg.norm(b - a))
+    t = np.arange(lo * L, hi * L + 1e-9, step) / max(L, 1e-9)
+    x = np.clip(a[0] + t * (b[0] - a[0]), 0, W - 1)
+    y = np.clip(a[1] + t * (b[1] - a[1]), 0, H - 1)
+    return float(ndi.map_coordinates(D, [y, x], order=1).mean())
+
+
+def pair_ys(dets, D, reach=20.0, max_len=60.0, trunk_deg=20.0, v_deg=50.0, darker=1.25):
+    """Shallow crossings.  Two vessels crossing at a small angle lie on top
+    of each other over a stretch, and each end of it looks like a
+    bifurcation whose trunk points at the other end: a Y and a mirrored Y.
+    Pairs of three-armed junctions up to max_len apart, each with an arm
+    within trunk_deg of the way to the other, its other two arms within
+    v_deg of straight on beyond it (a narrow V), and the stretch between
+    them darker than their outer arms by darker (two vessels, not one),
+    become one crossing at the middle of the stretch with the four outer
+    arms (parts: the two ends; any other junction on the stretch is part of
+    it too).  Closest pairs first."""
+    Y = [i for i, d in enumerate(dets) if len(d["arms"]) == 3]
+    cand = []
+    for ii, i in enumerate(Y):
+        for j in Y[ii + 1:]:
+            a, b = dets[i], dets[j]
+            v = b["xy"] - a["xy"]
+            L = float(np.linalg.norm(v))
+            if L > max_len or L < 1.0:
+                continue
+            ang = math.atan2(v[1], v[0])
+            outer = []
+            for d, t in ((a, ang), (b, ang + math.pi)):
+                k = min(range(3), key=lambda k: _angdiff(d["arms"][k], t))
+                if _angdiff(d["arms"][k], t) > math.radians(trunk_deg):
+                    break
+                o = [x for n, x in enumerate(d["arms"]) if n != k]
+                if any(_angdiff(x, t + math.pi) > math.radians(v_deg) for x in o):
+                    break
+                outer.append(o)
+            if len(outer) < 2:
+                continue
+            seg = _mean_along(D, a["xy"], b["xy"], 0.2, 0.8)
+            arm = np.mean([_mean_along(D, d["xy"] + (d["scale"] + 2) * np.array([math.cos(x), math.sin(x)]),
+                                       d["xy"] + (d["scale"] + 2 + reach) * np.array([math.cos(x), math.sin(x)]))
+                           for d, o in ((a, outer[0]), (b, outer[1])) for x in o])
+            if seg < darker * arm:
+                continue
+            cand.append((L, i, j, outer[0] + outer[1]))
+    used, new = set(), []
+    for L, i, j, arms in sorted(cand, key=lambda c: c[0]):
+        if i in used or j in used:
+            continue
+        a, b = dets[i]["xy"], dets[j]["xy"]
+        u = (b - a) / L
+        on = [k for k, d in enumerate(dets) if k not in used and k not in (i, j) and
+              -5.0 <= float((d["xy"] - a) @ u) <= L + 5.0 and
+              abs(float((d["xy"] - a) @ np.array([-u[1], u[0]]))) <= 2 * dets[k]["scale"] + 3]
+        used.update([i, j] + on)
+        arms = sorted(x % (2 * math.pi) for x in arms)
+        new.append(dict(xy=(a + b) / 2, scale=max(dets[i]["scale"], dets[j]["scale"]),
+                        z=max(dets[i]["z"], dets[j]["z"]), arms=arms, kind=classify(arms),
+                        parts=[a, b] + [dets[k]["xy"] for k in on], span=L))
+    return [d for k, d in enumerate(dets) if k not in used] + new
 
 
 # ---------------------------------------------------------------- scoring
@@ -346,11 +473,34 @@ _INTERSECT = ("bifurcation", "crossing", "over thick", "ending on", "complex nod
               "weaving", "ladder", "mesh", "faint capillary", "fork")
 
 
+def _radius_at(vessels, p, within=8.0):
+    """The widest radius of the vessels passing within `within` px of p."""
+    rr = [float(v["r"][np.argmin(np.linalg.norm(v["xy"] - p, axis=1))]) for v in vessels
+          if np.linalg.norm(v["xy"] - p, axis=1).min() < within]
+    return max(rr) if rr else 1.0
+
+
+def _groups(marks, vessels, gap=2.0):
+    """Marked intersections too close to tell apart (nearer each other than
+    the widest radii there plus gap px: their lumens overlap, or nearly)
+    grouped (single linkage); each group is one place where vessels meet."""
+    n = len(marks)
+    lab = list(range(n))
+    r = [_radius_at(vessels, p) for p in marks]
+    for i in range(n):
+        for j in range(i + 1, n):
+            if np.linalg.norm(marks[i] - marks[j]) < r[i] + r[j] + gap:
+                a, b = lab[i], lab[j]
+                lab = [a if x == b else x for x in lab]
+    return [[marks[i] for i in range(n) if lab[i] == g] for g in sorted(set(lab))]
+
+
 def score_zoo(seed=0, **detect_kw):
     """Detection and arms on the zoo (zoo.ROWS, ROWS_CALIBRE, ROWS_CROSSINGS).
 
-    An intersection is found when a detection lies within 4 px + the widest
-    radius there of a marked one; a detection near none is false (in rows
+    Marked intersections too close to tell apart are one (_groups).  An
+    intersection is found when a detection lies within 4 px + the widest
+    radius there of a mark of it; a detection near none is false (in rows
     of parallel pairs, kissing pairs and hairpins every detection is). At a
     found intersection its arms are matched to the true arms (zoo.true_arms:
     one per direction a vessel leaves it) within 20 degrees: arm recall and
@@ -375,18 +525,17 @@ def score_zoo(seed=0, **detect_kw):
                 marks = t["ambiguous"][:1] if "fork" in name else (t["ambiguous"] if is_x else [])
                 mine = [d for d in dets if x0 <= d["xy"][0] <= x1 and y0 <= d["xy"][1] <= y1]
                 used = set()
-                for p in marks:
-                    rr = [float(v["r"][np.argmin(np.linalg.norm(v["xy"] - p, axis=1))]) for v in vs
-                          if np.linalg.norm(v["xy"] - p, axis=1).min() < 8]
-                    tol = 4.0 + (max(rr) if rr else 1.0)
-                    near = [q for q, d in enumerate(mine) if np.linalg.norm(d["xy"] - p) <= tol]
+                for group in _groups(marks, vs):
+                    c = np.mean(group, 0)
+                    near = [q for q, d in enumerate(mine)
+                            if any(np.linalg.norm(d["xy"] - p) <= 4.0 + _radius_at(vs, p) for p in group)]
                     R["marks"] += 1
                     if not near:
                         continue
                     R["found"] += 1
                     used.update(near)
-                    d = mine[min(near, key=lambda q: np.linalg.norm(mine[q]["xy"] - p))]
-                    ta = zoo.true_arms(vs, p)
+                    d = mine[min(near, key=lambda q: np.linalg.norm(mine[q]["xy"] - c))]
+                    ta = zoo.true_arms(vs, c, near=4.0 + max(np.linalg.norm(p - c) for p in group))
                     m, err = zoo.match_arms(d["arms"], ta)
                     R["arms_true"] += len(ta)
                     R["arms_det"] += len(d["arms"])
