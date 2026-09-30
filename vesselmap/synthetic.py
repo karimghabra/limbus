@@ -469,7 +469,7 @@ def resolution_report(net, vessels, shape, tol_min=1.5, tol_frac=0.5, min_frac=0
             c = float((d <= tol[need]).mean())
             if best is None or c > best[0]:
                 best = (c, e)
-        cover, e = best if best else (0.0, None)
+        cover, e = best if best and best[0] > 0 else (0.0, None)   # no edge near: none is its
         own = own_frac(e, k) if e is not None else 0.0
         if short:                                   # not required; may be traced
             for f in eids:

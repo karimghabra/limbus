@@ -144,7 +144,13 @@ class SearchConfig:
                                     # a crossing vessel, a vessel an end grows into, may have
                                     # to move for the move to pay); relax_radius 0: off
     lr_pos: float = 0.1
-    lr_prof: float = 0.03
+    lr_prof: float = 0.1            # a wide blurred vessel's calibre / blur / contrast must move
+                                    # far within a move's short fit (0.03 left a duplicate's
+                                    # delete 600 above 0 where a long fit puts it below)
+    lr_prof_global: float = 0.03    # ... while the joint fit of every vessel keeps to this
+    extend_turn: float = 20.0       # an extend trace turns at most this much a 2 px step (deg),
+    extend_first_turn: float = 20.0     # its first step this much (a hairpin needs ~150),
+    extend_through: bool = False    # and goes on through a vessel it reaches (else ends there)
     join_gap: float = 40.0          # largest gap bridged (px) ...
     join_gap_factor: float = 6.0    # ... and at most this many vessel widths
     join_cone_deg: float = 60.0     # a gap is bridged only roughly straight ahead
@@ -1637,8 +1643,9 @@ class VesselSearch:
         for (k, end, p, t, w) in self._ends():
             if self._border(p):
                 continue
+            stops = []
             path = self._trace(ridge, k, p, t, float(self.samples(k)["r"][0 if end == 0 else -1]),
-                               max(lengths), z)
+                               max(lengths), z, stops=stops)
             L = 0.0 if path is None else float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
             if L < lengths[1]:
                 path = np.asarray(p, float) + np.outer(np.linspace(0.0, lengths[1], 9), t)
@@ -1656,12 +1663,35 @@ class VesselSearch:
             L = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
             if L < 1.0:
                 continue
-            for c in lengths:
-                c = min(c, L)
-                moves.append(dict(kind="extend", anchor=[k], key=("extend", k, end, round(c, 1)),
+            cands = sorted({round(min(c, L), 1) for c in lengths} |
+                           {round(c, 1) for c in stops if 1.0 <= c <= L})
+            for c in cands:
+                moves.append(dict(kind="extend", anchor=[k], key=("extend", k, end, c),
                                   focus=p, build=self._extend_builder(k, end, path, c)))
-                if c >= L:
-                    break
+        return moves + self._extend_births()
+
+    def _extend_births(self, reach=6.0, cos_min=0.5):
+        """Extend a vessel end along a proposed birth that starts at it
+        (within reach px, heading on from the end): a stretch too short or
+        faint to pay for a vessel of its own may still pay as more of one."""
+        moves = []
+        if not self.births:
+            return moves
+        for (k, end, p, t, w) in self._ends():
+            if self._border(p):
+                continue
+            for bid, b in self.births.items():
+                xy = edge_samples(b, 0.7)["xy"]
+                for bxy in (xy, xy[::-1]):
+                    if np.linalg.norm(bxy[0] - p) > reach + w:
+                        continue
+                    d = bxy[min(len(bxy) - 1, 6)] - bxy[0]
+                    if np.dot(d, t) < cos_min * (np.linalg.norm(d) + 1e-9):
+                        continue
+                    path = np.vstack([p, bxy])
+                    L = float(np.linalg.norm(np.diff(path, axis=0), axis=1).sum())
+                    moves.append(dict(kind="extend", anchor=[k], key=("extend_birth", k, end, bid),
+                                      focus=p, bid=bid, build=self._extend_builder(k, end, path, L)))
         return moves
 
     def _ridge_maps(self, sigmas=(1.0, 2.0, 4.0, 8.0)):
@@ -1678,11 +1708,18 @@ class VesselSearch:
             out[sg] = (m, noise)
         return out
 
-    def _trace(self, ridge, k, p, t, r, Lmax, z, step=2.0, turn=20.0):
+    def _trace(self, ridge, k, p, t, r, Lmax, z, step=2.0, turn=None, stops=None,
+               first_turn=None):
         """Follow the residual's dark ridge from p along t, a step at a
-        time, turning at most `turn` degrees a step, while it stays z noise
-        levels above zero (at the scale of the vessel's radius r); stops on
-        reaching another vessel.  None when not a step is taken."""
+        time, turning at most `turn` degrees a step (the first step up to
+        first_turn: a tortuous vessel's trace may stop where it turns back),
+        while it stays z noise levels above zero (at the scale of the
+        vessel's radius r).  Where it
+        reaches another vessel it goes on (a vessel may cross, or end
+        inside, another), noting the arc length in `stops`.  None when not
+        a step is taken."""
+        turn = self.cfg.extend_turn if turn is None else turn
+        first_turn = self.cfg.extend_first_turn if first_turn is None else first_turn
         sg = min(ridge, key=lambda q: abs(math.log(q / max(r, 0.8))))
         M, noise = ridge[sg]
         H, W = M.shape
@@ -1698,10 +1735,11 @@ class VesselSearch:
 
         I = self._idx()
         pts, d = [np.asarray(p, float)], np.asarray(t, float) / (np.linalg.norm(t) + 1e-9)
-        angs = np.radians(np.linspace(-turn, turn, 5))
-        while (len(pts) - 1) * step < Lmax:
+        angs = np.radians(np.linspace(-turn, turn, 7))
+        first = np.radians(np.linspace(-first_turn, first_turn, 21))   # an end may sit at a
+        while (len(pts) - 1) * step < Lmax:                              # hairpin
             best, bv = None, -np.inf
-            for a in angs:
+            for a in (first if len(pts) == 1 else angs):
                 c, s_ = math.cos(a), math.sin(a)
                 u = np.array([c * d[0] - s_ * d[1], s_ * d[0] + c * d[1]])
                 q = pts[-1] + step * u
@@ -1712,10 +1750,13 @@ class VesselSearch:
                 break
             d = (best - pts[-1]) / step
             pts.append(best)
-            if I["tree"] is not None:            # reached another vessel: end on it
-                hit = [c for c in I["tree"].query_ball_point(best, 2.0 + r) if int(I["lab"][c]) != k]
-                if hit:
+            if I["tree"] is not None:            # reached another vessel: end there, or
+                hit = [c for c in I["tree"].query_ball_point(best, 2.0 + r)    # (through) note
+                       if int(I["lab"][c]) != k]                         # it as a candidate
+                if hit and not self.cfg.extend_through:
                     break
+                if hit and stops is not None and (not stops or stops[-1] < (len(pts) - 2) * step):
+                    stops.append((len(pts) - 1) * step)
         return np.array(pts) if len(pts) > 1 else None
 
     def _extend_builder(self, k, end, path, c):
@@ -1893,7 +1934,7 @@ class VesselSearch:
             self._render_all()
             return
         m = self._global_model()
-        optimize(m, iters, self.cfg.lr_pos * 0.5, self.cfg.lr_prof, MapConfig().lr_bg,
+        optimize(m, iters, self.cfg.lr_pos * 0.5, self.cfg.lr_prof_global, MapConfig().lr_bg,
                  rebuild_every=25, priors=self.priors, track=MapConfig().anchor())
         m.write_back()
         self._render_all(m)
@@ -1975,8 +2016,8 @@ class VesselSearch:
                 elif m["kind"] == "revive":
                     del self.graveyard[m["grave"]]
                     rec["grave"] = int(m["grave"])
-                elif m["kind"] == "birth":
-                    del self.births[m["bid"]]
+                elif m["kind"] == "birth" or "bid" in m:       # a birth taken, or grown into
+                    self.births.pop(m["bid"], None)
                 ids = self.apply(prop)
                 rec["new"] = [int(k) for k in ids]
                 self.move_log.append(rec)
