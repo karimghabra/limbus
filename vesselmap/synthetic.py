@@ -123,7 +123,11 @@ def _cut_overlaps(vessels, blur_max=2.0, run_factor=4.0, run_px=6.0, min_len=11)
     return out
 
 
-def render(vessels, shape, rng, ss=2, noise=True, bright=0.8):
+def render(vessels, shape, rng, ss=2, noise=True, bright=0.8, texture=None):
+    """The image of the vessels (optical densities add) over a background.
+    A vessel's amp may be a number or one per point (contrast varying
+    along it).  texture: a log-intensity background texture to use on a
+    flat illumination instead of the default lumps and fall-off."""
     H, W = shape
     Hs, Ws = H * ss, W * ss
     od = np.zeros((Hs, Ws), np.float32)
@@ -141,18 +145,27 @@ def render(vessels, shape, rng, ss=2, noise=True, bright=0.8):
         q = np.linspace(0, s[-1], int(s[-1] / 0.3) + 2)
         dx = np.stack([np.interp(q, s, xy[:, 0]), np.interp(q, s, xy[:, 1])], 1)
         dr = np.interp(q, s, r)
+        amp = np.asarray(v["amp"], float)
+        da = np.interp(q, s, amp) if amp.ndim else None
         yy, xx = np.mgrid[y0:y1, x0:x1]
         P = np.stack([xx.ravel(), yy.ravel()], 1).astype(float)
         d, j = cKDTree(dx).query(P, distance_upper_bound=R + 1)
         ok = np.isfinite(d)
         layer = np.zeros(len(P), np.float32)
         rr = dr[j[ok]]
-        layer[ok] = np.sqrt(np.clip(1 - (d[ok] / rr) ** 2, 0, 1))
+        layer[ok] = np.sqrt(np.clip(1 - (d[ok] / rr) ** 2, 0, 1)) * (da[j[ok]] if da is not None else 1.0)
         layer = layer.reshape(y1 - y0, x1 - x0)
         full = np.zeros((Hs, Ws), np.float32)
-        full[y0:y1, x0:x1] = layer * v["amp"]
+        full[y0:y1, x0:x1] = layer * (1.0 if da is not None else float(amp))
         od += ndi.gaussian_filter(full, v["blur"] * ss, truncate=3.5)
     od = cv2.resize(od, (W, H), interpolation=cv2.INTER_AREA)
+    if texture is not None:
+        I = bright * np.exp(texture - od)
+        if noise:
+            e = 4095.0 * I / 1.2
+            e = rng.poisson(np.maximum(e, 0) * 1.0) + rng.normal(0, 3.0, e.shape)
+            I = np.clip(e / 4095.0 * 1.2, 0, 1)
+        return I.astype(np.float32), od
     # background: lumpy scleral texture + illumination falloff
     yy, xx = np.mgrid[0:H, 0:W]
     illum = bright * np.exp(-(((xx - W * rng.uniform(0.3, 0.7)) / (0.9 * W)) ** 2 +
