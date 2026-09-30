@@ -433,6 +433,38 @@ max), `blur`, `contrast`, `mean_curvature`, `max_curvature`, `gain`
 after consolidation several segments share it). The full spline parameters
 are in `map.json`.
 
+**Structure zoo, completeness and intersections (prototypes).**
+`zoo.py` lays out one small tile per controlled case, a row per structure
+with one parameter swept: bifurcations (angle; Murray's-law share),
+crossings at one and at two depths, parallel and kissing pairs, a vessel
+ending on another, hairpins, forks running on side by side, a faint
+capillary under a blurred vessel, complex nodes; the same over thin
+(r ~1 px) to thick (r 3-5.5 px) calibres; and multiple crossings (twisted
+pairs, a capillary weaving over a thick vessel, ladders, meshes). The
+background texture has the power spectrum of frame 20's residual off its
+mapped vessels. Each tile marks its ambiguous spots (junctions, crossings).
+
+`zoo.completeness()` flags two vessels annotated as one: within the
+annotated lumen, a 12 px stretch whose averaged cross-section has two
+dark peaks with a brighter gap between them. True annotations score 1.0;
+a parallel pair annotated as one thick vessel scores 0 once a gap shows
+(centres 4.2 px apart or more), and cannot be told apart when the lumens
+touch.
+
+`intersections.detect()` finds where vessels meet. Candidates are maxima of
+the smaller Hessian eigenvalue of log intensity (the image curves up in
+every direction where vessels meet), scale-normalised and in units of its
+robust spread. A candidate is kept when at least three arms leave it:
+peaks of darkness (the local upper envelope less the image, which peaks at
+a vessel's centre however wide it is) on circles round it, chained from the
+innermost circle out and reached from the centre without a bright gap.
+Arms in two straight pairs make a crossing, three a bifurcation, others a
+node. On the zoo (215 marked intersections) it finds 80 % with 35 false
+detections; the misses are shallow crossings and forks whose arms part only
+far out, the thinnest crossings, and capillaries over thick vessels (with
+four circles it finds 89 %, at about 250 false detections beside wide
+vessels).
+
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected
 component, from wide to narrow, with BFS depth breaking ties. Every edge
