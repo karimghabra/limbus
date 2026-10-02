@@ -9,9 +9,23 @@ A simple app for recording video from lab cameras. Supports:
 - **The Imaging Source** standard mono/color cameras and other UVC
   cameras (via the standard Linux driver) — e.g. DMK 33UX250
 
+## Installing it on a Windows laptop
+
+Download **LIMBUS-Setup-<version>.exe** from the repository's
+[Releases](https://github.com/karimghabra/limbus/releases) and run it. It
+needs no administrator rights and brings everything the app uses (its own
+Python, ffmpeg, the analysis packages), so nothing else needs installing;
+for a Basler camera, install Basler's **pylon** too (its USB driver). Then
+start **LIMBUS** from the Start menu. **LIMBUS Self-Test** checks the
+installation end to end. Installed, recordings go to `Documents\LIMBUS`.
+Without an NVIDIA GPU, stabilization runs on the CPU and the live
+stabilization is unavailable. How the installer is built and tested:
+[installer/README.md](installer/README.md).
+
 ## How to start it
 
-Double-click **Camera Recorder** on the Desktop, or run:
+From a checkout of this repository, double-click **Camera Recorder** on the
+Desktop, or run:
 
 ```bash
 ./run.sh
@@ -265,6 +279,9 @@ python analysis/tests/test_live.py            # live stabilization vs known moti
 | `analysis/tests/` | synthetic ground-truth and smoke tests |
 | `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |
 | `tools/` | building and fetching the reference-data release |
+| `installer/`, `assets/` | the Windows installer (`installer/README.md`) and the app icon |
+| `e2e/` | end-to-end tests of the installed app (`app_scenarios.py`, also the Self-Test) and of the installer (`run_e2e.py`) |
+| `.github/workflows/` | CI: builds, tests and releases the installer |
 | `reference_data/` | manifest and description of the reference bursts (data fetched, not committed) |
 
 ## Troubleshooting
