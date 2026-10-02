@@ -15,6 +15,9 @@ installed:
                analysis/, vesselmap/, assets/, e2e/), laid out as in the
                repository, plus build_info.json (version, commit, packages),
                which also tells the app it is installed
+    THIRD-PARTY-NOTICES.txt, licenses/
+               every bundled component's license, and where to get the
+               source code of the GPL/LGPL ones (PyQt5, Qt, FFmpeg)
 
 installer/limbus.iss then packs the folder into LIMBUS-Setup-<version>.exe,
 reading <out>.ini (written here) for the bundle's longest path.
@@ -61,6 +64,27 @@ PRUNE_GLOBS = ["runtime/include", "runtime/libs", "runtime/Scripts",
                "runtime/Lib/site-packages/torch/include",
                "runtime/Lib/site-packages/torch/lib/*.lib",
                "runtime/Lib/site-packages/torch/share/cmake"]
+
+
+# Run in the bundle's own Python: each installed package's name, version,
+# license and license files, from its metadata.
+LICENSE_PROBE = r"""
+import importlib.metadata as md, json, os, sys
+out = []
+for d in md.distributions():
+    meta = d.metadata
+    lic = meta.get("License-Expression")
+    if not lic:
+        cls = [c.split("::")[-1].strip() for c in meta.get_all("Classifier") or []
+               if c.startswith("License ::")]
+        first = (meta.get("License") or "").strip().splitlines()
+        lic = ", ".join(cls) or (first[0][:60] if first else "see its license files")
+    files = [str(d.locate_file(f)) for f in d.files or []
+             if any(k in f.name.upper() for k in ("LICENSE", "LICENCE", "COPYING", "NOTICE"))
+             and not f.name.endswith((".py", ".pyc"))]
+    out.append({"name": meta["Name"], "version": d.version, "license": lic, "files": files})
+json.dump(sorted(out, key=lambda p: p["name"].lower()), sys.stdout)
+"""
 
 
 def log(msg):
@@ -217,6 +241,82 @@ def prune(out):
     log(f"pruned {freed / 1e6:.0f} MB of headers, link libraries and test suites")
 
 
+def write_notices(out, version, vc):
+    """THIRD-PARTY-NOTICES.txt and licenses/: every bundled component with
+    its license, the license texts themselves (the BSD-style ones require
+    their notices to travel with the binaries), and for the copyleft ones,
+    PyQt5 and FFmpeg (GPL) and Qt (LGPL), where to get their source code."""
+    runtime = os.path.join(out, "runtime")
+    site = os.path.join(runtime, "Lib", "site-packages")
+    packages = json.loads(subprocess.run([os.path.join(runtime, "python.exe"), "-s", "-c", LICENSE_PROBE],
+                                         env=clean_env(), capture_output=True, text=True,
+                                         check=True).stdout)
+    by_name = {p["name"].lower(): p for p in packages}
+    ffmpeg = glob.glob(os.path.join(site, "imageio_ffmpeg", "binaries", "ffmpeg-*.exe"))
+    if not ("pyqt5" in by_name and "pyqt5-qt5" in by_name and len(ffmpeg) == 1):
+        sys.exit("notices: PyQt5, PyQt5-Qt5 or imageio-ffmpeg's ffmpeg binary not found in the bundle")
+    pyqt, qt = by_name["pyqt5"]["version"], by_name["pyqt5-qt5"]["version"]
+    ffmpeg_rel = os.path.relpath(ffmpeg[0], out)
+    ffmpeg_ver = os.path.basename(ffmpeg[0]).rsplit("-v", 1)[-1][:-len(".exe")]
+
+    lic_dir = os.path.join(out, "licenses")
+    if os.path.exists(lic_dir):
+        shutil.rmtree(lic_dir)
+    os.makedirs(lic_dir)
+    shutil.copy2(os.path.join(ROOT, "installer", "licenses", "GPL-3.0.txt"), lic_dir)
+    rows = []
+    for p in packages:
+        dest = os.path.join(lic_dir, f"{p['name']}-{p['version']}")
+        for src in p["files"]:
+            parts = os.path.relpath(src, site).split(os.sep)
+            if parts[0].endswith(".dist-info"):
+                parts = parts[1:]
+            if len(parts) > 1 and parts[0] == "licenses":
+                parts = parts[1:]
+            os.makedirs(os.path.join(dest, *parts[:-1]), exist_ok=True)
+            shutil.copy2(src, os.path.join(dest, *parts))
+        where = os.path.relpath(dest, out) if p["files"] else "licenses\\GPL-3.0.txt"
+        rows.append((f"{p['name']} {p['version']}", p["license"], where))
+    rows.append((f"Python {PYTHON_VERSION}", "PSF-2.0", "runtime\\LICENSE.txt"))
+    vc_ver = next(iter(vc.values()))["version"] if vc else "?"
+    rows.append((f"Microsoft Visual C++ runtime {vc_ver}",
+                 "Microsoft Visual Studio license terms (redistributable files)", "runtime\\msvcp140*.dll etc."))
+
+    width = max(len(r[0]) for r in rows) + 2
+    text = f"""LIMBUS {version}: third-party software
+{'=' * (len(version) + 31)}
+
+This installation includes the software below, each under its own license.
+The license texts are in the licenses folder next to this file.
+
+GPL and LGPL components, and where to get their source code
+-----------------------------------------------------------
+
+PyQt5 {pyqt}: GNU General Public License v3 (licenses\\GPL-3.0.txt)
+    Source: https://pypi.org/project/PyQt5/{pyqt}/#files
+    and https://www.riverbankcomputing.com/software/pyqt/
+
+Qt {qt} (the PyQt5-Qt5 {qt} package): GNU Lesser General Public License v3
+    (licenses\\PyQt5-Qt5-{qt}\\LICENSE)
+    Source: https://download.qt.io/archive/qt/{'.'.join(qt.split('.')[:2])}/{qt}/single/
+
+FFmpeg {ffmpeg_ver} ({ffmpeg_rel}): GNU General Public License v3 or later
+    (licenses\\GPL-3.0.txt). The "essentials" build by gyan.dev, as shipped by
+    imageio-ffmpeg {by_name.get('imageio-ffmpeg', {}).get('version', '')}.
+    Source: https://ffmpeg.org/releases/ffmpeg-{ffmpeg_ver}.tar.xz
+    The libraries it is built with, and their versions:
+    https://www.gyan.dev/ffmpeg/builds/ (also: ffmpeg -buildconf)
+
+All components
+--------------
+
+"""
+    text += "\n".join(f"{name:<{width}}{lic}\n{'':<{width}}{where}" for name, lic, where in rows) + "\n"
+    with open(os.path.join(out, "THIRD-PARTY-NOTICES.txt"), "w", encoding="utf-8", newline="\r\n") as f:
+        f.write(text)
+    log(f"third-party notices: {len(rows)} components, license texts in {lic_dir}")
+
+
 def longest_path(out):
     """The longest file path inside the bundle, relative to the install
     folder: the installer refuses a folder so deep that this file would pass
@@ -285,6 +385,7 @@ def main():
         subprocess.run([py, "-m", "compileall", "-q", "-j", "0", os.path.join(runtime, "Lib")],
                        env=env, stdout=subprocess.DEVNULL)
 
+    write_notices(out, version, vc)
     deepest = longest_path(out)
     with open(out + ".ini", "w", encoding="utf-8") as f:
         f.write(f"[bundle]\nversion={version}\nlongest_path={len(deepest)}\n")

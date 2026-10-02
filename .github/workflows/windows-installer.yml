@@ -109,5 +109,7 @@ jobs:
           Download **LIMBUS-Setup-$v.exe** and run it. It needs no administrator rights and installs everything the app uses, Python and ffmpeg included, so nothing else has to be installed. For a Basler camera, install Basler's pylon software (its USB driver) too.
 
           Start **LIMBUS** from the Start menu. **LIMBUS Self-Test** checks the installation end to end, and the camera if one is plugged in. Recordings go to Documents\LIMBUS.
+
+          The installer includes third-party software under its own licenses, among them PyQt5 and FFmpeg (GNU GPL v3) and Qt (GNU LGPL v3). **THIRD-PARTY-NOTICES.txt**, below and in the install folder, lists each component, its license, and where to get the source code of the GPL and LGPL ones.
           "@
-          gh release create "${{ github.ref_name }}" "dist\LIMBUS-Setup-$v.exe" --title "LIMBUS $v" --notes "$notes" --generate-notes
+          gh release create "${{ github.ref_name }}" "dist\LIMBUS-Setup-$v.exe" "build\bundle\THIRD-PARTY-NOTICES.txt" --title "LIMBUS $v" --notes "$notes" --generate-notes
