@@ -21,7 +21,9 @@ import time
 import queue
 import shutil
 import platform
+import ctypes
 import threading
+import traceback
 import subprocess
 import collections
 from datetime import datetime, timezone
@@ -70,7 +72,76 @@ def _pylon_version():
 
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_OUTPUT_DIR = os.path.join(APP_DIR, "recordings")
+
+
+def _read_build_info():
+    """The installer's build_info.json, written next to this file by
+    installer/build_bundle.py (version, commit, packages); None in a checkout."""
+    try:
+        with open(os.path.join(APP_DIR, "build_info.json"), encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+BUILD_INFO = _read_build_info()
+INSTALLED = BUILD_INFO is not None
+APP_TITLE = ("Camera Video Recorder" if not INSTALLED
+             else f"Camera Video Recorder — LIMBUS {BUILD_INFO.get('version', '')}")
+ICON_PATH = os.path.join(APP_DIR, "assets", "limbus.ico")
+# the taskbar groups the app's windows, and its pinned shortcut, by this:
+# the same ID as the installer's shortcuts (installer/limbus.iss)
+APP_USER_MODEL_ID = "LIMBUS.CameraRecorder"
+# without a console (pythonw, as the Start-menu shortcut runs it) errors go here
+LOG_PATH = os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"),
+                        "LIMBUS", "limbus.log")
+
+
+def default_output_dir():
+    """Where captures go until the user picks a folder: $LIMBUS_RECORDINGS if
+    set; in a checkout, recordings/ beside this file; installed, Documents\\
+    LIMBUS\\recordings — never the program folder, which an upgrade or an
+    uninstall replaces."""
+    if os.environ.get("LIMBUS_RECORDINGS"):
+        return os.path.abspath(os.environ["LIMBUS_RECORDINGS"])
+    if not INSTALLED:
+        return os.path.join(APP_DIR, "recordings")
+    docs = QtCore.QStandardPaths.writableLocation(QtCore.QStandardPaths.DocumentsLocation)
+    return os.path.normpath(os.path.join(docs or os.path.expanduser("~"), "LIMBUS", "recordings"))
+
+
+DEFAULT_OUTPUT_DIR = default_output_dir()
+
+
+def find_ffmpeg():
+    """The ffmpeg to encode with: $LIMBUS_FFMPEG if set; installed, the static
+    build the installer ships (imageio-ffmpeg's, which has H.264, 12-bit HEVC
+    and FFV1) ahead of any on PATH; in a checkout, PATH first. None if there
+    is neither."""
+    if os.environ.get("LIMBUS_FFMPEG"):
+        return os.environ["LIMBUS_FFMPEG"]
+
+    def shipped():
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception:
+            return None
+
+    def on_path():
+        return shutil.which("ffmpeg")
+
+    for find in ((shipped, on_path) if INSTALLED else (on_path, shipped)):
+        path = find()
+        if path:
+            return path
+    return None
+
+
+FFMPEG = find_ffmpeg()
+# ffmpeg is a console program: started from pythonw, which has no console to
+# share, each run would otherwise open a console window over the app
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 PREVIEW_MAX_FPS = 30.0  # don't push preview frames to the GUI faster than this
 PREVIEW_MAX_WIDTH = 1280  # downscale bigger frames before handing to the GUI
@@ -363,7 +434,7 @@ class VideoWriter:
         # encoding finishes, which takes minutes for GB-sized recordings on
         # an SD card (and a truncated rewrite corrupts the file)
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            FFMPEG or "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
             "-f", "rawvideo", "-pix_fmt", pix_fmt,
             "-s", f"{width}x{height}", "-r", f"{fps:.3f}", "-i", "-",
             # H.264 is capped to leave CPU for the grab loop and GUI; the
@@ -377,7 +448,8 @@ class VideoWriter:
             cmd += ["-maxrate", quality["maxrate"], "-bufsize", "60M"]
         cmd += ["-pix_fmt", out_fmt, path]
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
-                                     stderr=subprocess.PIPE)
+                                     stderr=subprocess.PIPE,
+                                     creationflags=NO_WINDOW)
         # cap buffered frames by memory, not count (~240 MB)
         self.queue = queue.Queue(
             maxsize=max(30, int(240e6 // frame_bytes)))
@@ -445,10 +517,10 @@ class VideoWriter:
         # H.264 trick would have mangled FFV1 or HEVC in Matroska.
         ratio = self.fps / actual
         try:
-            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error",
+            subprocess.run([FFMPEG or "ffmpeg", "-hide_banner", "-loglevel", "error",
                             "-y", "-itsscale", f"{ratio:.6f}",
                             "-i", self.path, "-c", "copy", tmp],
-                           check=True, timeout=600)
+                           check=True, timeout=600, creationflags=NO_WINDOW)
             os.replace(tmp, self.path)
         except Exception:
             pass  # keep the original file rather than fail the recording
@@ -1833,6 +1905,9 @@ class VideoSource:
 
 
 ANALYSIS_DIR = os.path.join(APP_DIR, "analysis")
+# the analysis runs in interpreters of its own: give them this one's isolation
+# from the user's site-packages (the installed app runs with -s)
+CHILD_PY_FLAGS = ["-s"] if sys.flags.no_user_site else []
 NO_DATA_RGB = (200, 60, 180)   # magenta: never mistaken for a dark vessel
 
 
@@ -3028,7 +3103,7 @@ class ReviewTab(QtWidgets.QWidget):
         # the analysis can't take the recorder down with it
         self.proc = proc
         self._run = (self._burst_path(), self._method(), job, title)
-        proc.start(sys.executable, args)
+        proc.start(sys.executable, CHILD_PY_FLAGS + args)
         self._update_stab_status()
 
     def _proc_output(self):
@@ -3124,7 +3199,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Camera Video Recorder")
+        self.setWindowTitle(APP_TITLE)
         # fit comfortably on whatever screen we have (leave room for
         # window decorations and taskbar)
         avail = QtWidgets.QApplication.primaryScreen().availableGeometry()
@@ -4711,14 +4786,61 @@ class MainWindow(QtWidgets.QMainWindow):
         event.accept()
 
 
+def _log_without_console():
+    """Started without a console (pythonw: the Start-menu shortcut), output
+    and errors would vanish. Send them to LOG_PATH instead, and show an
+    uncaught exception in a dialog rather than letting PyQt abort the app
+    without a word."""
+    os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+    try:
+        if os.path.getsize(LOG_PATH) > 5e6:
+            os.replace(LOG_PATH, LOG_PATH + ".1")
+    except OSError:
+        pass
+    log = open(LOG_PATH, "a", encoding="utf-8", buffering=1)
+    sys.stdout = sys.stderr = log
+    print(f"--- {datetime.now().isoformat(timespec='seconds')} {APP_TITLE} "
+          f"(Python {platform.python_version()}, {sys.executable})")
+
+    shown = set()
+    dialog = {"open": False}
+
+    def show(kind, value, tb):
+        log.write("".join(traceback.format_exception(kind, value, tb)))
+        # each error once (one raised by a timer would otherwise repeat
+        # every tick), and never a dialog on top of another
+        message = f"{kind.__name__}: {value}"
+        if (QtWidgets.QApplication.instance() is None or message in shown
+                or dialog["open"]):
+            return
+        shown.add(message)
+        dialog["open"] = True
+        try:
+            QtWidgets.QMessageBox.critical(
+                None, "Unexpected error", f"{message}\n\nThe details are in {LOG_PATH}")
+        finally:
+            dialog["open"] = False
+
+    sys.excepthook = show
+
+
 def main():
-    if shutil.which("ffmpeg") is None:
-        hint = ("winget install Gyan.FFmpeg" if sys.platform == "win32"
-                else "sudo apt install ffmpeg")
-        print(f"ffmpeg is required but was not found. Install it with: {hint}")
-        sys.exit(1)
+    if sys.stderr is None:
+        _log_without_console()
+    if sys.platform == "win32":
+        # before any window: the taskbar then shows the app's own icon
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Camera Video Recorder")
+    if os.path.isfile(ICON_PATH):
+        app.setWindowIcon(QtGui.QIcon(ICON_PATH))
+    if FFMPEG is None:
+        hint = ("winget install Gyan.FFmpeg" if sys.platform == "win32"
+                else "sudo apt install ffmpeg")
+        message = f"ffmpeg is required but was not found. Install it with: {hint}"
+        print(message)
+        QtWidgets.QMessageBox.critical(None, APP_TITLE, message)
+        sys.exit(1)
     win = MainWindow()
     avail = QtWidgets.QApplication.primaryScreen().availableGeometry()
     if avail.width() <= 1366 or avail.height() <= 800:

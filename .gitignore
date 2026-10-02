@@ -17,3 +17,7 @@ __pycache__/
 stabilization/
 reference_data/burst_*/
 _work/
+
+# Installer builds (installer/build_bundle.py, installer/limbus.iss)
+build/
+dist/
