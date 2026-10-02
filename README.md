@@ -150,8 +150,9 @@ The **Stabilization** panel runs the offline stabilization in
   (long bursts); with an NVIDIA GPU (see *Analysis on another computer*) it
   takes seconds — 5 s for a 140-frame full-frame burst, 17 s for 1105
   frames — and the log's first line says which was used.
-- **View** — *Raw*, *Stabilized* (every frame warped by its correction,
-  with frames the result didn't use labelled) or *Stabilized mean* (the
+- **View** — *Raw* (every frame), *Stabilized* (only the frames the
+  result used, each warped by its correction: playback, stepping and the
+  slider skip the frames it left out) or *Stabilized mean* (the
   average of the frames used; **magenta** marks regions too few frames
   saw, never black, which would look like a vessel).
 - The status line gives the **stability index** (how well vessel masks

@@ -12,6 +12,7 @@ Preview + one-click recording to .mp4 (H.264 via ffmpeg).
 
 import os
 import re
+import bisect
 import csv
 import sys
 import glob
@@ -1913,6 +1914,13 @@ class StabilizationResult:
         row = self.rows.get(index)
         return bool(row) and row.get("registered") == "1"
 
+    def used_frames(self, count):
+        """The indices (sorted) of the frames of a `count`-frame burst that
+        this result used."""
+        if getattr(self, "_used", None) is None or self._used[0] != count:
+            self._used = (count, [i for i in range(count) if self.used(i)])
+        return self._used[1]
+
     def why_unused(self, index):
         row = self.rows.get(index) or {}
         if row.get("gate_reason"):
@@ -2320,7 +2328,8 @@ class ReviewTab(QtWidgets.QWidget):
                            ("Stabilized mean", "mean")):
             self.view_combo.addItem(label, key)
         self.view_combo.setToolTip(
-            "Stabilized: each frame warped by its correction.\n"
+            "Stabilized: the frames the stabilization used, each warped by its "
+            "correction; the frames it left out are skipped.\n"
             "Stabilized mean: the average of the frames used; magenta marks "
             "regions too few frames saw.\n"
             "S switches between Raw and Stabilized.")
@@ -2544,27 +2553,65 @@ class ReviewTab(QtWidgets.QWidget):
         self.timer.stop()
         self.play_btn.setText("▶")
 
+    def _used_only(self):
+        """The used frames when the Stabilized view is on (it shows only the
+        frames the stabilization used), else None: every frame."""
+        if (self.source is None or self.view_combo.currentData() != "stabilized"
+                or not (self.result and self.result.ok)):
+            return None
+        return self.result.used_frames(len(self.source))
+
+    def _go_to(self, index):
+        self.index = index
+        self.slider.blockSignals(True)
+        self.slider.setValue(index)
+        self.slider.blockSignals(False)
+
     def _advance(self):
         if self.source is None:
             self._stop()
             return
-        if self.index + 1 >= len(self.source):
-            self.index = 0          # loop: a burst is usually seconds long
+        used = self._used_only()
+        if used is not None:
+            if not used:
+                self._stop()
+                self._render()
+                return
+            k = bisect.bisect_right(used, self.index)
+            self._go_to(used[k] if k < len(used) else used[0])     # loop
+        elif self.index + 1 >= len(self.source):
+            self._go_to(0)          # loop: a burst is usually seconds long
         else:
-            self.index += 1
-        self.slider.blockSignals(True)
-        self.slider.setValue(self.index)
-        self.slider.blockSignals(False)
+            self._go_to(self.index + 1)
         self._render()
 
     def _step(self, delta):
         if self.source is None:
             return
         self._stop()
+        used = self._used_only()
+        if used:
+            # to the next (or previous) frame the stabilization used
+            if delta > 0:
+                k = bisect.bisect_right(used, self.index) + delta - 1
+            else:
+                k = bisect.bisect_left(used, self.index) + delta
+            self.slider.setValue(used[max(0, min(len(used) - 1, k))])
+            return
         self.slider.setValue(
             max(0, min(len(self.source) - 1, self.index + delta)))
 
     def _slider_moved(self, value):
+        used = self._used_only()
+        if used and not self.result.used(value):
+            # onto a frame the stabilization left out (arrow keys, the wheel):
+            # on to the next one it used, the way the slider moved
+            k = bisect.bisect_left(used, value)
+            if value > self.index:
+                value = used[k] if k < len(used) else used[-1]
+            else:
+                value = used[k - 1] if k > 0 else used[0]
+            self._go_to(value)
         self.index = value
         self._render()
 
@@ -2583,6 +2630,18 @@ class ReviewTab(QtWidgets.QWidget):
         if view == "mean":
             self._render_mean()
             return
+        used = self._used_only()
+        if used is not None:
+            if not used:
+                self.view.setPixmap(QtGui.QPixmap())
+                self.view.setText("The stabilization used none of this capture's frames.\n"
+                                  "Switch the view to Raw to see them.")
+                self._fill(self.frame_form, [])
+                return
+            if not self.result.used(self.index):
+                k = bisect.bisect_left(used, self.index)
+                near = [used[j] for j in (k - 1, k) if 0 <= j < len(used)]
+                self._go_to(min(near, key=lambda i: abs(i - self.index)))
         try:
             frame = self.source.frame(self.index)
         except Exception as exc:
@@ -2622,6 +2681,9 @@ class ReviewTab(QtWidgets.QWidget):
                 else "  ⚠ saturated" if hi >= top else "")
         meta.append(("Pixel range", f"{lo}–{hi} of {top}{flag}"))
         if view == "stabilized":
+            if used:
+                note = note or (f"used: {bisect.bisect_left(used, self.index) + 1} of the "
+                                f"{len(used)} frames it used")
             meta.append(("Stabilized", note or "used"))
         if vessels:
             meta.append(("Vessels", vessels))
