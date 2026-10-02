@@ -372,7 +372,9 @@ class LiveClient:
 
     def start(self):
         host, port = self.listener.address
-        cmd = [self.python, "-u", "-m", "stabilize.live", "--address", f"{host}:{port}",
+        # -s: as isolated from the user's site-packages as this interpreter
+        cmd = [self.python, *(["-s"] if sys.flags.no_user_site else []),
+               "-u", "-m", "stabilize.live", "--address", f"{host}:{port}",
                "--authkey", self.key.hex(), "--shm", self.shm.name, "--slots", str(self.slots),
                "--shape", str(self.shape[0]), str(self.shape[1]), "--dtype", self.dtype.name]
         if self.device:
