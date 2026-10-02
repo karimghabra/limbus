@@ -396,6 +396,8 @@ Passing criteria and results (stabilize 0.2.0):
 | rough | 35 × 45 px + saccade | 0.064 | 0.738 | 0.739 |
 | rough + blinks + glare | same | 0.116 | 0.755 | 0.756 |
 
+The GPU backend (§14) gives the same four rows to every printed digit.
+
 The **ceiling** is the overlap of the same masks aligned with the *true*
 motion. It is the right yardstick; a motionless burst's score is not, because
 the generator creates motion with bilinear warps, making moving frames ~12%
@@ -513,3 +515,171 @@ deformation, that a 0.6° pose change is recovered and removes the doubling,
 and that strips fall back. What is *not* yet done is the ground-truth
 validation translation has (§12): known, spatially varying deformations with
 flicker, noise, blinks and glare, and the accuracy of the recovered fields.
+
+## §14 GPU backend
+
+**What moves.** Stabilization repeats a few operations for every frame:
+filtering and vesselness (§5), the glare and envelope masks (§4, §6), phase
+correlation and the sub-pixel refinement (§7–§8), warps (§8, §13) and the
+metrics' correlations (§9). With an NVIDIA GPU and a CUDA build of PyTorch
+these run on the GPU, a batch of frames at a time (`gpu.py` holds the
+primitives, `gpu_stages.py` the stages built from them). Everything decided
+from their results — the quality gate, which candidate a frame keeps, the
+registered flags, medians, and the robust affine fits and field composition
+of §13 — runs in NumPy exactly as before, on the numbers the GPU returns. The
+CPU path is unchanged and remains the reference.
+
+`--device auto`, the default (also for the Review tab), uses a GPU when
+PyTorch finds one; `--device cpu`, or `STABILIZE_DEVICE=cpu`, keeps
+everything on the CPU. `metrics.json` records which produced a result
+(`processing.backend`). A burst the GPU runs out of memory on — another
+program may be using it — is re-run on the CPU. Each batch is sized to fit
+30% of the GPU's free memory (from each stage's measured peak use), and a
+burst's working-scale vessel maps stay on the card when they fit in another
+30%; otherwise they are read from the on-disk arrays batch by batch.
+
+**Same arithmetic.** Each GPU primitive reproduces the OpenCV or NumPy
+function it replaces, conventions included:
+
+- filters: OpenCV's Gaussian kernel and kernel size, its reflect-101 border,
+  the 3×3 Sobel and Laplacian kernels. Glare dilation counts the disc's
+  pixels, which is exact for a binary mask; the envelope's opening lets the
+  border neither erode nor dilate, as OpenCV's defaults do;
+- phase correlation (§7): zero padding to OpenCV's optimal DFT size, the
+  Hanning window, the FLT_EPSILON guard in the normalisation, the unscaled
+  inverse transform, the first maximum and the 5×5 weighted centroid.
+  **OpenCV 5 recentres the correlation surface with a true `fftshift` for
+  every size**, where earlier versions swapped quadrants — which differs for
+  odd sizes, such as the 125-row quadrants of a 1920×500 burst. Found while
+  building this backend; now matched to < 10⁻⁴ px;
+- the sub-pixel refinement in float64, like the NumPy original;
+- warps: **OpenCV 5 interpolates `remap` and `warpAffine` exactly**, where
+  earlier versions rounded positions to 1/32 px, so bilinear and bicubic
+  sampling are reproduced directly;
+- full float32 precision: on Ampere and later GPUs PyTorch runs float32
+  convolutions as TF32 by default — a 10-bit mantissa — which is turned off.
+
+**How close.** Given the *same* vessel maps, GPU registration reproduces the
+CPU trajectory exactly (0.000 px, with the same flags, iterations and
+convergence history), the vessel-mask metrics are identical, and the other
+diagnostics agree within 2·10⁻⁵ px. From raw frames, vesselness differs by
+float32 rounding: second derivatives of heavily blurred images lose most of
+their float32 digits to cancellation, differently in each implementation,
+and 0.001% of envelope pixels come out differently. That moves the template
+by a fraction of the refinement step (1/20 working-scale px, §7), and every
+frame's estimate, rounded to that grid, then either agrees exactly or lands
+one step away: 0.1 px at full resolution for full-width frames (working
+scale ½), 0.05 px for strips. Separately, a phase-correlation peak that is a
+near-tie — two adjacent maxima within 3·10⁻⁴ of each other — can resolve
+either way and move one non-rigid patch estimate by ~0.15 px. That is a
+property of the method, and the robust fit and median smoothing absorb it.
+
+Reference bursts, CPU vs GPU. Trajectories are compared after removing the
+constant offset between them, since a trajectory is defined only up to one;
+frames not identical differ by exactly one refinement step in x and/or y.
+Times on an AMD Ryzen 5 5600 (6 cores; OpenCV uses all 12 threads) against
+an NVIDIA GeForce RTX 3080 (10 GB) with PyTorch 2.11 / CUDA 12.8:
+
+| Burst | Frames | Translation trajectories identical | Max difference (px) | Stability index, translation CPU / GPU | Non-rigid CPU / GPU | Translation (s) | Non-rigid (s) |
+|---|---|---|---|---|---|---|---|
+| `15-50-52` | 140 × 1920×1200 | 98.6% | 0.10 | 0.905 / 0.905 | 0.917 / 0.917 | 50 → 5 | 108 → 12 |
+| `15-45-12` | 84 × 1920×1200 | 98.7% | 0.10 | 0.731 / 0.731 | 0.874 / 0.872 | 46 → 4 | 92 → 9 |
+| `15-40-55` | 63 × 1920×1200 | 100% | 0.00 | 0.433 / 0.433 | skipped / skipped | 58 → 4 | 64 → 4 |
+| `15-31-37` | 160 × 1920×500 | 94.9% | 0.14 | 0.937 / 0.937 | 0.947 / 0.947 | 22 → 3 | 47 → 6 |
+| `12-57-20` | 296 × 1920×100 | 55.7% | 0.07 | 0.883 / 0.883 | 0.883 / 0.883 | 22 → 3 | 22 → 3 |
+| `15-22-26` | 1105 × 1920×500 | 50.8% | 0.14 | 0.808 / 0.808 | 0.813 / 0.812 | 312 → 17 | 470 → 34 |
+
+Non-rigid stability indices differ by at most 0.002: on `15-45-12` the
+template-agreement test (§13) keeps one more frame on the GPU, and on
+`15-22-26` both use the same 626 frames. Registration, the slowest stage on
+the CPU, gains most: 266 s → 9 s on `15-22-26`.
+
+**Validated on both.** `tests/test_synthetic.py` and
+`tests/test_nonrigid_smoke.py` run every case on both backends with the same
+pass criteria, and the GPU matches the CPU there to every printed digit (the
+tables of §12 and §13 hold for both). `tests/test_gpu.py` checks the
+primitives against OpenCV, the stages on identical inputs, and the
+end-to-end agreement above.
+
+## §15 Live stabilization
+
+**What for.** A steady picture while aiming and focusing: the Camera tab's
+*Stabilize the live view* registers every frame as the camera delivers it
+and shows it shifted back into place (`live.py`). What is recorded is
+untouched — bursts and videos stay raw, and the offline methods remain the
+measurement.
+
+**Causal registration.** Offline, every frame is registered against a
+template made from the whole burst (§8). Live, only the frames seen so far
+exist, so the translation method's steps and parameters are applied one
+frame at a time: vesselness and envelope masks (§5–§6), coarse correlation
+of the masks with the template, and the half-whitened sub-pixel refinement
+(§7) started from the last position — plus, as offline, from the coarse
+estimate when that is confident and lands elsewhere, the fine stage's
+confidence deciding. The first 24 frames calibrate: they set the vesselness
+contrast and envelope threshold, the quality gate's reference statistics
+(§3; each new frame is judged against them), and the first template, chained
+and then registered once against the template the chain makes.
+
+**The template is anchored.** It is the calibration frames, kept for good,
+plus the recently registered frames, which fade (memory 64 frames). The
+recent part lets it follow the eye into tissue the calibration never saw;
+without the permanent part it drifts, because each frame's small
+registration error is learnt back into it. On frames 0–849 of `15-22-26`,
+against the offline result: a purely recent template 0.22 px at the start,
+0.41 px after 600 frames; a fixed calibration template registered only 440
+of 685 frames; anchored, 620 frames and 0.22 px throughout.
+
+**Losing and finding the eye.** Blinks and lighting jumps (frames the gate
+rejects) are not registered and don't count as losing the eye: it comes back
+from them. Clear frames that stop registering for a second do: the stream is
+calibrated again, on frames the old reference calls clear, so not on the
+blink that lost it. The new template is then registered against the last
+four templates: where it matches one, it takes that template's place in the
+reference frame, so the view doesn't jump — also after moving to another
+area and back. **Re-lock** starts a fresh reference, centred on the view.
+
+**Display.** Each preview image waits for its own frame's offset (tens of
+ms) rather than taking an older frame's, which would add the motion in
+between. A frame that didn't register isn't shown — the last stabilized one
+stays — since shifting it by the last good offset makes it jump by as far
+as the eye moved (126 px at the saccade of `15-50-52`, before this rule).
+
+**Running alongside the camera.** The stabilizer is a process of its own,
+on the GPU (§14): the recorder never loads PyTorch, and a slow or failed
+stabilizer can't hold up grabbing or recording. Frames reach it through a
+shared-memory ring of 32 frames; handing one over never waits, and if every
+slot is still in use the frame is skipped for stabilization only. It takes
+the frames that have arrived together as one batch, so when the camera is
+fast the batches grow and it keeps up at a little more latency. Before the
+first frame it runs every GPU step once on made-up frames, or the first real
+ones would wait over a second for CUDA to compile kernels and plan FFTs.
+
+**Results.** Reference bursts fed at their recorded frame rate (16-bit,
+MSB-aligned, as the camera sends them), RTX 3080; latency is from handing a
+frame over to its offset arriving:
+
+| Burst | Frames | Rate | Frames skipped | Latency median / p95 | vs offline, median / p95 |
+|---|---|---|---|---|---|
+| `15-50-52` | 1920×1200 | 32 fps | 0 | 18 / 20 ms | 0.05 / 0.11 px |
+| `15-31-37` | 1920×500 | 74 fps | 0 | 21 / 49 ms | 0.10 / 0.14 px |
+| `15-22-26` | 1920×500 (blinks) | 74 fps | 0 | 23 / 34 ms | 0.22 / 1.18 px |
+| `12-57-20` | 1920×100 | 149 fps | 0 | 23 / 46 ms | 0.00 / 0.05 px |
+| crop of `15-31-37` | 1920×200 | 200 fps | 1 of 800 | 40 / 155 ms | — |
+| crop of `15-31-37` | 1920×60 | 400 fps | 0 | 24 / 48 ms | — |
+
+On `15-22-26` it loses the eye once, around frame 880, where the offline
+method registers none of frames 850–999 either. In the app (the Camera tab
+with a camera replaying a burst, `benchmarks/test_live_view.py`), the preview
+images shown wander 30 px (median) from the first without stabilization and
+0.1 px with it at 32 fps; 8.7 → 0.10 px at 74 fps; and at 149 fps every frame
+is stabilized. Against known motion (`tests/test_live.py`): 0.063 px RMS;
+blinks not registered and no loss of lock; after moving to another area and
+back, the original reference rejoined to 0.065 px.
+
+**Limits.** Translation only (no rotation or magnification, §13). Needs an
+NVIDIA GPU; on the CPU the same steps take 130 ms per full frame. It locks
+on 3–5 s after being switched on (about 3 s to load PyTorch and warm up,
+then 24 frames). It keeps fewer frames than offline on hard bursts: 647 against 695
+on `15-22-26`, where it can't use the frames after a blink to place the
+frames before it.

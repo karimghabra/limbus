@@ -1,0 +1,387 @@
+"""Command line interface.
+
+    python -m vesselmap map IMAGE -o OUT [--set key=value ...]
+    python -m vesselmap refine MAP.json IMAGE -o OUT
+    python -m vesselmap consolidate MAP.json IMAGE -o OUT
+    python -m vesselmap faint MAP.json IMAGE -o OUT
+    python -m vesselmap flow MAP.json --burst DIR --reference IMAGE -o OUT
+    python -m vesselmap video FLOWMAP.json --burst DIR --registration REG.npz -o OUT.mp4
+    python -m vesselmap fit-frames MAP.json FRAME [FRAME ...] -o OUT
+    python -m vesselmap draw MAP.json [--image IMAGE] -o OUT
+    python -m vesselmap report RUN_DIR --image IMAGE [--frames FRAMES_DIR] -o OUT
+    python -m vesselmap synth-eval [--seeds 0 1 2] -o OUT
+"""
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import sys
+import time
+import warnings
+from dataclasses import fields
+
+warnings.filterwarnings("ignore", message=".*Sparse invariant checks.*")
+
+
+def _apply_sets(cfg, sets):
+    types = {f.name: f.type for f in fields(cfg)}
+    for kv in sets or []:
+        k, v = kv.split("=", 1)
+        if k not in types:
+            raise SystemExit(f"unknown setting {k}; known: {sorted(types)}")
+        cur = getattr(cfg, k)
+        if isinstance(cur, bool):
+            val = v.lower() in ("1", "true", "yes")
+        elif isinstance(cur, (int, float, str)):
+            val = type(cur)(v)
+        else:
+            val = json.loads(v)
+            if isinstance(cur, tuple):
+                val = tuple(tuple(x) if isinstance(x, list) else x for x in val)
+        setattr(cfg, k, val)
+    return cfg
+
+
+def write_outputs(net, intensity, prepared, out, stem="map"):
+    import cv2
+    from .draw import draw_digraph, export_html, model_panels, overlay
+    os.makedirs(out, exist_ok=True)
+    export_html(net, os.path.join(out, f"{stem}_digraph.html"), intensity)
+    net.save(os.path.join(out, f"{stem}.json"))
+    G = net.to_digraph()
+    export_graphml(G, os.path.join(out, f"{stem}.graphml"))
+    cv2.imwrite(os.path.join(out, f"{stem}_overlay.png"), overlay(net, intensity))
+    cv2.imwrite(os.path.join(out, f"{stem}_overlay_blur.png"), overlay(net, intensity, color_by="blur"))
+    if any(e.info.get("flow") for e in net.edges.values()):
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_flow.png"), overlay(net, intensity, color_by="flow"))
+        with open(os.path.join(out, f"{stem}_flow.csv"), "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["eid", "u", "v", "length_px", "flow", "speed_px_per_frame", "speed_px_per_s",
+                        "segments", "joined_by", "links"])
+            for eid, e in net.edges.items():
+                fl = e.info.get("flow", {})
+                links = e.info.get("links", [])
+                w.writerow([eid, e.u, e.v, round(net.length(eid), 1), fl.get("direction", "unknown"),
+                            fl.get("v_px_per_frame", ""), fl.get("speed_px_per_s", ""),
+                            len(e.info.get("consolidated_from", [eid])),
+                            ",".join(sorted({L["evidence"] for L in links})), json.dumps(links)])
+    if any(e.info.get("tier") == "faint" for e in net.edges.values()):
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_tier.png"),
+                    overlay(net, intensity, color_by="tier", arrows=False))
+    # where to look for vessels: 0 nothing, 1 mapped vessel, 2 faint tier
+    from .faint import search_mask
+    cv2.imwrite(os.path.join(out, f"{stem}_search_mask.png"), search_mask(net, net.shape))
+    if net.has_through() or "consolidation" in net.meta:
+        cv2.imwrite(os.path.join(out, f"{stem}_overlay_vessels.png"),
+                    overlay(net, intensity, color_by="vessel", arrows=False))
+    draw_digraph(net, os.path.join(out, f"{stem}_digraph.png"))
+    draw_digraph(net, os.path.join(out, f"{stem}_digraph_on_image.png"), intensity=intensity)
+    if prepared is not None:
+        model_panels(net, prepared, os.path.join(out, f"{stem}_model_residual.png"), scale=0.5)
+    with open(os.path.join(out, f"{stem}_edges.csv"), "w", newline="") as f:
+        w = None
+        for u, v, d in G.edges(data=True):
+            row = dict(u=u, v=v, **d)
+            if w is None:
+                w = csv.DictWriter(f, fieldnames=list(row))
+                w.writeheader()
+            w.writerow(row)
+    with open(os.path.join(out, f"{stem}_summary.json"), "w") as f:
+        json.dump(dict(summary=net.summary(), meta=net.meta,
+                       crossings=len(G.graph.get("crossings", []))), f, indent=1)
+
+
+def export_graphml(G, path):
+    import networkx as nx
+    H = G.copy()
+    H.graph = {"image_height": G.graph["image_shape"][0], "image_width": G.graph["image_shape"][1],
+               "n_crossings": len(G.graph.get("crossings", []))}
+    nx.write_graphml(H, path)
+
+
+def cmd_map(a):
+    from .fit import MapConfig, build_map
+    from .image import load_image, prepare
+    I = load_image(a.image)
+    P = prepare(I)
+    cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
+    t = time.time()
+    net = build_map(I, cfg, prepared=P)
+    net.meta["source_image"] = os.path.abspath(a.image)
+    write_outputs(net, I, P, a.out)
+    print(f"map written to {a.out} in {time.time() - t:.0f}s: {net.summary()}")
+
+
+def cmd_refine(a):
+    from .fit import MapConfig
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    from .refine import RefineConfig, refine_map
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
+    rc = _apply_sets(RefineConfig(verbose=not a.quiet), a.refine_set)
+    t = time.time()
+    L0 = net.summary()["total_length_px"]
+    refine_map(I, net, cfg, rc, prepared=P)
+    write_outputs(net, I, P, a.out)
+    print(f"refined map written to {a.out} in {time.time() - t:.0f}s: "
+          f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline; {net.summary()}")
+
+
+def cmd_faint(a):
+    from .faint import FaintConfig, add_faint_tier
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(FaintConfig(verbose=not a.quiet), a.set)
+    t = time.time()
+    L0 = net.summary()["total_length_px"]
+    add_faint_tier(I, net, cfg, prepared=P)
+    write_outputs(net, I, P, a.out)
+    print(f"map with faint tier written to {a.out} in {time.time() - t:.0f}s: "
+          f"{L0:.0f} -> {net.summary()['total_length_px']:.0f} px of centreline")
+
+
+def cmd_flow(a):
+    import numpy as np
+    from .consolidate import ConsolidateConfig
+    from .fit import MapConfig
+    from .flow import FlowConfig, Video, _limbusflow, flow_consolidate
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    _limbusflow()
+    from limbusflow import io as lio, register as rg
+    I = load_image(a.reference)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match the reference {P.shape}")
+    os.makedirs(a.out, exist_ok=True)
+    burst = lio.load_burst(a.burst, cache_dir=a.cache)
+    ref = (P.intensity * 4095.0).astype(np.float32)      # gaps filled
+    if a.registration and os.path.exists(a.registration):
+        reg = rg.Registration.load(a.registration)
+    else:
+        print("registering the burst to the reference ...", flush=True)
+        reg = rg.Registrar(ref).register_burst(burst.frames)
+        reg.save(a.registration or os.path.join(a.out, "registration.npz"))
+    s0, s1 = reg.good_runs()[0]
+    video = Video(burst.frames, reg, np.arange(s0, s1 + 1), burst.fps, ref)
+    print(f"velocity from frames {s0}-{s1} ({s1 - s0 + 1} frames, {burst.fps:.1f} fps)", flush=True)
+    fc = _apply_sets(FlowConfig(verbose=not a.quiet), a.set)
+    t = time.time()
+    out, rep = flow_consolidate(I, net, video, MapConfig(verbose=not a.quiet), ConsolidateConfig(verbose=False),
+                                fc, prepared=P)
+    write_outputs(out, I, P, a.out)
+    print(f"flow-consolidated map written to {a.out} in {time.time() - t:.0f}s: {rep}")
+
+
+def cmd_video(a):
+    import numpy as np
+    from .flow import _limbusflow
+    from .network import VesselNetwork
+    from .video import render
+    _limbusflow()
+    from limbusflow import io as lio, register as rg
+    net = VesselNetwork.load(a.map)
+    burst = lio.load_burst(a.burst, cache_dir=a.cache)
+    reg = rg.Registration.load(a.registration)
+    if a.frames:
+        f0, f1 = map(int, a.frames.split("-"))
+    else:
+        f0, f1 = reg.good_runs()[0]
+    crop = tuple(map(int, a.crop.split(","))) if a.crop else None
+    render(net, burst.frames, reg, np.arange(f0, f1 + 1), burst.fps, a.out, scale=a.scale, crop=crop,
+           out_fps=a.fps, label=os.path.basename(os.path.normpath(a.burst)) + "  ")
+    print(f"video written to {a.out} (frames {f0}-{f1})")
+
+
+def cmd_consolidate(a):
+    from .consolidate import ConsolidateConfig, consolidate_map
+    from .fit import MapConfig
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    I = load_image(a.image)
+    P = prepare(I)
+    net = VesselNetwork.load(a.map)
+    if tuple(net.shape) != P.shape:
+        raise SystemExit(f"map shape {net.shape} does not match image {P.shape}")
+    cfg = _apply_sets(MapConfig(verbose=not a.quiet), a.set)
+    cc = _apply_sets(ConsolidateConfig(verbose=not a.quiet), a.consolidate_set)
+    t = time.time()
+    out = consolidate_map(I, net, cfg, cc, prepared=P)
+    out.meta["source_image"] = os.path.abspath(a.image)
+    write_outputs(out, I, P, a.out)
+    c = out.meta["consolidation"]
+    print(f"consolidated map written to {a.out} in {time.time() - t:.0f}s: "
+          f"{c['edges_before']} segments -> {c['edges_after']} vessels; {out.summary()}")
+
+
+def cmd_fit_frames(a):
+    from .fit import FrameFitConfig, fit_frame
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    import cv2
+    from .draw import overlay
+    ref = VesselNetwork.load(a.map)
+    cfg = _apply_sets(FrameFitConfig(), a.set)
+    os.makedirs(a.out, exist_ok=True)
+    rows = []
+    prev = None
+    for path in a.frames:
+        I = load_image(path)
+        net, rep = fit_frame(I, ref, cfg, prepared=prepare(I),
+                             init=prev if a.chain else None)
+        prev = net
+        stem = os.path.splitext(os.path.basename(path))[0]
+        net.meta["source_image"] = os.path.abspath(path)
+        net.save(os.path.join(a.out, f"{stem}.json"))
+        if a.overlays:
+            cv2.imwrite(os.path.join(a.out, f"{stem}_overlay.png"), overlay(net, I, crossings=False))
+        rows.append(dict(frame=stem, **{k: v for k, v in rep.items() if k != "affine"},
+                         affine=json.dumps(rep["affine"])))
+        print(f"{stem}: {rep}", flush=True)
+    with open(os.path.join(a.out, "frames.csv"), "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=list(rows[0]))
+        w.writeheader()
+        w.writerows(rows)
+
+
+def cmd_draw(a):
+    from .image import load_image, prepare
+    from .network import VesselNetwork
+    net = VesselNetwork.load(a.map)
+    I = load_image(a.image) if a.image else None
+    if I is None:
+        from .draw import draw_digraph
+        os.makedirs(a.out, exist_ok=True)
+        draw_digraph(net, os.path.join(a.out, "map_digraph.png"))
+    else:
+        write_outputs(net, I, prepare(I), a.out)
+
+
+def cmd_report(a):
+    from .report import build_report
+    path = build_report(a.run, a.image, a.out, frames_dir=a.frames)
+    print(f"report written to {path}")
+
+
+def cmd_synth_eval(a):
+    from .fit import MapConfig, build_map
+    from .image import prepare
+    from .synthetic import centreline_metrics, make_scene
+    os.makedirs(a.out, exist_ok=True)
+    res = []
+    for seed in a.seeds:
+        I, vessels, _ = make_scene(seed)
+        cfg = _apply_sets(MapConfig(verbose=False), a.set)
+        P = prepare(I)
+        t = time.time()
+        net = build_map(I, cfg, prepared=P)
+        m = centreline_metrics(net, vessels, I.shape)
+        m.update(seed=seed, seconds=round(time.time() - t, 1), **net.summary())
+        res.append(m)
+        write_outputs(net, I, P, os.path.join(a.out, f"seed{seed}"))
+        print(json.dumps(m), flush=True)
+    with open(os.path.join(a.out, "synthetic_metrics.json"), "w") as f:
+        json.dump(res, f, indent=1)
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="vesselmap", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+    m = sub.add_parser("map", help="discover the vessel network of one image")
+    m.add_argument("image")
+    m.add_argument("-o", "--out", required=True)
+    m.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
+    m.add_argument("--quiet", action="store_true")
+    m.set_defaults(func=cmd_map)
+    r = sub.add_parser("refine", help="add fine detail (small and parallel vessels) to a map")
+    r.add_argument("map")
+    r.add_argument("image", help="the image the map was built from")
+    r.add_argument("-o", "--out", required=True)
+    r.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
+    r.add_argument("--refine-set", nargs="*", help="RefineConfig overrides key=value")
+    r.add_argument("--quiet", action="store_true")
+    r.set_defaults(func=cmd_refine)
+    c = sub.add_parser("consolidate", help="merge the segments of each vessel into one spline")
+    c.add_argument("map")
+    c.add_argument("image", help="the image the map was built from")
+    c.add_argument("-o", "--out", required=True)
+    c.add_argument("--set", nargs="*", help="MapConfig overrides key=value")
+    c.add_argument("--consolidate-set", nargs="*", help="ConsolidateConfig overrides key=value")
+    c.add_argument("--quiet", action="store_true")
+    c.set_defaults(func=cmd_consolidate)
+    fa = sub.add_parser("faint", help="add a recall tier of faint vessels traced along their "
+                                      "length (for the search mask)")
+    fa.add_argument("map")
+    fa.add_argument("image", help="the image the map was built from")
+    fa.add_argument("-o", "--out", required=True)
+    fa.add_argument("--set", nargs="*", help="FaintConfig overrides key=value")
+    fa.add_argument("--quiet", action="store_true")
+    fa.set_defaults(func=cmd_faint)
+    fl = sub.add_parser("flow", help="measure red-cell velocity along every segment of a map and "
+                                     "join segments that flow shows to be one vessel")
+    fl.add_argument("map", help="a map of the reference image")
+    fl.add_argument("--burst", required=True, help="the burst folder (frame_*.tif, frames.csv)")
+    fl.add_argument("--reference", required=True, help="the image the map was built from")
+    fl.add_argument("--registration", help="limbusflow registration .npz (made and saved if missing)")
+    fl.add_argument("--cache", default=None, help="folder for the burst's cached frame stack")
+    fl.add_argument("-o", "--out", required=True)
+    fl.add_argument("--set", nargs="*", help="FlowConfig overrides key=value")
+    fl.add_argument("--quiet", action="store_true")
+    fl.set_defaults(func=cmd_flow)
+    vd = sub.add_parser("video", help="video of a registered burst with the map, its measured flow "
+                                      "and tracers moving at the measured velocity")
+    vd.add_argument("map", help="a map with measured flow (from vesselmap flow)")
+    vd.add_argument("--burst", required=True)
+    vd.add_argument("--registration", required=True, help="limbusflow registration .npz")
+    vd.add_argument("--frames", help="first-last frame (default: the longest run of good frames)")
+    vd.add_argument("--crop", help="x0,y0,x1,y1 in reference px (a zoomed region)")
+    vd.add_argument("--scale", type=float, default=0.75)
+    vd.add_argument("--fps", type=int, default=30, help="playback frame rate")
+    vd.add_argument("--cache", default=None, help="folder for the burst's cached frame stack")
+    vd.add_argument("-o", "--out", required=True)
+    vd.set_defaults(func=cmd_video)
+    f = sub.add_parser("fit-frames", help="adjust a map to each of several frames")
+    f.add_argument("map")
+    f.add_argument("frames", nargs="+")
+    f.add_argument("-o", "--out", required=True)
+    f.add_argument("--set", nargs="*", help="FrameFitConfig overrides key=value")
+    f.add_argument("--overlays", action="store_true")
+    f.add_argument("--chain", action="store_true",
+                   help="start each frame from the previous frame's fit (prior stays on the map)")
+    f.set_defaults(func=cmd_fit_frames)
+    d = sub.add_parser("draw", help="draw a saved map")
+    d.add_argument("map")
+    d.add_argument("--image")
+    d.add_argument("-o", "--out", required=True)
+    d.set_defaults(func=cmd_draw)
+    rp = sub.add_parser("report", help="HTML page of a run's outputs (and its per-frame fits)")
+    rp.add_argument("run", help="output folder of map / refine / faint / consolidate")
+    rp.add_argument("--image", required=True, help="the image the map was built from")
+    rp.add_argument("--frames", help="output folder of fit-frames")
+    rp.add_argument("-o", "--out", required=True)
+    rp.set_defaults(func=cmd_report)
+    s = sub.add_parser("synth-eval", help="score the mapper on synthetic scenes")
+    s.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
+    s.add_argument("-o", "--out", required=True)
+    s.add_argument("--set", nargs="*")
+    s.set_defaults(func=cmd_synth_eval)
+    a = p.parse_args(argv)
+    a.func(a)
+
+
+if __name__ == "__main__":
+    main()

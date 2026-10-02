@@ -3,8 +3,9 @@
 Copies the given bursts into a temporary recordings folder, opens the Review
 tab on its own, and for each burst and method: presses Stabilize, waits for
 the analysis process, then plays the Raw / Stabilized / Stabilized mean
-views. Also cancels a run part-way and checks the summary covers every
-burst. Screenshots of each view are kept for a visual check.
+views, checking the Stabilized view shows only the frames the result used
+(stepping, playback and the slider skip the rest) while Raw shows them all.
+Also cancels a run part-way and checks the summary covers every burst. Screenshots of each view are kept for a visual check.
 
 usage: python benchmarks/test_review_stabilize.py <shots dir> <burst folder> [<burst folder> ...]
 """
@@ -77,28 +78,35 @@ def stabilize(name, method):
     pump(0.5)
     if tab.proc is None:
         fail.append(f"{name}/{method}: no analysis process started")
-        return
+        return False
     if tab.stab_btn.text() != "Cancel":
         fail.append(f"{name}/{method}: button reads {tab.stab_btn.text()!r} while running")
     while tab.proc is not None and time.time() - started < TIMEOUT_S:
         pump(0.2)
-    log = tab.stab_log.toPlainText().splitlines()
+    log = tab.job_log.toPlainText().splitlines()
     print(f"\n{name} / {method}: {time.time() - started:.0f}s, status before: {before!r}")
     print("  log tail: " + " | ".join(log[-4:]))
     print(f"  status: {tab.stab_status.text()!r}")
     if tab.proc is not None:
         fail.append(f"{name}/{method}: still running after {TIMEOUT_S}s")
         tab.shutdown()
-        return
+        return False
     if "finished" not in log[-1]:
         fail.append(f"{name}/{method}: process ended with {log[-1]!r}")
+    if tab.result is not None and tab.result.metrics.get("status") == "skipped":
+        # the analysis may decline a burst (too few frames agree): that is a
+        # result too, as long as the status line says why
+        if "Skipped" not in tab.stab_status.text():
+            fail.append(f"{name}/{method}: skipped without saying why: {tab.stab_status.text()!r}")
+        return False
     if not (tab.result and tab.result.ok):
         fail.append(f"{name}/{method}: no usable result loaded")
-        return
+        return False
     if "Stability index" not in tab.stab_status.text():
         fail.append(f"{name}/{method}: status shows no metrics")
     if "older code" in tab.stab_status.text():
         fail.append(f"{name}/{method}: a fresh result reported as out of date")
+    return True
 
 
 def views(name, method):
@@ -107,25 +115,85 @@ def views(name, method):
     n = len(tab.source)
     used = [i for i in range(n) if res.used(i)]
     unused = [i for i in range(n) if not res.used(i)]
+    print(f"  used {len(used)} of {n} frames; left out {unused}")
+    # the Stabilized view shows only the frames the stabilization used: the
+    # slider put on one it left out moves on to the next one it used, the
+    # way it moved
     for i in (used[:1] + used[len(used) // 2:len(used) // 2 + 1] + unused[:1]):
+        was = tab.index
         tab.slider.setValue(i)
         pump(0.1)
         rows = form_rows(tab.frame_form)
         if tab.view.pixmap() is None or tab.view.pixmap().isNull():
             fail.append(f"{name}/{method}: frame {i} rendered nothing")
-        state = rows.get("Stabilized")
-        expect_used = i in used
-        if (state == "used") != expect_used:
-            fail.append(f"{name}/{method}: frame {i} labelled {state!r}, used={expect_used}")
-        print(f"  frame {i}: {state}; pixel range {rows.get('Pixel range')}")
+        state = rows.get("Stabilized") or ""
+        if not state.startswith("used") or not res.used(tab.index):
+            fail.append(f"{name}/{method}: slider on {i} shows frame {tab.index}, labelled {state!r}")
+        if i in used and tab.index != i:
+            fail.append(f"{name}/{method}: slider on used frame {i} moved to {tab.index}")
+        if i not in used:
+            ahead = [u for u in used if (u > i if i > was else u < i)]
+            expect = (min(ahead) if i > was else max(ahead)) if ahead else (used[-1] if i > was else used[0])
+            if tab.index != expect:
+                fail.append(f"{name}/{method}: slider {was} -> left-out {i} went to {tab.index}, not {expect}")
+        print(f"  slider {i} -> frame {tab.index}: {state}; pixel range {rows.get('Pixel range')}")
     shot(f"{name}_{method}_stabilized")
-    # playback must advance through stabilized frames
-    tab.slider.setValue(0)
+    # stepping visits every used frame and only those, both ways
+    tab.slider.setValue(used[0])
+    pump(0.05)
+    seen = [tab.index]
+    for _ in range(n + 2):
+        tab._step(+1)
+        seen.append(tab.index)
+    back = [tab.index]
+    for _ in range(n + 2):
+        tab._step(-1)
+        back.append(tab.index)
+    fwd = sorted(set(seen))
+    if fwd != used or sorted(set(back)) != used or seen[-1] != used[-1] or back[-1] != used[0]:
+        fail.append(f"{name}/{method}: stepping visited {fwd} / {sorted(set(back))}, used {used}")
+    # the slider moved one frame at a time (arrow keys) never stalls on a
+    # frame left out, and never shows one
+    tab.slider.setValue(used[0])
+    keys = [tab.index]
+    for _ in range(n + 2):
+        tab.slider.setValue(min(n - 1, tab.slider.value() + 1))
+        keys.append(tab.index)
+    if sorted(set(keys)) != used:
+        fail.append(f"{name}/{method}: arrow keys visited {sorted(set(keys))}, used {used}")
+    # playback advances through the used frames only, and loops
+    tab.slider.setValue(used[0])
+    played = []
+    for _ in range(2 * len(used)):
+        tab._advance()
+        played.append(tab.index)
+    if any(not res.used(i) for i in played) or sorted(set(played)) != used:
+        fail.append(f"{name}/{method}: playback showed {sorted(set(played))}, used {used}")
+    tab.slider.setValue(used[0])
     tab._toggle_play()
     pump(1.0)
     tab._stop()
-    if tab.index == 0:
+    if tab.index == used[0]:
         fail.append(f"{name}/{method}: stabilized playback did not advance")
+    # the Raw view still shows every frame
+    tab.view_combo.setCurrentIndex(tab.view_combo.findData("raw"))
+    tab.slider.setValue(0)
+    pump(0.05)
+    raw_seen = [tab.index]
+    for _ in range(n + 2):
+        tab._step(+1)
+        raw_seen.append(tab.index)
+    if sorted(set(raw_seen)) != list(range(n)):
+        fail.append(f"{name}/{method}: Raw stepping visited {sorted(set(raw_seen))} of {n}")
+    if unused:
+        tab.slider.setValue(unused[0])
+        pump(0.05)
+        if tab.index != unused[0]:
+            fail.append(f"{name}/{method}: Raw view moved off left-out frame {unused[0]}")
+    tab.view_combo.setCurrentIndex(tab.view_combo.findData("stabilized"))
+    pump(0.1)
+    if unused and not res.used(tab.index):
+        fail.append(f"{name}/{method}: switching to Stabilized kept left-out frame {tab.index}")
 
     tab.view_combo.setCurrentIndex(tab.view_combo.findData("mean"))
     pump(0.2)
@@ -194,8 +262,8 @@ try:
     cancel(names[0])
     for name in names:
         for method in ("translation", "nonrigid"):
-            stabilize(name, method)
-            views(name, method)
+            if stabilize(name, method):
+                views(name, method)
 
     summary = os.path.join(cr.stabilization_base(os.path.join(recordings, names[0])),
                            "translation", "summary.csv")

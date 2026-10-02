@@ -7,6 +7,10 @@ the camera rather than the tissue. Then checks the pipeline recovers the
 motion, catches the blinks, isn't pulled by the glare, and that the
 stability metrics respond to motion the way they should.
 
+Every case runs on the CPU and, when there is one, on the GPU (METHODS.md
+§14), and both must meet every criterion. STABILIZE_DEVICE=cpu tests the
+CPU alone.
+
 usage: python analysis/tests/test_synthetic.py      (from the repository root)
 """
 import csv
@@ -26,6 +30,7 @@ sys.path.insert(0, os.path.dirname(HERE))              # analysis/ (the stabiliz
 sys.path.insert(0, os.path.join(ROOT, "benchmarks"))   # the vessel-network generator
 from bench_common import _vessels  # noqa: E402  existing vessel-network generator
 from stabilize.config import Params  # noqa: E402
+from stabilize.gpu import describe, select  # noqa: E402
 from stabilize.metrics import mask_consensus  # noqa: E402
 from stabilize.pipeline import process_burst  # noqa: E402
 from stabilize.vessels import (contrast_constant, envelope, glare_mask, to_working,  # noqa: E402
@@ -118,16 +123,20 @@ def perfect_registration_overlap(frames, truth, blinks):
     return rec["overlap"]
 
 
-def run(tmp, name, seed, step_sd, saccade, glare, blinks):
+def make_case(tmp, name, seed, step_sd, saccade, glare, blinks):
     rng = np.random.default_rng(seed)
     scene = make_scene(np.random.default_rng(1000))      # same tissue every case
     truth = trajectory(rng, step_sd, saccade)
     folder = os.path.join(tmp, "bursts", f"burst_{name}")
     frames = render(rng, scene, truth, glare, blinks)
     write_burst(folder, frames)
-    out = os.path.join(tmp, "out")
-    rec = process_burst(folder, out, Params(), log=lambda s: None)
-    rows = list(csv.DictReader(open(os.path.join(out, f"burst_{name}", "transforms.csv"),
+    return folder, truth, perfect_registration_overlap(frames, truth, blinks)
+
+
+def run(tmp, folder, truth, blinks, label, gpu):
+    out = os.path.join(tmp, "out_" + label)
+    rec = process_burst(folder, out, Params(), log=lambda s: None, gpu=gpu)
+    rows = list(csv.DictReader(open(os.path.join(out, os.path.basename(folder), "transforms.csv"),
                                     encoding="utf-8")))
     est = np.array([[float(r["dx_px"]), float(r["dy_px"])] for r in rows])
     reg = np.array([r["registered"] == "1" for r in rows])
@@ -136,12 +145,14 @@ def run(tmp, name, seed, step_sd, saccade, glare, blinks):
     # both trajectories are only defined up to a constant offset
     err = (est[use] - est[use].mean(0)) - (truth[use] - truth[use].mean(0))
     rms = float(np.sqrt(np.mean(np.sum(err ** 2, axis=1))))
-    ceiling = perfect_registration_overlap(frames, truth, blinks)
-    return rec, rms, gate, reg, truth, ceiling
+    return rec, rms, gate, reg
 
 
 def main():
     tmp = tempfile.mkdtemp(prefix="stabilize_synth_")
+    gpu = select()
+    backends = [("cpu", None)] + ([("gpu", gpu)] if gpu else [])
+    print("backends: " + "; ".join(f"{label} = {describe(g)}" for label, g in backends))
     try:
         cases = {}
         for name, seed, sd, sacc, glare, blinks in (
@@ -149,40 +160,46 @@ def main():
                 ("gentle", 2, 0.8, False, False, ()),
                 ("rough", 3, 3.0, True, False, ()),
                 ("rough_blinks_glare", 3, 3.0, True, True, BLINKS)):
-            rec, rms, gate, reg, truth, ceiling = run(tmp, name, seed, sd, sacc, glare, blinks)
-            q = rec["quality"]
-            cases[name] = (rec, rms)
-            print(f"{name:20s} true motion {np.ptp(truth[:, 0]):5.1f} x {np.ptp(truth[:, 1]):5.1f} px | "
-                  f"RMS error {rms:.3f} px | overlap {q['before']['overlap']:.3f} -> "
-                  f"{q['after']['overlap']:.3f} (perfect-registration ceiling {ceiling:.3f}) | "
-                  f"Dice {q['before']['dice']:.3f} -> {q['after']['dice']:.3f} | "
-                  f"registered {int(reg.sum())}/{N}, gate kept {int(gate.sum())}", flush=True)
-            if rms > 0.2:
-                fail.append(f"{name}: recovered motion RMS error {rms:.3f} px > 0.2 px")
-            # stabilization must reach what perfect registration would achieve
-            if q["after"]["overlap"] < ceiling - 0.01:
-                fail.append(f"{name}: after-overlap {q['after']['overlap']:.3f} short of the "
-                            f"perfect-registration ceiling {ceiling:.3f}")
-            false_rej = [t for t in range(N) if not gate[t] and t not in blinks]
-            if false_rej:
-                fail.append(f"{name}: gate rejected good frames {false_rej}")
-            if blinks:
-                missed = [t for t in blinks if gate[t]]
-                if missed:
-                    fail.append(f"{name}: gate missed blinks at frames {missed}")
+            folder, truth, ceiling = make_case(tmp, name, seed, sd, sacc, glare, blinks)
+            for label, device in backends:
+                rec, rms, gate, reg = run(tmp, folder, truth, blinks, label, device)
+                q = rec["quality"]
+                cases[label, name] = (rec, rms)
+                tag = f"{label} {name}"
+                print(f"{tag:24s} true motion {np.ptp(truth[:, 0]):5.1f} x {np.ptp(truth[:, 1]):5.1f} px | "
+                      f"RMS error {rms:.3f} px | overlap {q['before']['overlap']:.3f} -> "
+                      f"{q['after']['overlap']:.3f} (perfect-registration ceiling {ceiling:.3f}) | "
+                      f"Dice {q['before']['dice']:.3f} -> {q['after']['dice']:.3f} | "
+                      f"registered {int(reg.sum())}/{N}, gate kept {int(gate.sum())} | "
+                      f"{rec['processing']['seconds']:.0f}s", flush=True)
+                if rms > 0.2:
+                    fail.append(f"{tag}: recovered motion RMS error {rms:.3f} px > 0.2 px")
+                # stabilization must reach what perfect registration would achieve
+                if q["after"]["overlap"] < ceiling - 0.01:
+                    fail.append(f"{tag}: after-overlap {q['after']['overlap']:.3f} short of the "
+                                f"perfect-registration ceiling {ceiling:.3f}")
+                false_rej = [t for t in range(N) if not gate[t] and t not in blinks]
+                if false_rej:
+                    fail.append(f"{tag}: gate rejected good frames {false_rej}")
+                if blinks:
+                    missed = [t for t in blinks if gate[t]]
+                    if missed:
+                        fail.append(f"{tag}: gate missed blinks at frames {missed}")
 
-        still = cases["still"][0]["quality"]
-        gentle = cases["gentle"][0]["quality"]
-        rough = cases["rough"][0]["quality"]
-        # more motion should make the UNstabilized masks agree less
-        if not (still["before"]["overlap"] > gentle["before"]["overlap"]
-                > rough["before"]["overlap"]):
-            fail.append("raw vessel overlap does not fall as motion increases")
-        # glare must not pull the registration: same motion, with vs without
-        clean_rms, glare_rms = cases["rough"][1], cases["rough_blinks_glare"][1]
-        print(f"glare/blink effect on accuracy: {clean_rms:.3f} -> {glare_rms:.3f} px RMS")
-        if glare_rms > clean_rms + 0.1:
-            fail.append(f"glare/blinks degraded accuracy {clean_rms:.3f} -> {glare_rms:.3f} px")
+        for label, _ in backends:
+            still = cases[label, "still"][0]["quality"]
+            gentle = cases[label, "gentle"][0]["quality"]
+            rough = cases[label, "rough"][0]["quality"]
+            # more motion should make the UNstabilized masks agree less
+            if not (still["before"]["overlap"] > gentle["before"]["overlap"]
+                    > rough["before"]["overlap"]):
+                fail.append(f"{label}: raw vessel overlap does not fall as motion increases")
+            # glare must not pull the registration: same motion, with vs without
+            clean_rms, glare_rms = cases[label, "rough"][1], cases[label, "rough_blinks_glare"][1]
+            print(f"{label} glare/blink effect on accuracy: {clean_rms:.3f} -> {glare_rms:.3f} px RMS")
+            if glare_rms > clean_rms + 0.1:
+                fail.append(f"{label}: glare/blinks degraded accuracy {clean_rms:.3f} -> "
+                            f"{glare_rms:.3f} px")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

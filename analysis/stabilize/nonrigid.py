@@ -28,10 +28,11 @@ import cv2
 import numpy as np
 import tifffile
 
-from . import __version__
+from . import __version__, gpu_stages
 from .bursts import load_burst, read_frame
 from .config import NonrigidParams, Params
 from .fields import FieldEvaluator, Grid, save_fields, to_full_resolution
+from .gpu import Maps, describe
 from .metrics import mask_consensus, residual_motion, rotation_diagnostic
 from .pipeline import process_burst
 from .quality import robust_z
@@ -44,9 +45,9 @@ OUTPUT_FILES = ("mean_raw.tif", "mean_stabilized.tif", "std_stabilized.tif",
                 "consensus_mask.tif", "transforms.csv", "qc.png")
 
 
-def process_burst_nonrigid(path, out_base, params=None, nparams=None, log=print):
+def process_burst_nonrigid(path, out_base, params=None, nparams=None, log=print, gpu=None):
     """Translation into <out_base>/translation/<burst>, then non-rigid
-    refinement into <out_base>/nonrigid/<burst>."""
+    refinement into <out_base>/nonrigid/<burst>. gpu as for process_burst."""
     params = params or Params()
     nparams = nparams or NonrigidParams()
     started = time.time()
@@ -60,14 +61,15 @@ def process_burst_nonrigid(path, out_base, params=None, nparams=None, log=print)
 
     log("stage 1/2: translation")
     rec = process_burst(path, os.path.join(out_base, "translation"), params, log=log,
-                        keep_work=True, method="translation")
+                        keep_work=True, method="translation", gpu=gpu)
     work_dir = rec.pop("_work_dir", None)
     try:
         if rec.get("status") != "ok":
-            return _write_skip(out_dir, rec, rec.get("skip_reason", ""), params, nparams, started)
+            return _write_skip(out_dir, rec, rec.get("skip_reason", ""), params, nparams, started,
+                               gpu)
         log("stage 2/2: non-rigid refinement (experimental)")
         return _refine(load_burst(path), rec, tr_dir, work_dir, out_dir, params, nparams,
-                       log, started)
+                       log, started, gpu)
     finally:
         if work_dir:
             shutil.rmtree(work_dir, ignore_errors=True)
@@ -75,19 +77,20 @@ def process_burst_nonrigid(path, out_base, params=None, nparams=None, log=print)
 
 # ---- helpers ---------------------------------------------------------------------
 
-def _processing(params, nparams, started):
+def _processing(params, nparams, started, gpu=None):
     return {"finished_utc": datetime.now(timezone.utc).isoformat(),
             "seconds": round(time.time() - started, 1),
             "stabilize_version": __version__,
             "params_hash": nparams.params_hash(params),
-            "nonrigid_params": nparams.to_dict()}
+            "nonrigid_params": nparams.to_dict(),
+            "backend": describe(gpu)}
 
 
-def _write_skip(out_dir, rec, reason, params, nparams, started):
+def _write_skip(out_dir, rec, reason, params, nparams, started, gpu=None):
     record = {"status": "skipped", "skip_reason": reason, "method": METHOD,
               "experimental": True, "burst": rec.get("burst", {}),
               "processing": {**rec.get("processing", {}),
-                             **_processing(params, nparams, started)}}
+                             **_processing(params, nparams, started, gpu)}}
     os.makedirs(out_dir, exist_ok=True)
     with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2)
@@ -158,6 +161,27 @@ def compose(A_f, L_f, A_u, l_u, nx, ny, grid):
     return A, L.astype(np.float32)
 
 
+def _patch_shifts(a, tp, ys, xs, patch, win, np_):
+    """Each patch of the aligned frame a, phase-correlated with the same
+    patch tp[r][c] of the template: shifts rdx, rdy (NaN where not measured)
+    and weights wts, each (rows, cols)."""
+    rdx = np.full((len(ys), len(xs)), np.nan, np.float32)
+    rdy = np.full((len(ys), len(xs)), np.nan, np.float32)
+    wts = np.zeros((len(ys), len(xs)), np.float32)
+    for r, y0 in enumerate(ys):
+        for c, x0 in enumerate(xs):
+            ap = a[y0:y0 + patch, x0:x0 + patch]
+            if tp[r][c].max() <= 0 or ap.max() <= 0:
+                continue
+            # copies inside: phaseCorrelate windows its inputs in place,
+            # which would erode the shared template patch frame by frame
+            (ddx, ddy), resp = phase_correlate(tp[r][c], ap, win)
+            if (resp >= np_.patch_min_response and abs(ddx) < patch / 4
+                    and abs(ddy) < patch / 4):
+                rdx[r, c], rdy[r, c], wts[r, c] = ddx, ddy, resp
+    return rdx, rdy, wts
+
+
 def tile_spread(V, frames, warp, grid_shape, scale):
     """Per-tile residual motion spread (full-res px): after alignment, each
     tile of each frame is registered to the same tile of the mean; the
@@ -187,7 +211,7 @@ def tile_spread(V, frames, warp, grid_shape, scale):
 
 # ---- the refinement ------------------------------------------------------------
 
-def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
+def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started, gpu=None):
     S = float(rec_t["processing"]["working_scale"])
     V = np.load(os.path.join(work_dir, "V.npy"), mmap_mode="r")
     M = np.load(os.path.join(work_dir, "M.npy"), mmap_mode="r")
@@ -212,7 +236,7 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
         return _fallback(burst, rec_t, tr_dir, out_dir, idx, traj_px, params, np_, started,
                          f"patch grid {R}x{C} can't measure deformation "
                          f"({patch / S:.0f} px patches on a {burst.width}x{burst.height} frame)",
-                         log)
+                         log, gpu)
     # two rows of patches barely constrain vertical gradients: shear and
     # anisotropic scale would be fitted to noise, so only rotation and
     # uniform magnification are allowed
@@ -233,6 +257,14 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
         fx, fy = ev.dense(A[k], L[k])
         return ev.warp(img, fx, fy)
 
+    row_of = {int(i): k for k, i in enumerate(idx)}
+    if gpu is not None:
+        # the same fields, evaluated on the GPU; align(imgs, frames) warps
+        # frames by the current rows of A and L
+        maps = Maps.load(gpu, V, M, O)
+        fields = gpu.fields((h, w), grid)
+        align = gpu_stages.FieldWarp(fields, A, L, row_of)
+
     # ---- single-pose reference -----------------------------------------------
     # A template from all translation-aligned frames is itself doubled at the
     # corners, and registering against a doubled template is ambiguous: either
@@ -241,7 +273,10 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
     # of consecutive frames — one fixation, one pose.
     t0 = time.time()
     K = min(np_.reference_frames, m)
-    small = np.stack([aligned(k, V[idx[k]])[::4, ::4].ravel() for k in range(m)])
+    if gpu is None:
+        small = np.stack([aligned(k, V[idx[k]])[::4, ::4].ravel() for k in range(m)])
+    else:
+        small = gpu_stages.aligned_thumbnails(gpu, maps, align, idx)
     best_start, best_score = 0, -np.inf
     for s0 in range(0, m - K + 1, 3):
         block = small[s0:s0 + K]
@@ -262,32 +297,29 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
     for it in range(1, np_.max_iterations + 1):
         t0 = time.time()
         members = ref if it <= np_.reference_iterations else range(m)
-        acc = np.zeros((h, w), np.float32)
-        cov = np.zeros((h, w), np.float32)
-        for k in members:
-            fx, fy = ev.dense(A[k], L[k])
-            acc += ev.warp(V[idx[k]], fx, fy)
-            cov += ev.warp(O[idx[k]], fx, fy) >= 0.5
-        T = np.where(cov > 0, acc / np.maximum(cov, 1), 0).astype(np.float32)
-        tp = [[T[y0:y0 + patch, x0:x0 + patch] for x0 in xs] for y0 in ys]
+        if gpu is None:
+            acc = np.zeros((h, w), np.float32)
+            cov = np.zeros((h, w), np.float32)
+            for k in members:
+                fx, fy = ev.dense(A[k], L[k])
+                acc += ev.warp(V[idx[k]], fx, fy)
+                cov += ev.warp(O[idx[k]], fx, fy) >= 0.5
+            T = np.where(cov > 0, acc / np.maximum(cov, 1), 0).astype(np.float32)
+            tp = [[T[y0:y0 + patch, x0:x0 + patch] for x0 in xs] for y0 in ys]
+        else:
+            # every frame's patches at once: each frame is measured against the
+            # same template with its field from the previous iteration, so
+            # measuring them before any is updated changes nothing
+            T, _ = gpu_stages.template(gpu, maps, align, idx[members])
+            measured = gpu_stages.patch_shifts(gpu, maps, align, idx, T, patch, stride, (R, C), np_)
 
         changes, confs = np.zeros(m), []
+        updates = []
         for k in range(m):
-            a = aligned(k, V[idx[k]])
-            rdx = np.full((R, C), np.nan, np.float32)
-            rdy = np.full((R, C), np.nan, np.float32)
-            wts = np.zeros((R, C), np.float32)
-            for r, y0 in enumerate(ys):
-                for c, x0 in enumerate(xs):
-                    ap = a[y0:y0 + patch, x0:x0 + patch]
-                    if tp[r][c].max() <= 0 or ap.max() <= 0:
-                        continue
-                    # copies inside: phaseCorrelate windows its inputs in place,
-                    # which would erode the shared template patch frame by frame
-                    (ddx, ddy), resp = phase_correlate(tp[r][c], ap, win)
-                    if (resp >= np_.patch_min_response and abs(ddx) < patch / 4
-                            and abs(ddy) < patch / 4):
-                        rdx[r, c], rdy[r, c], wts[r, c] = ddx, ddy, resp
+            if gpu is None:
+                rdx, rdy, wts = _patch_shifts(aligned(k, V[idx[k]]), tp, ys, xs, patch, win, np_)
+            else:
+                rdx, rdy, wts = (a[k] for a in measured)
             valid = wts > 0
             confs.append(float(np.median(wts[valid])) if valid.any() else 0.0)
             if valid.sum() < np_.min_patches:
@@ -306,9 +338,15 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
             ly[~valid] = np.nan
             l_u = np.stack([np.nan_to_num(_nanmedian3(lx)),
                             np.nan_to_num(_nanmedian3(ly))], -1).astype(np.float32)
-            ufx, ufy = ev.dense(A_u, l_u)
-            changes[k] = float(np.sqrt(np.mean(ufx ** 2 + ufy ** 2)))
+            if gpu is None:
+                ufx, ufy = ev.dense(A_u, l_u)
+                changes[k] = float(np.sqrt(np.mean(ufx ** 2 + ufy ** 2)))
+            else:
+                updates.append((k, A_u, l_u))     # sized together, below
             A[k], L[k] = compose(A[k], L[k], A_u, l_u, NX, NY, grid)
+        if updates:
+            ks, a_u, l_u = zip(*updates)
+            changes[list(ks)] = gpu_stages.update_rms(gpu, fields, np.stack(a_u), np.stack(l_u))
         changes /= S
         p90 = float(np.percentile(changes, 90))
         history.append(round(p90, 4))
@@ -321,16 +359,20 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
             break
 
     # ---- reject frames that still disagree with the template -------------------
-    acc = np.zeros((h, w), np.float32)
-    cov = np.zeros((h, w), np.float32)
-    for k in range(m):
-        fx, fy = ev.dense(A[k], L[k])
-        acc += ev.warp(V[idx[k]], fx, fy)
-        cov += ev.warp(O[idx[k]], fx, fy) >= 0.5
-    T = np.where(cov > 0, acc / np.maximum(cov, 1), 0)
-    region = cov >= 0.5 * m
-    ncc = np.array([np.corrcoef(aligned(k, V[idx[k]])[region], T[region])[0, 1]
-                    for k in range(m)])
+    if gpu is None:
+        acc = np.zeros((h, w), np.float32)
+        cov = np.zeros((h, w), np.float32)
+        for k in range(m):
+            fx, fy = ev.dense(A[k], L[k])
+            acc += ev.warp(V[idx[k]], fx, fy)
+            cov += ev.warp(O[idx[k]], fx, fy) >= 0.5
+        T = np.where(cov > 0, acc / np.maximum(cov, 1), 0)
+        region = cov >= 0.5 * m
+        ncc = np.array([np.corrcoef(aligned(k, V[idx[k]])[region], T[region])[0, 1]
+                        for k in range(m)])
+    else:
+        T, cov = gpu_stages.template(gpu, maps, align, idx)
+        ncc = gpu_stages.template_ncc(gpu, maps, align, idx, T, cov >= 0.5 * m)
     ncc = np.nan_to_num(ncc)
     z = robust_z(ncc)
     keep = ~((z < np_.reject_z) & (ncc < np.median(ncc) - np_.reject_ncc_drop))
@@ -339,11 +381,10 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
         f"rejected {int((~keep).sum())} of {m}")
     if used.size < params.min_frames:
         return _write_skip(out_dir, rec_t, f"only {used.size} frames agreed with the "
-                           f"non-rigid template", params, np_, started)
+                           f"non-rigid template", params, np_, started, gpu)
 
     # ---- metrics on the vessel masks, same as translation ----------------------
     t0 = time.time()
-    row_of = {int(i): k for k, i in enumerate(idx)}
     cache = {}
 
     def warp_ws(img, i):
@@ -352,19 +393,33 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
             cache["k"], cache["f"] = k, ev.dense(A[k], L[k])
         return ev.warp(img, *cache["f"])
 
-    before, _ = mask_consensus(M, traj_ws, used, params, aligned=False, O=O)
-    tr_after, _ = mask_consensus(M, traj_ws, used, params, aligned=True, O=O)
-    after, consensus = mask_consensus(M, traj_ws, used, params, aligned=True, O=O, warp=warp_ws)
-    residual = residual_motion(V, traj_ws, used, S, params, warp=warp_ws)
-    t_acc = np.zeros((h, w), np.float32)
-    t_cov = np.zeros((h, w), np.float32)
-    for i in used:
-        t_acc += warp_ws(V[i], i)
-        t_cov += warp_ws(O[i], i)
-    template_v = np.where(t_cov > 0, t_acc / np.maximum(t_cov, 1e-6), 0).astype(np.float32)
-    rotation = rotation_diagnostic(V, traj_ws, template_v, used, S, params, warp=warp_ws)
-    spread_tr = tile_spread(V, used, lambda img, i: shift(img, traj_ws[i]), np_.tile_grid, S)
-    spread_nr = tile_spread(V, used, warp_ws, np_.tile_grid, S)
+    if gpu is None:
+        before, _ = mask_consensus(M, traj_ws, used, params, aligned=False, O=O)
+        tr_after, _ = mask_consensus(M, traj_ws, used, params, aligned=True, O=O)
+        after, consensus = mask_consensus(M, traj_ws, used, params, aligned=True, O=O,
+                                          warp=warp_ws)
+        residual = residual_motion(V, traj_ws, used, S, params, warp=warp_ws)
+        t_acc = np.zeros((h, w), np.float32)
+        t_cov = np.zeros((h, w), np.float32)
+        for i in used:
+            t_acc += warp_ws(V[i], i)
+            t_cov += warp_ws(O[i], i)
+        template_v = np.where(t_cov > 0, t_acc / np.maximum(t_cov, 1e-6), 0).astype(np.float32)
+        rotation = rotation_diagnostic(V, traj_ws, template_v, used, S, params, warp=warp_ws)
+        spread_tr = tile_spread(V, used, lambda img, i: shift(img, traj_ws[i]), np_.tile_grid, S)
+        spread_nr = tile_spread(V, used, warp_ws, np_.tile_grid, S)
+    else:
+        by_shift = gpu_stages.ShiftWarp(gpu, traj_ws)
+        before, _ = gpu_stages.mask_consensus(gpu, maps, used, params, aligned=False)
+        tr_after, _ = gpu_stages.mask_consensus(gpu, maps, used, params, aligned=True,
+                                                warp=by_shift)
+        after, consensus = gpu_stages.mask_consensus(gpu, maps, used, params, aligned=True,
+                                                     warp=align)
+        residual = gpu_stages.residual_motion(gpu, maps, used, S, params, align)
+        template_v = gpu_stages.observed_template(gpu, maps, align, used)
+        rotation = gpu_stages.rotation_diagnostic(gpu, maps, template_v, used, S, params, align)
+        spread_tr = gpu_stages.tile_spread(gpu, maps, used, by_shift, np_.tile_grid, S)
+        spread_nr = gpu_stages.tile_spread(gpu, maps, used, align, np_.tile_grid, S)
     log(f"  metrics: vessel overlap {before['overlap']:.3f} -> translation {tr_after['overlap']:.3f} "
         f"-> non-rigid {after['overlap']:.3f} (same {used.size} frames) ({time.time() - t0:.0f}s)")
     if spread_nr is not None:
@@ -377,19 +432,23 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
     H, W = burst.height, burst.width
     evf = FieldEvaluator((H, W), grid_full)
     fs = burst.full_scale
-    raw_sum = np.zeros((H, W))
-    st_sum = np.zeros((H, W))
-    st_sq = np.zeros((H, W))
-    cover = np.zeros((H, W))
-    for k in np.flatnonzero(keep):
-        img = read_frame(burst.files[idx[k]]).astype(np.float32)
-        raw_sum += img
-        fx, fy = evf.dense(A_full[k], L_full[k])
-        wimg = evf.warp(img, fx, fy).astype(np.float64)
-        seen = evf.warp((~glare_mask(img, fs, params, 1.0)).astype(np.float32), fx, fy) >= 0.5
-        st_sum += wimg * seen
-        st_sq += wimg * wimg * seen
-        cover += seen
+    if gpu is None:
+        raw_sum = np.zeros((H, W))
+        st_sum = np.zeros((H, W))
+        st_sq = np.zeros((H, W))
+        cover = np.zeros((H, W))
+        for k in np.flatnonzero(keep):
+            img = read_frame(burst.files[idx[k]]).astype(np.float32)
+            raw_sum += img
+            fx, fy = evf.dense(A_full[k], L_full[k])
+            wimg = evf.warp(img, fx, fy).astype(np.float64)
+            seen = evf.warp((~glare_mask(img, fs, params, 1.0)).astype(np.float32), fx, fy) >= 0.5
+            st_sum += wimg * seen
+            st_sq += wimg * wimg * seen
+            cover += seen
+    else:
+        full = gpu_stages.FieldWarp(gpu.fields((H, W), grid_full), A_full, L_full, row_of)
+        raw_sum, st_sum, st_sq, cover = gpu_stages.projections(gpu, burst, used, full, params)
     nk = used.size
     valid = cover >= params.coverage_min_fraction * nk
     mean_raw = (raw_sum / nk).astype(np.float32)
@@ -447,7 +506,7 @@ def _refine(burst, rec_t, tr_dir, work_dir, out_dir, params, np_, log, started):
                 "nonrigid": None if spread_nr is None else float(spread_nr.max())},
         },
     }
-    record["processing"].update(_processing(params, np_, started))
+    record["processing"].update(_processing(params, np_, started, gpu))
     with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2)
     registered = np.zeros(n, bool)
@@ -475,7 +534,8 @@ def _write_transforms(out_dir, rows, used_set, ncc_of):
             wr.writerow(out)
 
 
-def _fallback(burst, rec_t, tr_dir, out_dir, idx, traj_px, params, np_, started, reason, log):
+def _fallback(burst, rec_t, tr_dir, out_dir, idx, traj_px, params, np_, started, reason, log,
+              gpu=None):
     """Frames too short for a patch grid: the result IS the translation result,
     stored in the non-rigid layout so every consumer reads it the same way."""
     log(f"  falling back to translation: {reason}")
@@ -493,7 +553,7 @@ def _fallback(burst, rec_t, tr_dir, out_dir, idx, traj_px, params, np_, started,
     record.update({"method": METHOD, "experimental": True})
     record["diagnostics"]["nonrigid"] = {"model": "translation (fallback)",
                                          "fallback_reason": reason}
-    record["processing"].update(_processing(params, np_, started))
+    record["processing"].update(_processing(params, np_, started, gpu))
     with open(os.path.join(out_dir, "metrics.json"), "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2)
     return record
