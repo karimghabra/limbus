@@ -189,8 +189,18 @@ def check_install(dest, version, desktop):
     runtime, app = os.path.join(dest, "runtime"), os.path.join(dest, "app")
     for rel in (r"runtime\python.exe", r"runtime\pythonw.exe", r"runtime\msvcp140.dll",
                 r"app\camera_recorder.py", r"app\assets\limbus.ico", r"app\e2e\app_scenarios.py",
-                r"app\analysis\stabilize\__main__.py", r"app\vesselmap\__init__.py", "unins000.exe"):
+                r"app\analysis\stabilize\__main__.py", r"app\vesselmap\__init__.py", "unins000.exe",
+                r"licenses\GPL-3.0.txt"):
         check(os.path.isfile(os.path.join(dest, rel)), f"installed {rel}")
+    try:
+        with open(os.path.join(dest, "THIRD-PARTY-NOTICES.txt"), encoding="utf-8") as f:
+            notices = f.read()
+    except OSError:
+        notices = ""
+    # the copyleft components' licenses travel with them, with their sources
+    check(all(s in notices for s in ("PyQt5", "pypi.org/project/PyQt5/", "Qt ", "download.qt.io",
+                                     "FFmpeg", "ffmpeg.org/releases/")),
+          "THIRD-PARTY-NOTICES.txt names PyQt5, Qt and FFmpeg and where their source is")
     try:
         with open(os.path.join(app, "build_info.json"), encoding="utf-8") as f:
             info = json.load(f)
