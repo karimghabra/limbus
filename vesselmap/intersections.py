@@ -16,7 +16,9 @@ and, where two arms are close in angle, each one's vessel traced back to
 the candidate (approach: a neighbour running past alongside is not an arm).
 Vessels crossing at a small angle lie on top of each other for a stretch
 whose two ends each look like a fork; such pairs become one crossing
-(pair_ys).
+(pair_ys).  With every vessel traced (detect(..., trace=True)), the
+junctions the traces find are added, and a detection is kept only where at
+least three of its arms are traced vessels reaching it (tracing.arm_support).
 """
 from __future__ import annotations
 
@@ -368,7 +370,7 @@ def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, nea
 
 def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALES,
            min_ratio=0.0, reach=20.0, texture=True, pair_deg=50.0, pair_len=60.0, trace=False,
-           trace_valid=None):
+           trace_valid=None, min_traced=3):
     """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind),
     with parts and span where it is a shallow crossing (pair_ys).
     Candidates are local maxima of the junction z above z_junction where
@@ -379,7 +381,9 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
     apart joined (none if 0).  texture: arms must stand out of the texture
     as well as the sensor noise.  trace: add the crossings that tracing
     every vessel finds and these do not (tracing.combine; traces stay
-    within trace_valid, by default valid)."""
+    within trace_valid, by default valid), then keep only those at least
+    min_traced of whose arms are traced vessels reaching the point
+    (tracing.arm_support; 0: keep all)."""
     J, Js, R, Th, Ts, Q = maps(logI, valid, scales)
     if sigma is None:
         sigma = np.full(np.shape(logI), 1.4826 * float(np.median(np.abs(np.diff(logI, axis=1)))) / math.sqrt(2))
@@ -409,6 +413,8 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
         traces = tracing.trace_all(U, vt, S)
         del U
         out = tracing.combine(out, traces, tracing.trace_events(traces), D)
+        if min_traced:
+            out = [d for d in out if tracing.arm_support(d["xy"], d["arms"], traces) >= min_traced]
     return out
 
 

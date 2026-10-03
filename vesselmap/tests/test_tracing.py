@@ -57,3 +57,27 @@ def test_a_capillary_through_a_blurred_vessel_is_one_crossing():
     p = t["ambiguous"][0]
     near = [j for j in added if np.linalg.norm(j["xy"] - p) <= 4.0 + 4.0]
     assert any("pass" in j["events"] and j["kind"] == "crossing" for j in near), [(j["xy"] - p, j["events"]) for j in added]
+
+
+def _line(p0, p1, w=1.0):
+    p0, p1 = np.asarray(p0, float), np.asarray(p1, float)
+    n = int(np.linalg.norm(p1 - p0)) + 1
+    return dict(xy=p0 + np.linspace(0.0, 1.0, n)[:, None] * (p1 - p0), w=np.full(n, w))
+
+
+def test_an_arm_counts_only_where_a_traced_vessel_reaches_the_point():
+    """On a lone traced vessel, a third arm with no trace along it (a streak
+    of texture) is not a vessel, nor is a neighbour whose trace runs past 8
+    px away; a branch whose trace stops 5 px short is, and so is one cut
+    back 15 px short whose line runs on through the point, but not one
+    whose line misses it by 6 px.  Each traced direction matches one arm."""
+    import math
+    p = np.array([50.0, 50.0])
+    host = _line([10, 50], [90, 50])
+    up = -math.pi / 2
+    assert T.arm_support(p, [0.0, math.pi, up], [host]) == 2
+    assert T.arm_support(p, [0.0, math.pi, -0.38], [host, _line([10, 42], [90, 42])]) == 2
+    assert T.arm_support(p, [0.0, math.pi, up], [host, _line([50, 5], [50, 45])]) == 3
+    assert T.arm_support(p, [0.0, math.pi, up], [host, _line([50, 0], [50, 35])]) == 3
+    assert T.arm_support(p, [0.0, math.pi, up], [host, _line([56, 0], [56, 35])]) == 2
+    assert T.arm_support(p, [0.0, 0.2, math.pi], [host]) == 2

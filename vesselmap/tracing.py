@@ -22,6 +22,11 @@ end, and junctions are read off where traces meet:
   vessel passing through another at a small angle, or a thin one through a
   thick or blurred one, which no trace follows across;
 * touching and parting on the same side: a kiss, not a junction.
+
+Any junction, found here or by intersections.detect, is kept only where at
+least three of its arms are traced vessels that reach it (arm_support): a
+streak of texture is not traced, and a neighbour running alongside passes
+by.
 """
 from __future__ import annotations
 
@@ -441,6 +446,56 @@ def junctions(traces, events, D, merge=6.0, sep_deg=15.0, min_overlap=0.72, host
             out.append(dict(xy=c, arms=arms, kind=classify(arms), scale=2.0, z=0.0,
                             width=max(w for _, w in g), events=sorted({e["kind"] for e, _ in g})))
     return out
+
+
+def arm_support(p, arms, traces, near=3.0, per_w=1.2, end_slack=4.0, reach=15.0, out_r=12.0,
+                tol_deg=25.0, aim_gap=20.0, aim_lat=2.0):
+    """How many of the arms (rad) at p are traced vessels, matched one to
+    one within tol_deg.  A trace reaches p when it comes within near +
+    per_w x its width of it (end_slack px more where it ends there: a
+    branch's trace stops a few px short of its host), or when it stops
+    short within aim_gap px and its line carried on passes within aim_lat
+    + per_w x its width (at a shallow crossing the second vessel's trace is
+    cut back where it merges into the first's; a capillary's pieces stop at
+    a blurred vessel's edge).  It leaves p each way it goes on to at least
+    reach px from p, in the direction of its first point out_r px out.  A
+    streak of texture is not traced, and a neighbour running alongside
+    passes by instead of reaching p."""
+    from .intersections import _angdiff
+    p = np.asarray(p, float)
+    dirs = []
+
+    def leave(seq):
+        r = np.linalg.norm(seq - p, axis=1)
+        far = np.flatnonzero(r >= out_r)
+        if len(far) and r.max() >= reach:
+            q = seq[far[0]] - p
+            dirs.append(math.atan2(q[1], q[0]))
+
+    for t in traces:
+        xy = t["xy"]
+        if (xy.min(0) > p + aim_gap + 1.0).any() or (xy.max(0) < p - aim_gap - 1.0).any():
+            continue
+        d = np.linalg.norm(xy - p, axis=1)
+        i = int(np.argmin(d))
+        if d[i] <= near + per_w * t["w"][i] + (end_slack if i in (0, len(xy) - 1) else 0.0):
+            leave(xy[i:])
+            leave(xy[i::-1])
+            continue
+        for which in (0, 1):
+            e, u = _end(t, which, back=8.0)
+            v = p - e
+            w = t["w"][0 if which == 0 else -1]
+            if float(v @ u) > 0 and np.linalg.norm(v) <= aim_gap and \
+                    abs(float(v[0] * u[1] - v[1] * u[0])) <= aim_lat + per_w * w:
+                leave(xy if which == 0 else xy[::-1])
+    pairs = sorted((_angdiff(a, b), i, j) for i, a in enumerate(arms) for j, b in enumerate(dirs))
+    used_a, used_d = set(), set()
+    for dd, i, j in pairs:
+        if dd <= math.radians(tol_deg) and i not in used_a and j not in used_d:
+            used_a.add(i)
+            used_d.add(j)
+    return len(used_a)
 
 
 def combine(dets, traces, events, D, merge=8.0, cross_clear=20.0, **jkw):

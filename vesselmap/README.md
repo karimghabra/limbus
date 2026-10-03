@@ -556,6 +556,43 @@ from a fork fairly well: a straight pair of arms of equal width (the vessel
 a branch ends on) is found at 28 of 29 Ts and 12 of 60 forks (mostly those
 whose thick child carries straight on).
 
+Last, every detection must have at least three arms that are traced vessels
+reaching it (`tracing.arm_support`, `detect(..., min_traced=3)`). A trace
+reaches the point when:
+* it comes within 3 px plus 1.2 times its width (4 px more where it ends
+  there: a branch's trace stops a little short of its host); or
+* it stops at most 20 px short and its line, carried on, passes within 2 px
+  plus 1.2 times its width. At a shallow crossing the second vessel's trace
+  is cut back where it merges into the first's, and a capillary's pieces
+  stop at a blurred vessel's edge.
+
+The trace must also go on to at least 15 px from the point. Its directions
+are matched to the arms one to one within 25 degrees.
+
+A streak of texture is not traced, and a neighbour running alongside passes
+by rather than reaching the point. On seeds 0, 10 and 20 (where the limits
+were chosen) this keeps 190, 187 and 187 of 203 with 8, 11 and 11 false
+detections, from 192, 189 and 192 with 16, 33 and 28. On seeds 30, 40 and 50
+it keeps 187, 189 and 187 with 16, 10 and 12, from 189, 191 and 190 with 27,
+23 and 19. The arms are unchanged: recall 0.99, precision 1.00, all right at
+96-98 % of found intersections.
+
+Gone, as measured against the true centrelines on seeds 0, 10 and 20:
+* all 15 detections on a lone vessel whose third arm was texture;
+* 9 of 13 where a neighbour alongside was taken for an arm;
+* the thick kissing pairs and hairpin turns.
+
+Left:
+* thin kissing pairs whose lumens touch (13);
+* extra or off-centre detections at shallow and thick crossings and weaves
+  (13, and 3 more at the far ends of a thick 10-degree crossing's overlap).
+
+Lost are crossings the tracer does not follow:
+* a tightly twisted thin pair, whose traces break into pieces;
+* the faintest capillaries under a blurred vessel, which are not traced;
+* thin vessels crossing at 10-20 degrees, where the second vessel's trace
+  stops too far short.
+
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected
 component, from wide to narrow, with BFS depth breaking ties. Every edge
