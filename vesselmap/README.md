@@ -582,7 +582,7 @@ Gone, as measured against the true centrelines on seeds 0, 10 and 20:
 * 9 of 13 where a neighbour alongside was taken for an arm;
 * the thick kissing pairs and hairpin turns.
 
-Left:
+Left after this step:
 * thin kissing pairs whose lumens touch (13);
 * extra or off-centre detections at shallow and thick crossings and weaves
   (13, and 3 more at the far ends of a thick 10-degree crossing's overlap).
@@ -592,6 +592,49 @@ Lost are crossings the tracer does not follow:
 * the faintest capillaries under a blurred vessel, which are not traced;
 * thin vessels crossing at 10-20 degrees, where the second vessel's trace
   stops too far short.
+
+Then the detections are made one junction per overlap region
+(`tracing.one_per_region`, `detect(..., regions=True)`). The traced vessels
+are tubes (`tracing.vessels`): each trace; the two pieces of a vessel
+passing through another, joined across it; and each free end carried on
+20 px (a trace cut back short of a crossing).
+
+Two detections up to 60 px apart are one junction when two vessels both
+reach them and the segment between them runs inside both lumens (1.2 times
+the width plus 1 px). The two vessels then lie on top of each other all the
+way, as at the middle and the two fork-shaped ends of a shallow or thick
+crossing. Two crossings of the same vessels with a gap between them stay
+two, and so does a vessel crossing a bifurcation's branch just past it.
+
+The junction keeps the detection with the most traced arms, and its arms.
+It is moved to where the traced centrelines of two of its vessels cross,
+if that point is within 25 px and the segment to it from one of its
+detections runs inside both lumens. A lone detection at one end of an
+overlap, off centre, is moved there too. A point is never moved onto a
+carried-on end: a branch's trace, carried on, can cross its host away from
+where the branch meets it. Junctions the traces placed themselves stay
+where they are.
+
+| Seeds | Before (found / false) | After (found / false) |
+|---|---|---|
+| 0, 10, 20 | 190 / 8, 187 / 11, 187 / 11 | 190 / 7, 189 / 5, 190 / 6 |
+| 30, 40, 50 | 187 / 16, 189 / 10, 187 / 12 | 192 / 7, 190 / 6, 189 / 6 |
+
+All out of 203. In all, 1127 found with 68 false become 1140 with 37, and
+no junction found before is lost. Arm recall stays 0.99 and precision 1.00.
+All arms right falls slightly, to 95-97 % per seed: a newly found crossing keeps the
+three arms of the fork-shaped end it was detected at. Arms recomputed from
+the traces at the moved point were worse (precision 0.98, all right 91 %).
+The result hardly changes with the limits: 0.5-2 px of lumen slack, a
+15-40 px placement radius and a 60 or 90 px merge length move the false
+count by at most one.
+
+Left on the six seeds (37):
+* thin kissing pairs whose lumens touch (19);
+* the far ends of a thick 10-degree crossing (8), whose second vessel is
+  traced in two pieces too far apart to be joined across the first;
+* a few off-centre or extra detections at shallow crossings, parallel
+  pairs, a thick bifurcation and a thick T (10).
 
 **Direction.** Flow cannot be seen in a still image. Edges are oriented by a
 structural convention: away from the widest vessel of each connected

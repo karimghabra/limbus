@@ -370,7 +370,7 @@ def continuations(D, sig, p, r0, r1, arms, window_deg=12.0, frac=0.4, z=3.0, nea
 
 def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALES,
            min_ratio=0.0, reach=20.0, texture=True, pair_deg=50.0, pair_len=60.0, trace=False,
-           trace_valid=None, min_traced=3):
+           trace_valid=None, min_traced=3, regions=True):
     """Intersections: list of dict(xy, scale, z, arms (angles, rad), kind),
     with parts and span where it is a shallow crossing (pair_ys).
     Candidates are local maxima of the junction z above z_junction where
@@ -383,7 +383,9 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
     every vessel finds and these do not (tracing.combine; traces stay
     within trace_valid, by default valid), then keep only those at least
     min_traced of whose arms are traced vessels reaching the point
-    (tracing.arm_support; 0: keep all)."""
+    (tracing.arm_support; 0: keep all), and with regions, make the
+    detections where two traced vessels overlap over a stretch one
+    junction, where their centrelines cross (tracing.one_per_region)."""
     J, Js, R, Th, Ts, Q = maps(logI, valid, scales)
     if sigma is None:
         sigma = np.full(np.shape(logI), 1.4826 * float(np.median(np.abs(np.diff(logI, axis=1)))) / math.sqrt(2))
@@ -412,9 +414,12 @@ def detect(logI, sigma=None, valid=None, z_junction=4.0, z_arm=4.0, scales=SCALE
         U, S = tracing.orientation_score(logI, valid)
         traces = tracing.trace_all(U, vt, S)
         del U
-        out = tracing.combine(out, traces, tracing.trace_events(traces), D)
+        events = tracing.trace_events(traces)
+        out = tracing.combine(out, traces, events, D)
         if min_traced:
             out = [d for d in out if tracing.arm_support(d["xy"], d["arms"], traces) >= min_traced]
+        if regions:
+            out = tracing.one_per_region(out, traces, events)
     return out
 
 

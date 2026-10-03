@@ -26,10 +26,13 @@ end, and junctions are read off where traces meet:
 Any junction, found here or by intersections.detect, is kept only where at
 least three of its arms are traced vessels that reach it (arm_support): a
 streak of texture is not traced, and a neighbour running alongside passes
-by.
+by.  Where vessels overlap over a stretch (a shallow or thick crossing),
+the detections there become one junction, placed where their traced
+centrelines cross (one_per_region).
 """
 from __future__ import annotations
 
+import collections
 import math
 
 import cv2
@@ -513,4 +516,160 @@ def combine(dets, traces, events, D, merge=8.0, cross_clear=20.0, **jkw):
             out.append(j)
         elif "cross" in j["events"] and j["kind"] == "crossing" and far(cross_clear):
             out.append(j)
+    return out
+
+
+# ---------------------------------------------------------------- overlap regions
+def vessels(traces, events, near=3.0, per_w=1.2, end_slack=4.0, aim_gap=20.0, aim_lat=2.0,
+            lumen_w=1.2, slack=1.0):
+    """The traced vessels as tubes: each trace, the two pieces of a vessel
+    passing through another ('pass', pair_ends) joined across it, and each
+    free end carried on aim_gap px along its direction (a trace cut back
+    short of a crossing).  A point lies on a vessel within the reach of
+    arm_support (near + per_w x width; end_slack more at an end; aim_lat +
+    per_w x width beside an end carried on), and inside its lumen within
+    lumen_w x width + slack (aim_lat + lumen_w x width beside an end carried
+    on).  Returns dict(pts, outer, inner, tree, reach, lines): lines are the
+    traced centrelines and joins, without the carried-on ends."""
+    n = len(traces)
+    par = list(range(n))
+
+    def find(i):
+        while par[i] != i:
+            par[i] = par[par[i]]
+            i = par[i]
+        return i
+    joins = []
+    for e in pair_ends(traces, events):
+        if e["kind"] == "pass":
+            par[find(e["a"])] = find(e["a2"])
+            A, B = traces[e["a"]], traces[e["a2"]]
+            joins.append((e["a"], A["xy"][e["ia"]], B["xy"][e["ia2"]], 0.5 * (A["w"][e["ia"]] + B["w"][e["ia2"]])))
+    groups = collections.defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+    out = []
+    for root, members in groups.items():
+        pts, outer, inner, lines = [], [], [], []
+        for i in members:
+            t = traces[i]
+            w = np.asarray(t["w"], float)
+            reach = near + per_w * w
+            reach[0] += end_slack
+            reach[-1] += end_slack
+            pts.append(t["xy"]); outer.append(reach); inner.append(lumen_w * w + slack); lines.append(t["xy"])
+            for which in (0, 1):
+                e, u = _end(t, which, back=8.0)
+                we = w[0 if which == 0 else -1]
+                ext = e + np.outer(np.arange(1.0, aim_gap + 1.0), u)
+                pts.append(ext)
+                outer.append(np.full(len(ext), aim_lat + per_w * we))
+                inner.append(np.full(len(ext), aim_lat + lumen_w * we))
+        for a, p1, p2, w in joins:
+            if find(a) == root:
+                b = p1 + np.linspace(0.0, 1.0, max(int(np.linalg.norm(p2 - p1) / 0.5), 1) + 1)[:, None] * (p2 - p1)
+                pts.append(b); outer.append(np.full(len(b), near + per_w * w))
+                inner.append(np.full(len(b), lumen_w * w + slack)); lines.append(b)
+        P = np.vstack(pts)
+        o = np.concatenate(outer)
+        out.append(dict(pts=P, outer=o, inner=np.concatenate(inner), tree=cKDTree(P),
+                        reach=float(max(o.max(), np.concatenate(inner).max())), lines=lines))
+    return out
+
+
+def _on(v, X, which="outer"):
+    """Which of the points X lie on vessel v (outer: within its reach;
+    inner: inside its lumen)."""
+    X = np.atleast_2d(X)
+    ok = np.zeros(len(X), bool)
+    tol = v[which]
+    for k, idx in enumerate(v["tree"].query_ball_point(X, v["reach"])):
+        if idx:
+            idx = np.asarray(idx)
+            ok[k] = bool((np.linalg.norm(v["pts"][idx] - X[k], axis=1) <= tol[idx]).any())
+    return ok
+
+
+def _crossings(A, B):
+    """The points where polylines A and B cross."""
+    out = []
+    a0, da = A[:-1], np.diff(A, axis=0)
+    for j in range(len(B) - 1):
+        b0, db = B[j], B[j + 1] - B[j]
+        den = da[:, 0] * db[1] - da[:, 1] * db[0]
+        ok = np.abs(den) > 1e-12
+        r = b0 - a0
+        dd = np.where(ok, den, 1.0)
+        t = (r[:, 0] * db[1] - r[:, 1] * db[0]) / dd
+        s = (r[:, 0] * da[:, 1] - r[:, 1] * da[:, 0]) / dd
+        hit = ok & (t >= 0) & (t <= 1) & (s >= 0) & (s <= 1)
+        out += list(a0[hit] + t[hit, None] * da[hit])
+    return out
+
+
+def _in_lumens(V, p, q, vs, step=1.0):
+    """The vessels among vs inside whose lumens the segment from p to q runs
+    (every point between them)."""
+    L = float(np.linalg.norm(q - p))
+    S = p + np.linspace(0.0, 1.0, max(int(L / step), 1) + 1)[:, None] * (q - p)
+    S = S[1:-1]
+    return {vi for vi in vs if not len(S) or _on(V[vi], S, "inner").all()}
+
+
+def one_per_region(dets, traces, events, max_len=60.0, place_r=25.0, **tube):
+    """One junction per overlap region.  Two detections up to max_len px
+    apart are one junction when two traced vessels (vessels) both reach
+    them and the segment between them runs inside both lumens: the two
+    vessels stay on top of each other all the way (a shallow or thick
+    crossing seen at its ends and middle).  Two crossings of the same
+    vessels with a gap between them stay two.  Each junction keeps the
+    detection with the most traced arms (arm_support), moved to where the
+    traced centrelines of two of its vessels cross, within place_r px and
+    inside both lumens from one of its detections (a lone detection off
+    centre at one end of an overlap is moved too).  Junctions from traces
+    alone are already where their traces meet, and stay."""
+    V = vessels(traces, events, **tube)
+    P = [np.asarray(d["xy"], float) for d in dets]
+    on = [{vi for vi, v in enumerate(V) if _on(v, p)[0]} for p in P]
+    n = len(dets)
+    par = list(range(n))
+
+    def find(i):
+        while par[i] != i:
+            par[i] = par[par[i]]
+            i = par[i]
+        return i
+    for i in range(n):
+        for j in range(i + 1, n):
+            shared = on[i] & on[j]
+            if len(shared) >= 2 and np.linalg.norm(P[j] - P[i]) <= max_len and \
+                    len(_in_lumens(V, P[i], P[j], shared)) >= 2:
+                par[find(i)] = find(j)
+    groups = collections.defaultdict(list)
+    for i in range(n):
+        groups[find(i)].append(i)
+    out = []
+    for g in groups.values():
+        best = max(g, key=lambda i: (arm_support(P[i], dets[i]["arms"], traces), len(dets[i]["arms"]),
+                                     dets[i].get("z", 0.0)))
+        d = dict(dets[best])
+        if len(g) > 1:
+            d["members"] = [P[i] for i in g]
+        elif "events" in d:
+            out.append(d)
+            continue
+        c = np.mean([P[i] for i in g], 0)
+        vs = sorted(set.intersection(*[on[i] for i in g]))
+        cand = []
+        for a in range(len(vs)):
+            for b in range(a + 1, len(vs)):
+                for la in V[vs[a]]["lines"]:
+                    for lb in V[vs[b]]["lines"]:
+                        for x in _crossings(la, lb):
+                            if np.linalg.norm(x - c) <= place_r and \
+                                    any(len(_in_lumens(V, P[i], x, {vs[a], vs[b]})) == 2 for i in g):
+                                cand.append(x)
+        if cand:
+            d["xy"] = min(cand, key=lambda x: float(np.linalg.norm(x - c)))
+        out.append(d)
     return out

@@ -81,3 +81,39 @@ def test_an_arm_counts_only_where_a_traced_vessel_reaches_the_point():
     assert T.arm_support(p, [0.0, math.pi, up], [host, _line([50, 0], [50, 35])]) == 3
     assert T.arm_support(p, [0.0, math.pi, up], [host, _line([56, 0], [56, 35])]) == 2
     assert T.arm_support(p, [0.0, 0.2, math.pi], [host]) == 2
+
+
+def _det(xy, arms, **kw):
+    return dict(xy=np.asarray(xy, float), arms=list(arms), z=1.0, **kw)
+
+
+def test_the_ends_of_a_shallow_overlap_are_one_junction_where_the_centrelines_cross():
+    """Two traced vessels crossing at 10 degrees lie on top of each other
+    for a stretch; detections at its two ends (each looks like a fork) are
+    one junction, placed where the centrelines cross.  A lone detection at
+    one end is moved there too, unless the traces placed it themselves."""
+    import math
+    a = _line([0, 50], [100, 50])
+    b = _line([0, 50 - 50 * math.tan(math.radians(10))], [100, 50 + 50 * math.tan(math.radians(10))])
+    y_end = _det([40, 49.1], [0.1, math.pi, math.pi + 0.1])
+    other = _det([60, 50.9], [0.0, 0.1, math.pi + 0.1])
+    out = T.one_per_region([y_end, other], [a, b], [])
+    assert len(out) == 1 and np.linalg.norm(out[0]["xy"] - [50, 50]) < 0.5, [d["xy"] for d in out]
+    out = T.one_per_region([y_end], [a, b], [])
+    assert np.linalg.norm(out[0]["xy"] - [50, 50]) < 0.5
+    out = T.one_per_region([dict(y_end, events=["pass"])], [a, b], [])
+    assert np.allclose(out[0]["xy"], y_end["xy"])
+
+
+def test_two_crossings_of_the_same_vessels_with_a_gap_between_stay_two():
+    """A vessel winding across another crosses it twice, 40 px apart, and
+    runs 9 px clear of it between: two junctions, each where it was."""
+    import math
+    a = _line([0, 50], [100, 50])
+    pts = [(10, 60), (30, 50), (50, 40), (70, 50), (90, 60)]
+    xy = np.vstack([_line(p, q)["xy"][:-1] for p, q in zip(pts[:-1], pts[1:])] + [np.array([pts[-1]], float)])
+    b = dict(xy=xy, w=np.ones(len(xy)))
+    dets = [_det([30, 50], [0.0, math.pi, 2.68, 5.82]), _det([70, 50], [0.0, math.pi, 0.46, 3.6])]
+    out = T.one_per_region(dets, [a, b], [])
+    assert len(out) == 2
+    assert sorted(round(float(d["xy"][0])) for d in out) == [30, 70]
