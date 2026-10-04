@@ -6,6 +6,10 @@ starts from `claude/consolidation-energy-search`, which holds the latest `vessel
 structure zoo, intersection detector and tracer. It does not include main's newer app and installer commits.
 Merge main when convenient; `vesselnet/` will not conflict.
 
+`vesselnet/` is mirrored in vesselscene on its branch `claude/vesselnet-plan`, adapted to start from there. Pick
+one home for the code and the results log at the start of iteration 0 (§10) and keep only a pointer in the
+other, so they cannot drift apart.
+
 The pilot that motivates the plan is in `vesselnet/pilot/`. Its results are in `vesselnet/RESULTS.md` (entry 0)
 and summarised in §9.
 
@@ -486,3 +490,5 @@ Lessons:
 - **Numeric acceptance targets** for iterations 1–3, set from iteration 0's baselines.
 - **Disk and time budget** for stages S2 and S3.
 - **When to merge main** into this branch.
+- **Which repository is home** for `vesselnet/`: LIMBUS, beside `vesselmap` that the optimisation uses
+  (recommended), or vesselscene, beside the generator. The other copy then keeps only a pointer.
