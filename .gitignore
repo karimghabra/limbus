@@ -17,3 +17,7 @@ __pycache__/
 stabilization/
 reference_data/burst_*/
 _work/
+
+# vesselnet: generated training scenes and training runs (regenerable)
+/data/
+/runs/
