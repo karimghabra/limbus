@@ -76,7 +76,7 @@ def build_report(run_dir: str, image: str, out: str, frames_dir: str | None = No
     summ = json.load(open(p("_summary.json")))["summary"]
     I = load_image(image)
     img_name = os.path.basename(image)
-    t = open(os.path.join(os.path.dirname(__file__), "report_template.html")).read()
+    t = open(os.path.join(os.path.dirname(__file__), "report_template.html"), encoding="utf-8").read()
     rep = {}
 
     # ---------------------------------------------------------------- header
@@ -239,7 +239,7 @@ def build_report(run_dir: str, image: str, out: str, frames_dir: str | None = No
     for key, val in rep.items():
         t = t.replace(key, val)
     path = os.path.join(out, "report.html")
-    with open(path, "w") as fh:
+    with open(path, "w", encoding="utf-8") as fh:
         fh.write('<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n'
                  '<meta name="viewport" content="width=device-width,initial-scale=1"></head><body>\n')
         fh.write(t)

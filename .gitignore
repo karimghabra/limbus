@@ -21,3 +21,7 @@ _work/
 # vesselnet: generated training scenes and training runs (regenerable)
 /data/
 /runs/
+
+# Installer builds (installer/build_bundle.py, installer/limbus.iss)
+build/
+dist/

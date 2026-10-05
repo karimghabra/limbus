@@ -1,0 +1,115 @@
+# Builds the Windows installer (installer/README.md), tests it end to end on
+# a clean runner (e2e/run_e2e.py: install, record, analyse, launch from the
+# Start menu, uninstall), and keeps it as a build artifact. A tag vX.Y.Z,
+# matching the VERSION file, also publishes it as a GitHub release.
+name: Windows installer
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    runs-on: windows-2025
+    timeout-minutes: 150
+    permissions:
+      contents: write            # the release, on a tag
+    env:
+      INNO_VERSION: "6.7.3"
+      INNO_SHA256: 9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v7
+
+      # only runs the build script and the test harness: the app gets a
+      # Python of its own (installer/build_bundle.py)
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+
+      - name: Version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $tag = "${{ github.ref_name }}".TrimStart("v")
+            if ($tag -ne $v) { throw "tag ${{ github.ref_name }} does not match VERSION $v" }
+          } else {
+            $v = "$v-dev.${{ github.run_number }}"
+          }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "Building LIMBUS $v"
+
+      - name: Cache downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~\AppData\Local\pip\Cache
+            build\cache
+          key: bundle-${{ hashFiles('installer/requirements.txt') }}
+          restore-keys: bundle-
+
+      - name: Install Inno Setup ${{ env.INNO_VERSION }}
+        shell: pwsh
+        run: |
+          $exe = "$env:RUNNER_TEMP\innosetup-$env:INNO_VERSION.exe"
+          $tag = "is-" + $env:INNO_VERSION.Replace(".", "_")
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/$tag/innosetup-$env:INNO_VERSION.exe" -OutFile $exe
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
+          if ($hash -ne $env:INNO_SHA256) { throw "Inno Setup download: SHA-256 $hash, expected $env:INNO_SHA256" }
+          Start-Process $exe -Wait -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CURRENTUSER', "/DIR=$env:RUNNER_TEMP\inno", '/NOICONS'
+          "$env:RUNNER_TEMP\inno" >> $env:GITHUB_PATH
+
+      - name: Build the app bundle
+        run: python installer/build_bundle.py --version ${{ steps.version.outputs.version }}
+
+      - name: Build the installer
+        run: iscc /Q /DAppVersion=${{ steps.version.outputs.version }} installer\limbus.iss
+
+      - name: Test the installer end to end
+        # (into a folder with a space in its path: the shortcuts must quote it)
+        run: python e2e/run_e2e.py --installer dist\LIMBUS-Setup-${{ steps.version.outputs.version }}.exe --work "${{ runner.temp }}\e2e" --dir "${{ runner.temp }}\e2e\Install Test\LIMBUS" --documents --desktop
+
+      - name: Keep the installer
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: LIMBUS-Setup-${{ steps.version.outputs.version }}
+          path: dist\LIMBUS-Setup-*.exe
+          if-no-files-found: ignore
+          compression-level: 0
+
+      - name: Keep the test report and screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-report-${{ steps.version.outputs.version }}
+          path: |
+            ${{ runner.temp }}\e2e\*.json
+            ${{ runner.temp }}\e2e\*.log
+            ${{ runner.temp }}\e2e\scenarios\screenshots
+          if-no-files-found: ignore
+
+      - name: Publish the release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $v = "${{ steps.version.outputs.version }}"
+          $notes = @"
+          Download **LIMBUS-Setup-$v.exe** and run it. It needs no administrator rights and installs everything the app uses, Python and ffmpeg included, so nothing else has to be installed. For a Basler camera, install Basler's pylon software (its USB driver) too.
+
+          Start **LIMBUS** from the Start menu. **LIMBUS Self-Test** checks the installation end to end, and the camera if one is plugged in. Recordings go to Documents\LIMBUS.
+
+          The installer includes third-party software under its own licenses, among them PyQt5 and FFmpeg (GNU GPL v3) and Qt (GNU LGPL v3). **THIRD-PARTY-NOTICES.txt**, below and in the install folder, lists each component, its license, and where to get the source code of the GPL and LGPL ones.
+          "@
+          gh release create "${{ github.ref_name }}" "dist\LIMBUS-Setup-$v.exe" "build\bundle\THIRD-PARTY-NOTICES.txt" --title "LIMBUS $v" --notes "$notes" --generate-notes

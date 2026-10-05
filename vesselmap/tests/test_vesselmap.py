@@ -325,7 +325,7 @@ def test_report_from_run_outputs(tmp_path):
     cv2.imwrite(str(tmp_path / "frame.png"), img)
     write_outputs(net, img.astype(np.float32) / 255, None, str(tmp_path / "run"))
     path = build_report(str(tmp_path / "run"), str(tmp_path / "frame.png"), str(tmp_path / "rep"))
-    page = open(path).read()
+    page = open(path, encoding="utf-8").read()
     assert "__" not in page.replace("__proto__", "")
     assert "h-frames" not in page                 # no frames given: no frames section
     for name in ("overlay_tier", "search_mask", "frame", "digraph"):
