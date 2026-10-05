@@ -3,12 +3,11 @@
 This plan is for a Claude Code session on a machine with an RTX 3080 (10 GB). It continues work done on CPU in
 this repository and in [vesselscene](https://github.com/karimghabra/vesselscene). Branch `claude/vesselnet-plan`
 starts from `claude/consolidation-energy-search`, which holds the latest `vesselmap`: renderer, energy search,
-structure zoo, intersection detector and tracer. It does not include main's newer app and installer commits.
-Merge main when convenient; `vesselnet/` will not conflict.
+structure zoo, intersection detector and tracer. Main (app, installer, GPU stabilization) was merged in at
+the start of iteration 0.
 
-`vesselnet/` is mirrored in vesselscene on its branch `claude/vesselnet-plan`, adapted to start from there. Pick
-one home for the code and the results log at the start of iteration 0 (§10) and keep only a pointer in the
-other, so they cannot drift apart.
+This repository is the single home of `vesselnet/`: code, plan and results log (decided at iteration 0, §10).
+vesselscene's branch `claude/vesselnet-plan` keeps only a pointer here.
 
 The pilot that motivates the plan is in `vesselnet/pilot/`. Its results are in `vesselnet/RESULTS.md` (entry 0)
 and summarised in §9.
@@ -490,5 +489,4 @@ Lessons:
 - **Numeric acceptance targets** for iterations 1–3, set from iteration 0's baselines.
 - **Disk and time budget** for stages S2 and S3.
 - **When to merge main** into this branch.
-- **Which repository is home** for `vesselnet/`: LIMBUS, beside `vesselmap` that the optimisation uses
-  (recommended), or vesselscene, beside the generator. The other copy then keeps only a pointer.
+- **Which repository is home** for `vesselnet/`: decided at iteration 0, LIMBUS. vesselscene keeps a pointer.

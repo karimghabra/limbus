@@ -7,6 +7,6 @@ the graph, and `vesselmap`'s render-and-residual optimisation finishes it.
 - [RESULTS.md](RESULTS.md): the results log, one entry per iteration.
 - [pilot/](pilot/): the CPU proof of concept.
 
-This folder is mirrored in [vesselscene](https://github.com/karimghabra/vesselscene) on its branch
-`claude/vesselnet-plan`. The work needs both repositories (PLAN.md §0). Choose one home for the code and results
-at the start of iteration 0, and keep only a pointer in the other.
+This folder is the only home of vesselnet's code and results. The work also needs
+[vesselscene](https://github.com/karimghabra/vesselscene) checked out beside this repository (PLAN.md §0); its
+`vesselnet/` folder is only a pointer here.
