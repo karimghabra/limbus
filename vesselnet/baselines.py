@@ -15,6 +15,8 @@ vesselmap  build_map -> refine_map -> consolidate_map -> search_map with default
            oracle's scale) and dE to the oracle after each stage, the architecture metrics of the
            consolidated and searched maps, as they are and split at their branch nodes (to_segments: the
            strict convention ends a vessel at every fork), and the time of each stage.
+rescore    the architecture metrics of the saved oracle and vesselmap maps again, with the complete truth's
+           visibility profiles (test scenes: full/complete_visibility_average.npz), to <out>/rescore.jsonl.
 detector   vesselmap.intersections.detect(trace=True) on the window: junction recall / precision against the
            observable junctions, and per-event recall (within 4 px + radius) at both granularities.  --set
            key=value overrides detect's arguments, plus width (darkness width, px); --grid tries a grid.
@@ -155,6 +157,37 @@ def cmd_vesselmap(a):
                            provenance=a.prov))
 
 
+def cmd_rescore(a):
+    """Architecture metrics of the saved oracle and vesselmap maps with the complete truth's visibility
+    profiles (test scenes keep them in full/): don't-care stretches are then neither rewarded nor penalised
+    in centreline precision.  Rows go to <out>/rescore.jsonl."""
+    from vesselscene.truth import load_profiles
+    path = os.path.join(a.out, "rescore.jsonl")
+    done = _done(path, lambda r: (r["seed"], tuple(r["window"]), r["map"]))
+    for seed, S, y0, x0 in _windows_of(a):
+        pf = os.path.join(S["folder"], "full", "complete_visibility_average.npz")
+        if not os.path.exists(pf):
+            print(f"s{seed}: no complete truth (full/), skipped", flush=True)
+            continue
+        I, P, truth, obs, js = _setup(S, y0, x0, a.size)
+        prof = M.window_prof(load_profiles(pf), y0, x0)
+        maps = {"oracle": os.path.join(a.out, "oracle", f"s{seed}_{y0}_{x0}_{a.size}_map.json")}
+        for st in ("map", "refine", "consolidate", "search"):
+            maps[f"vesselmap_{st}"] = os.path.join(a.out, "vesselmap_maps", f"s{seed}_{y0}_{x0}_{a.size}_{st}.json")
+        for name, mp in maps.items():
+            if not os.path.exists(mp) or (seed, (y0, x0, a.size), name) in done:
+                continue
+            n = VesselNetwork.load(mp)
+            row = dict(seed=seed, window=[y0, x0, a.size], map=name,
+                       arch=M.architecture(n, obs, js, truth, prof=prof),
+                       arch_segments=M.architecture(n.to_segments(), obs, js, truth, prof=prof),
+                       provenance=a.prov)
+            _append(path, row)
+            r = row["arch"]
+            print(f"s{seed} ({y0},{x0}) {name}: recall {r['centreline_recall']:.3f} precision "
+                  f"{r['centreline_precision']:.3f}, {r['n_edges']} edges", flush=True)
+
+
 DETECT_KEYS = ("z_junction", "z_arm", "min_ratio", "reach", "pair_deg", "pair_len", "min_traced", "width")
 
 
@@ -220,7 +253,7 @@ def cmd_detector(a):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("method", choices=("oracle", "vesselmap", "detector"))
+    ap.add_argument("method", choices=("oracle", "vesselmap", "detector", "rescore"))
     ap.add_argument("--data", default="data")
     ap.add_argument("--split", default="test", choices=tuple(D.SPLITS))
     ap.add_argument("--scenes", type=int, default=10)
@@ -237,7 +270,7 @@ def main():
         torch.set_num_threads(a.threads)
     os.makedirs(a.out, exist_ok=True)
     a.prov = D.provenance()
-    dict(oracle=cmd_oracle, vesselmap=cmd_vesselmap, detector=cmd_detector)[a.method](a)
+    dict(oracle=cmd_oracle, vesselmap=cmd_vesselmap, detector=cmd_detector, rescore=cmd_rescore)[a.method](a)
 
 
 if __name__ == "__main__":

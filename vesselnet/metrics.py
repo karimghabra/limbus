@@ -176,6 +176,12 @@ def window_truth(obs: dict, junctions: list, y0: int, x0: int, size: int) -> tup
     return o, js
 
 
+def window_prof(prof: dict, y0: int, x0: int) -> dict:
+    """The complete truth's per-sample visibility profiles (truth.load_profiles) in window coordinates
+    (score_tracing uses their positions and observable / don't-care flags)."""
+    return dict(prof, x_px=np.asarray(prof["x_px"]) - x0, y_px=np.asarray(prof["y_px"]) - y0)
+
+
 def architecture(net, obs: dict, junctions: list, truth_net=None, prof=None) -> dict:
     from vesselscene.truth import score_tracing
     nodes = branch_nodes(net)
