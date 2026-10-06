@@ -490,6 +490,71 @@ def test_phi_delta_is_exact_and_bounded():
         assert abs(G1.delta([], back) + G.delta(gv, [])) < 1e-6, trial
 
 
+def _forky_rows(rng, nv):
+    """Random ends, with some vessels' ends moved together in threes (forks)
+    and fours (a crossing cut at its centre), jittered by up to 1 px."""
+    rows = _rand_rows(rng, range(nv))
+    order = rng.permutation(len(rows))
+    k = 0
+    for size in rng.choice([3, 3, 4], int(rng.integers(1, 4))):
+        grp = [i for i in order[k:k + size]]
+        k += size
+        if len(grp) < size or len({rows[i][0] for i in grp}) < size:
+            continue
+        c = rng.uniform(10, 80, 2)
+        for i in grp:
+            rows[i] = (rows[i][0], c + rng.uniform(-0.7, 0.7, 2)) + rows[i][2:]
+    return rows
+
+
+def test_phi_delta_is_exact_with_strict_forks():
+    """With strict_forks, three ends at one point are not charged, and the
+    change of Phi a move makes is still exact (ends whose fork a move makes
+    or breaks are re-paired), still bounded by bound(), and split / join
+    are still exact inverses."""
+    from vesselmap.search import EndGraph, SearchConfig, fork_clusters
+    cfg = SearchConfig(strict_forks=True)
+    rng = np.random.default_rng(2)
+    n_forks = 0
+    for trial in range(300):
+        nv = int(rng.integers(10, 21))
+        rows = _forky_rows(rng, nv)
+        n_forks += int((fork_clusters(rows) >= 0).sum()) // 3
+        G = EndGraph(rows, cfg)
+        gone_v = set(rng.choice(nv, int(rng.integers(0, 4)), replace=False).tolist())
+        new = _rand_rows(rng, range(-1, -1 - int(rng.integers(0, 4)), -1))
+        if new and rng.random() < 0.5:                    # a new end placed on an existing end
+            j = int(rng.integers(len(rows)))
+            new[0] = (new[0][0], rows[j][1] + 0.3) + new[0][2:]
+        gone = [i for i, r in enumerate(rows) if r[0] in gone_v]
+        d = G.delta(gone, new)
+        after = [r for r in rows if r[0] not in gone_v] + [(1000 - r[0],) + r[1:] for r in new]
+        assert abs(d - (EndGraph(after, cfg).total - G.total)) < 1e-6, trial
+        v = int(rng.integers(nv))
+        gv = G.by_vid[v]
+        assert -G.delta(gv, []) <= G.bound([v]) + 1e-9, trial
+        G1 = EndGraph([r for r in rows if r[0] != v], cfg)
+        back = [(-1,) + rows[i][1:] for i in gv]
+        assert abs(G1.delta([], back) + G.delta(gv, [])) < 1e-6, trial
+    assert n_forks > 100                                   # the forks were exercised
+
+
+def test_strict_fork_is_not_charged_but_a_broken_vessel_is():
+    from vesselmap.search import EndGraph, SearchConfig
+    p = np.array([50.0, 50.0])
+    d = lambda deg: np.array([np.cos(np.radians(deg)), np.sin(np.radians(deg))])
+    parent = (1, p, d(0), 2.0, 300.0, 1)                   # arrives from the left
+    up = (2, p + 0.2, d(135), 2.0, 300.0, 0)                # daughters leave up-right, down-right
+    down = (3, p - 0.2, d(225), 2.0, 300.0, 0)
+    for strict, fork_phi in ((False, True), (True, False)):
+        cfg = SearchConfig(strict_forks=strict)
+        assert (EndGraph([parent, up, down], cfg).total > 0) == fork_phi
+        assert EndGraph([parent, up], cfg).total > 0        # two ends alone: a broken vessel
+    cfg = SearchConfig(strict_forks=True)
+    G = EndGraph([parent, up], cfg)
+    assert G.delta([], [(-1,) + down[1:]]) < 0              # completing the fork releases Phi
+
+
 def test_phi_off_is_zero():
     H, W = 120, 240
     I, P = _scene([_vessel(_line((-10, 60), (250, 60)))], (H, W))

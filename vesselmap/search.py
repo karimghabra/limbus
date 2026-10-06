@@ -118,6 +118,9 @@ class SearchConfig:
     frag_gap: float = 6.0           # and across a gap up to this (px), not at all beyond twice it
     frag_mode: str = "match"        # "match": Phi over a matching of facing ends; "ends":
                                     # every end pays (an ablation)
+    strict_forks: bool = False      # three vessel ends meeting at one point are a fork (each
+                                    # vessel ends there), not a vessel in pieces: Phi does not
+                                    # charge pairs among them (fork_clusters)
     tau: float = 0.0                # data temperature; <= 0: reduced chi-square of the map
     t_scale: float = 150.0          # energy scale (x tau) of the schedule and the cache:
     t_start: float = 0.1            # first temperature (x tau * t_scale)
@@ -382,6 +385,39 @@ def end_evidence(m: NetworkModel, hw: float, frag_len: float, entries=None):
     return [(float(S0[q]), float(S1[q]), float(le[q])) for q in range(n)]
 
 
+def fork_clusters(rows) -> np.ndarray:
+    """Per row (vessel id, position, tangent, width, ...): a fork id, or -1.
+    Ends of different vessels within max(3, (w + w') / 2) px of each other are
+    linked; a connected group of exactly three ends of three vessels is a fork
+    (each vessel ends at the branch point).  Two ends of one vessel, or four
+    or more ends (a crossing cut at its centre), are not."""
+    n = len(rows)
+    lab = np.full(n, -1)
+    if n < 3:
+        return lab
+    P = np.array([r[1] for r in rows]).reshape(-1, 2)
+    wmax = max(float(r[3]) for r in rows)
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for a, b in cKDTree(P).query_pairs(max(3.0, wmax)):
+        if rows[a][0] != rows[b][0] and \
+                np.linalg.norm(P[a] - P[b]) <= max(3.0, 0.5 * (rows[a][3] + rows[b][3])):
+            parent[find(a)] = find(b)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+    for g in groups.values():
+        if len(g) == 3 and len({rows[i][0] for i in g}) == 3:
+            lab[g] = g[0]
+    return lab
+
+
 class EndGraph:
     """The facing-end graph of a map and its fragmentation term Phi.
 
@@ -404,10 +440,13 @@ class EndGraph:
         self.tree = cKDTree(np.array([r[1] for r in rows]).reshape(-1, 2)) if n else None
         self.adj = [dict() for _ in range(n)]
         self.n_facing = 0
+        self.fork = fork_clusters(rows) if getattr(cfg, "strict_forks", False) else np.full(n, -1)
         if n:
             for a, b in sorted(self.tree.query_pairs(cfg.join_gap)):
                 if rows[a][0] == rows[b][0]:
                     continue
+                if self.fork[a] >= 0 and self.fork[a] == self.fork[b]:
+                    continue                        # three vessels ending at a branch point
                 g = face_weight(rows[a][1:4], rows[b][1:4], cfg)
                 if g is None:
                     continue
@@ -460,8 +499,39 @@ class EndGraph:
         return 0.0 if i is None or j is None else self.adj[i].get(j, 0.0)
 
     def bound(self, vids):
-        """-dPhi of any move removing the vessels vids is at most this."""
-        return float(sum(self.rows[i][4] for v in vids for i in self.by_vid.get(v, [])))
+        """-dPhi of any move removing the vessels vids is at most this.  With
+        strict forks, removing an end can make the ends near it a fork (no
+        longer charged), so their om counts too."""
+        idx = {i for v in vids for i in self.by_vid.get(v, [])}
+        if getattr(self.cfg, "strict_forks", False) and idx and self.tree is not None:
+            for i in list(idx):
+                idx.update(self.tree.query_ball_point(self.rows[i][1], self.cfg.join_gap))
+        return float(sum(self.rows[i][4] for i in idx))
+
+    def _strict_delta_rows(self, gone, new):
+        """With strict forks: the existing ends whose fork cluster a change
+        alters (they are removed and re-added, their pairs recomputed), and
+        the clusters after the change, keyed by row identity (an existing
+        index, or n0 + position in new + re-added)."""
+        n0 = len(self.rows)
+        keep = [i for i in range(n0) if i not in gone]
+        post = fork_clusters([self.rows[i] for i in keep] + list(new))
+        ident = keep + [n0 + q for q in range(len(new))]
+        members_post, members_pre = {}, {}
+        for x, l in zip(ident, post):
+            if l >= 0:
+                members_post.setdefault(int(l), set()).add(x)
+        for i in range(n0):
+            if self.fork[i] >= 0:
+                members_pre.setdefault(int(self.fork[i]), set()).add(i)
+        lab_post = {x: int(l) for x, l in zip(ident, post)}
+        pre_of = lambda i: frozenset(members_pre[self.fork[i]]) if self.fork[i] >= 0 else frozenset([i])
+        post_of = lambda x: frozenset(members_post[lab_post[x]]) if lab_post[x] >= 0 else frozenset([x])
+        affected = [i for i in keep if pre_of(i) != post_of(i)]
+        # re-added rows get identities after the new ones; their cluster label carries over
+        readd = {i: n0 + len(new) + q for q, i in enumerate(affected)}
+        label = {readd.get(x, x): l for x, l in lab_post.items()}
+        return affected, label
 
     def delta(self, gone, new):
         """Change of Phi when the rows `gone` (indices) are removed and the
@@ -472,6 +542,13 @@ class EndGraph:
         if self.cfg.frag_mode == "ends":
             return sum(r[4] for r in new) - sum(self.rows[i][4] for i in gone)
         n0 = len(self.rows)
+        new = list(new)
+        exempt = lambda x, y: False
+        if getattr(self.cfg, "strict_forks", False):
+            affected, label = self._strict_delta_rows(gone, new)
+            gone |= set(affected)
+            new += [self.rows[i] for i in affected]
+            exempt = lambda x, y: label.get(x, -1) >= 0 and label.get(x) == label.get(y)
         comps = {self.comp[i] for i in gone}
         add = []
         for q, r in enumerate(new):
@@ -479,7 +556,7 @@ class EndGraph:
                 continue
             if self.tree is not None:
                 for i in self.tree.query_ball_point(r[1], self.cfg.join_gap):
-                    if i in gone or self.rows[i][4] <= 0:
+                    if i in gone or self.rows[i][4] <= 0 or self.rows[i][0] == r[0] or exempt(i, n0 + q):
                         continue
                     g = face_weight(self.rows[i][1:4], r[1:4], self.cfg)
                     if g:
@@ -487,7 +564,7 @@ class EndGraph:
                         comps.add(self.comp[i])
             for q2 in range(q + 1, len(new)):
                 r2 = new[q2]
-                if r2[0] == r[0] or r2[4] <= 0 or \
+                if r2[0] == r[0] or r2[4] <= 0 or exempt(n0 + q, n0 + q2) or \
                         np.linalg.norm(r2[1] - r[1]) > self.cfg.join_gap:
                     continue
                 g = face_weight(r[1:4], r2[1:4], self.cfg)
