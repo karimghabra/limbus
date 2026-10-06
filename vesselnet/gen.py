@@ -6,7 +6,8 @@
 Each scene is written by data.export_compact into data.scene_dir(out, seed) (the test split also gets the full
 save_scene folder in `full/`). A scene is first written to `<folder>.tmp` and renamed when finished, so an
 interrupted run leaves no half scenes; finished scenes are skipped. Failures go to `<out>/<split>/failures.jsonl`
-and do not stop the run. With --procs N, N worker processes take every N-th seed; each logs to
+and do not stop the run; a scene running longer than --max-seconds is stopped and logged (and not retried
+unless --retry-failed). With --procs N, N worker processes take every N-th seed; each logs to
 `<out>/logs/gen_<split>_<i>.log`. Every scene.json records the seed, preset, git hashes, stage timings and the
 peak VRAM of its process.
 """
@@ -66,6 +67,18 @@ def one(seed, out, device, prov):
     return meta
 
 
+THREAD_VARS = ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "NUMEXPR_NUM_THREADS")
+
+
+def thread_env(n):
+    """The environment with every native thread pool (OpenMP, MKL, OpenBLAS) capped at n: torch's
+    set_num_threads caps torch alone, and NumPy / SciPy / OpenCV pools sized to all cores in every worker
+    oversubscribe the CPU (a 46 s scene took over an hour with 3 workers)."""
+    env = dict(os.environ)
+    env.update({k: str(n) for k in THREAD_VARS})
+    return env
+
+
 def seeds_of(a):
     lo, hi = D.SPLITS[a.split]
     start = lo if a.start is None else a.start
@@ -75,22 +88,58 @@ def seeds_of(a):
     return list(range(start, stop))
 
 
+def _one_child(args):
+    """Entry of a child process making one scene (worker --max-seconds)."""
+    seed, out, device, prov, threads = args
+    _cap_threads(threads)
+    return one(seed, out, device, prov)
+
+
+def _fail(fail_log, seed, error, trace=""):
+    with open(fail_log, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(dict(seed=seed, preset=D.preset_of(seed), error=error, trace=trace,
+                                 time=time.strftime("%Y-%m-%d %H:%M:%S"))) + "\n")
+    print(f"seed {seed} FAILED: {error}", flush=True)
+
+
+def _cap_threads(n):
+    if n:
+        import cv2
+        torch.set_num_threads(n)
+        cv2.setNumThreads(n)
+        os.environ.update({k: str(n) for k in THREAD_VARS})   # inherited by spawned scene processes
+
+
 def worker(a):
-    if a.threads:
-        torch.set_num_threads(a.threads)
+    _cap_threads(a.threads)
     prov = D.provenance()
     seeds = [s for s in seeds_of(a) if s % a.of == a.worker]
     fail_log = os.path.join(a.out, a.split, "failures.jsonl")
     os.makedirs(os.path.dirname(fail_log), exist_ok=True)
-    print(f"worker {a.worker}/{a.of}: {len(seeds)} seeds, device {a.device}, git {json.dumps(prov)}", flush=True)
+    failed = set()
+    if os.path.exists(fail_log) and not a.retry_failed:  # scenes that timed out before are not retried
+        failed = {json.loads(l)["seed"] for l in open(fail_log, encoding="utf-8") if "timed out" in l}
+    print(f"worker {a.worker}/{a.of}: {len(seeds)} seeds, device {a.device}, max {a.max_seconds} s a scene, "
+          f"git {json.dumps(prov)}", flush=True)
     for seed in seeds:
+        if D.is_done(D.scene_dir(a.out, seed)) or seed in failed:
+            continue
         try:
-            m = one(seed, a.out, a.device, prov)
+            if a.max_seconds > 0:
+                import multiprocessing as mp
+                with mp.get_context("spawn").Pool(1) as pool:
+                    r = pool.apply_async(_one_child, ((seed, a.out, a.device, prov, a.threads),))
+                    try:
+                        m = r.get(timeout=a.max_seconds)
+                    except mp.TimeoutError:
+                        pool.terminate()
+                        shutil.rmtree(D.scene_dir(a.out, seed) + ".tmp", ignore_errors=True)
+                        _fail(fail_log, seed, f"timed out after {a.max_seconds} s")
+                        continue
+            else:
+                m = one(seed, a.out, a.device, prov)
         except Exception as e:                        # one bad scene must not stop a long run
-            with open(fail_log, "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(dict(seed=seed, error=repr(e), trace=traceback.format_exc(),
-                                         time=time.strftime("%Y-%m-%d %H:%M:%S"))) + "\n")
-            print(f"seed {seed} FAILED: {e!r}", flush=True)
+            _fail(fail_log, seed, repr(e), traceback.format_exc())
             if a.device.startswith("cuda"):
                 torch.cuda.empty_cache()
             continue
@@ -110,6 +159,9 @@ def main():
     ap.add_argument("--procs", type=int, default=1)
     ap.add_argument("--threads", type=int, default=0, help="torch CPU threads per process (0: cores / procs)")
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    ap.add_argument("--max-seconds", type=int, default=1800,
+                    help="a scene taking longer is stopped and logged as failed (0: no limit)")
+    ap.add_argument("--retry-failed", action="store_true", help="retry scenes that timed out before")
     ap.add_argument("--worker", type=int, default=0, help=argparse.SUPPRESS)
     ap.add_argument("--of", type=int, default=1, help=argparse.SUPPRESS)
     a = ap.parse_args()
@@ -122,13 +174,14 @@ def main():
     procs = []
     for i in range(a.procs):
         cmd = [sys.executable, os.path.abspath(__file__), "--split", a.split, "--out", a.out, "--device", a.device,
-               "--threads", str(a.threads), "--worker", str(i), "--of", str(a.procs)]
+               "--threads", str(a.threads), "--worker", str(i), "--of", str(a.procs),
+               "--max-seconds", str(a.max_seconds)] + (["--retry-failed"] if a.retry_failed else [])
         if a.start is not None:
             cmd += ["--start", str(a.start)]
         if a.stop is not None:
             cmd += ["--stop", str(a.stop)]
         fh = open(os.path.join(logs, f"gen_{a.split}_{i}.log"), "a", encoding="utf-8")
-        procs.append((subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT), fh))
+        procs.append((subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, env=thread_env(a.threads)), fh))
     print(f"{a.procs} workers started; logs in {logs}", flush=True)
     codes = [p.wait() for p, _ in procs]
     for _, fh in procs:

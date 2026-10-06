@@ -187,7 +187,15 @@ def cmd_detector(a):
     if a.grid:
         grid = [dict(z_junction=zj, z_arm=za, width=w) for zj, za, w in
                 itertools.product((2.0, 3.0, 4.0), (2.0, 3.0, 4.0), (31, 61))]
-    base = {k: float(v) if k != "width" else int(v) for k, v in (s.split("=") for s in a.set)}
+        # the thresholds alone change nothing (5 % recall throughout): the arm tests are tried too
+        grid += [dict(z_junction=zj, z_arm=za, width=w, texture=False, min_traced=mt) for zj, za, w, mt in
+                 itertools.product((2.0, 4.0), (2.0, 4.0), (31, 61), (0, 3))]
+
+    def value(k, v):
+        if v.lower() in ("true", "false"):
+            return v.lower() == "true"
+        return int(v) if k in ("width", "min_traced") else float(v)
+    base = {k: value(k, v) for k, v in (s.split("=") for s in a.set)}
     path = os.path.join(a.out, "detector.jsonl")
     done = _done(path, lambda r: (r["seed"], tuple(r["window"]), json.dumps(r["params"], sort_keys=True)))
     for seed, S, y0, x0 in _windows_of(a):

@@ -261,7 +261,7 @@ def observable_vids(obs, x0, y0, size):
 
 
 # ----------------------------------------------------------------- driver
-def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_type, log):
+def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_type, log, cfg=None):
     t0 = time.perf_counter()
     I = O.to_unit(img[y0:y0 + size, x0:x0 + size])
     P = prepare(I)
@@ -270,20 +270,33 @@ def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_t
     for j in junctions:                                     # junctions in window coordinates
         j2 = dict(j, members=[dict(m, xy=[m["xy"][0] - x0, m["xy"][1] - y0]) for m in j["members"]])
         jw.append(j2)
-    onet, info = O.oracle(tnet, P, iters=300)
+    onet, info = O.oracle(tnet, P, iters=300, cfg=cfg)
     tau, price = info["tau"], info["price"]
     log(f"  window ({y0}, {x0}): {len(onet.edges)} truth edges, oracle {info['fit']['seconds']:.0f} s, "
         f"tau {tau:.2f}, price {price:.1f}/px, E {info['E']['total']:.0f}")
 
-    def refit_E(net):
-        n = net.copy()
-        f = O.fit(n, P, iters)
-        return O.energy(n, P, tau, price), f["seconds"]
+    # the fits do not see Phi or the price, so every energy variant is scored on the same fitted networks
+    from vesselmap.search import SearchConfig
+    null = info.get("texture_null", {})
+    variants = {"vesselmap": (False, price), "strict": (True, price)}
+    if null.get("median_per_px"):
+        variants["strict_median"] = (True, float(null["median_per_px"]))
+    variants["strict_floor"] = (True, float(tau))                 # tau * lam_length: no texture null
 
-    E_truth, t_fit = refit_E(onet)
-    rows = [dict(kind="truth", E=E_truth["total"], dE=0.0, nll=E_truth["nll"], n_vessels=E_truth["n_vessels"],
-                 fit_seconds=t_fit)]
-    S = O._search(onet, P, tau, price)
+    def refit(net):
+        n = net.copy()
+        f = O.fit(n, P, iters, cfg=cfg)
+        return n, f["seconds"]
+
+    def score(n):
+        return {v: O.energy(n, P, tau, pr, SearchConfig(strict_forks=st)) for v, (st, pr) in variants.items()}
+
+    tfit, t_fit = refit(onet)
+    E_truth = score(tfit)
+    rows = [dict(kind="truth", E={v: e["total"] for v, e in E_truth.items()}, nll=E_truth["vesselmap"]["nll"],
+                 n_vessels=E_truth["vesselmap"]["n_vessels"], fit_seconds=t_fit,
+                 prices={v: pr for v, (_, pr) in variants.items()})]
+    S = O._search(onet, P, tau, price, cfg)
     cases = []
     cx = list(_crossings(onet, jw, size))
     for p, ks in cx[:per_type]:
@@ -328,13 +341,17 @@ def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_t
             continue
         if n is None:
             continue
-        E, t = refit_E(n)
-        rows.append(dict(kind=kind, where=where, E=E["total"], dE=E["total"] - E_truth["total"],
-                         dnll=E["nll"] - E_truth["nll"], dprior=E["prior"] - E_truth["prior"],
-                         dcost=E["cost"] - E_truth["cost"], dphi=E["frag"] - E_truth["frag"],
-                         n_vessels=E["n_vessels"], fit_seconds=t, extra=n.meta.get("turn_deg")))
-        log(f"    {kind:18s} dE {rows[-1]['dE']:+10.0f} (nll {rows[-1]['dnll']:+.0f}, cost {rows[-1]['dcost']:+.0f}, "
-            f"phi {rows[-1]['dphi']:+.0f})")
+        nf, t = refit(n)
+        E = score(nf)
+        b, b0 = E["vesselmap"], E_truth["vesselmap"]
+        row = dict(kind=kind, where=where, dnll=b["nll"] - b0["nll"], dprior=b["prior"] - b0["prior"],
+                   n_vessels=b["n_vessels"], fit_seconds=t, extra=n.meta.get("turn_deg"),
+                   dE={v: E[v]["total"] - E_truth[v]["total"] for v in variants},
+                   dcost={v: E[v]["cost"] - E_truth[v]["cost"] for v in variants},
+                   dphi={v: E[v]["frag"] - E_truth[v]["frag"] for v in variants})
+        rows.append(row)
+        log(f"    {kind:18s} dNLL {row['dnll']:+10.0f}  " +
+            "  ".join(f"{v} {row['dE'][v]:+.0f}" for v in variants))
     return dict(window=[y0, x0, size], tau=tau, price=price, oracle=info, rows=rows,
                 seconds=round(time.perf_counter() - t0, 1))
 
@@ -354,6 +371,7 @@ def main():
     ap.add_argument("--iters", type=int, default=100)
     ap.add_argument("--per-type", type=int, default=2)
     ap.add_argument("--threads", type=int, default=0)
+    ap.add_argument("--strict-forks", action="store_true", help="Phi does not charge three ends at one point")
     ap.add_argument("--out", default="runs/energy_check")
     a = ap.parse_args()
     import torch
@@ -367,6 +385,8 @@ def main():
             r = json.loads(line)
             done.add((r["seed"], tuple(r["window"])))
     prov = D.provenance()
+    from vesselmap.search import SearchConfig
+    cfg = SearchConfig(strict_forks=a.strict_forks)
     log = lambda *m: print(*m, flush=True)
     lo = D.SPLITS["val"][0]
     for folder in [D.scene_dir(a.data, s) for s in range(lo, lo + a.scenes)]:
@@ -383,8 +403,9 @@ def main():
                 continue
             seen_px = S["observable_lumen_average"] | S["observable_dont_care_average"]
             r = check_window(S["img"], truth, S["observable_average"], S["junctions_average"], seen_px, y0, x0, a.size,
-                             a.iters, a.per_type, log)
-            r.update(seed=seed, preset=S["scene"]["vesselnet"]["preset"], iters=a.iters, provenance=prov)
+                             a.iters, a.per_type, log, cfg)
+            r.update(seed=seed, preset=S["scene"]["vesselnet"]["preset"], iters=a.iters, provenance=prov,
+                     strict_forks=a.strict_forks)
             r["oracle"] = {k: v for k, v in r["oracle"].items() if k != "texture_null"}
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(D._jsonable(r)) + "\n")
@@ -392,18 +413,30 @@ def main():
 
 
 def summarize(path):
+    """Per perturbation and energy variant: how often E prefers the truth (dE > 0; for delete_hidden, dE < 0),
+    and the median dE."""
     rows = []
     for line in open(path, encoding="utf-8"):
         r = json.loads(line)
-        rows += [dict(x, seed=r["seed"]) for x in r["rows"] if x["kind"] != "truth" and "dE" in x]
+        rows += [dict(x, seed=r["seed"]) for x in r["rows"] if x["kind"] != "truth" and isinstance(x.get("dE"), dict)]
+    if not rows:
+        return
+    variants = list(rows[0]["dE"])
     kinds = sorted({x["kind"] for x in rows})
-    print("\n| perturbation | n | E rises | median dE | min dE | median dNLL | median dcost | median dPhi |")
-    print("|---|---|---|---|---|---|---|---|")
+    print("
+E prefers the truth (count / n, median dE):
+")
+    print("| perturbation | n | median dNLL | " + " | ".join(variants) + " |")
+    print("|---|---|---|" + "---|" * len(variants))
     for k in kinds:
-        d = np.array([x["dE"] for x in rows if x["kind"] == k])
-        g = lambda f: np.median([x[f] for x in rows if x["kind"] == k])
-        print(f"| {k}{' (should fall)' if k in EXPECT_FALL else ''} | {len(d)} | {int((d > 0).sum())} | "
-              f"{np.median(d):+.0f} | {d.min():+.0f} | {g('dnll'):+.0f} | {g('dcost'):+.0f} | {g('dphi'):+.0f} |")
+        xs = [x for x in rows if x["kind"] == k]
+        cells = []
+        for v in variants:
+            d = np.array([x["dE"][v] for x in xs])
+            ok = (d < 0) if k in EXPECT_FALL else (d > 0)
+            cells.append(f"{int(ok.sum())}/{len(d)} ({np.median(d):+.3g})")
+        print(f"| {k}{' (should fall)' if k in EXPECT_FALL else ''} | {len(xs)} | "
+              f"{np.median([x['dnll'] for x in xs]):+.3g} | " + " | ".join(cells) + " |")
 
 
 if __name__ == "__main__":
