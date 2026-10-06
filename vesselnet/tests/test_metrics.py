@@ -43,6 +43,19 @@ def test_the_true_architecture_scores_perfectly():
     assert t["pairing_accuracy"] == 1.0 and t["false_joins"] == 0 and t["false_splits"] == 0, t
 
 
+def test_window_truth_cuts_runs_and_reindexes_unobserved():
+    obs = dict(runs=[dict(vid=1, xy=[[x, 50.0] for x in range(0, 300)], unobserved=[[150, 159]])],
+               junctions=[dict(x=120.0, y=50.0, radius=5.0, id=0), dict(x=20.0, y=50.0, radius=5.0, id=1)],
+               dont_care_junctions=[])
+    o, js = M.window_truth(obs, [dict(CROSS, x=120.0, y=60.0)], 0, 100, 100)
+    assert len(o["runs"]) == 1
+    r = o["runs"][0]
+    assert r["xy"][0] == [0.0, 50.0] and r["xy"][-1] == [99.0, 50.0]
+    assert r["unobserved"] == [[50, 59]]
+    assert [j["id"] for j in o["junctions"]] == [0] and o["junctions"][0]["x"] == 20.0
+    assert len(js) == 1 and js[0]["members"][0]["xy"] == [0.0, 100.0]
+
+
 def test_a_crossing_made_a_node_and_a_through_edge_are_errors():
     net = VesselNetwork((300, 300))
     c = net.add_node(100, 100)

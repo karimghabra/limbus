@@ -152,6 +152,8 @@ def load_compact(folder: str) -> dict:
         if os.path.exists(p):
             with open(p, encoding="utf-8") as fh:
                 out[name] = json.load(fh)
+    if isinstance(out.get(f"junctions_{KIND}"), dict):          # junctions.load_junctions' list
+        out[f"junctions_{KIND}"] = out[f"junctions_{KIND}"]["junctions"]
     out["folder"] = folder
     return out
 

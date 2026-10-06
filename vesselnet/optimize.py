@@ -67,8 +67,7 @@ def _search(net: VesselNetwork, P: Prepared, tau: float | None, price: float | N
         cfg.tau = float(tau)
     if price is not None:
         cfg.texture_null = False                 # the null is replaced by the given price below
-    with torch.no_grad():
-        S = VesselSearch(net, P, cfg)
+    S = VesselSearch(net, P, cfg)                # (the texture null fits anti-vessels: gradients needed)
     if price is not None:
         S.null, S.price = dict(per_px=float(price), fixed=True), float(price)
     return S

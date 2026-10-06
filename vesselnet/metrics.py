@@ -138,6 +138,44 @@ def vessels(net, truth_net) -> dict:
     return vessel_metrics(net, tv, net.shape)
 
 
+def _runs_of(mask):
+    """[a, b) index ranges where mask is True."""
+    d = np.flatnonzero(np.diff(np.r_[0, mask.astype(np.int8), 0]))
+    return list(zip(d[::2], d[1::2]))
+
+
+def window_truth(obs: dict, junctions: list, y0: int, x0: int, size: int) -> tuple[dict, list]:
+    """The observable truth and the junctions of a size x size window at (y0, x0), in window coordinates:
+    runs cut to their stretches inside (their 'unobserved' ranges re-indexed), junctions (with their events
+    and arms) whose centre lies inside."""
+    off = np.array([x0, y0], float)
+    inside = lambda P: (P[:, 0] >= 0) & (P[:, 0] <= size - 1) & (P[:, 1] >= 0) & (P[:, 1] <= size - 1)
+    runs = []
+    for r in obs["runs"]:
+        P = np.asarray(r["xy"], float).reshape(-1, 2) - off
+        unobs = np.zeros(len(P), bool)
+        for p_, q_ in r.get("unobserved") or ():
+            unobs[p_:q_ + 1] = True
+        for a, b in _runs_of(inside(P)):
+            if b - a < 2:
+                continue
+            u = [[int(p), int(q - 1)] for p, q in _runs_of(unobs[a:b])]
+            runs.append(dict(r, xy=P[a:b].tolist(), unobserved=u))
+    keep = lambda d: 0 <= d["x"] - x0 <= size - 1 and 0 <= d["y"] - y0 <= size - 1
+    sh = lambda d: dict(d, x=d["x"] - x0, y=d["y"] - y0)
+    o = dict(obs, runs=runs, junctions=[sh(j) for j in obs["junctions"] if keep(j)],
+             dont_care_junctions=[sh(j) for j in obs.get("dont_care_junctions", []) if "x" in j and keep(j)])
+    js = []
+    for j in junctions:
+        if keep(j):
+            js.append(dict(sh(j), members=[dict(m, xy=[m["xy"][0] - x0, m["xy"][1] - y0]) for m in j["members"]],
+                           arms=[dict(a, xy=[a["xy"][0] - x0, a["xy"][1] - y0],
+                                      in_frame=bool(a.get("in_frame", True)) and
+                                      0 <= a["xy"][0] - x0 <= size - 1 and 0 <= a["xy"][1] - y0 <= size - 1)
+                                 for a in j["arms"]]))
+    return o, js
+
+
 def architecture(net, obs: dict, junctions: list, truth_net=None, prof=None) -> dict:
     from vesselscene.truth import score_tracing
     nodes = branch_nodes(net)
