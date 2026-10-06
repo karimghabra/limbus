@@ -423,9 +423,7 @@ def summarize(path):
         return
     variants = list(rows[0]["dE"])
     kinds = sorted({x["kind"] for x in rows})
-    print("
-E prefers the truth (count / n, median dE):
-")
+    print("\nE prefers the truth (count / n, median dE):\n")
     print("| perturbation | n | median dNLL | " + " | ".join(variants) + " |")
     print("|---|---|---|" + "---|" * len(variants))
     for k in kinds:
