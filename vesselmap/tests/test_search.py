@@ -555,6 +555,58 @@ def test_strict_fork_is_not_charged_but_a_broken_vessel_is():
     assert G.delta([], [(-1,) + down[1:]]) < 0              # completing the fork releases Phi
 
 
+def test_attachment_charge_counts_vessels_as_the_strict_convention_and_is_exact():
+    """With strict_forks an end on another vessel's interior pays tau * lam_vessel (a through vessel with a
+    branch is three strict vessels, like the fork drawn as three); the change a move makes is exact."""
+    from vesselmap.search import edge_samples
+    H, W = 120, 200
+    I, P = _scene([_vessel(_line((-10, 60), (210, 60)), r=2.0),
+                   _vessel(_line((100, 60), (160, 10)), r=1.5)], (H, W))
+    through = VesselNetwork((H, W))
+    _edge(through, _line((0, 60), (199, 60)))
+    _edge(through, _line((100, 60), (160, 10)), r=1.5)              # branch end on the parent's interior
+    strict = VesselNetwork((H, W))
+    _edge(strict, _line((0, 60), (100, 60)))
+    _edge(strict, _line((100, 60), (199, 60)))
+    _edge(strict, _line((100, 60), (160, 10)), r=1.5)               # three ends at the fork
+    cfg = _cfg(strict_forks=True, init_iters=0)
+    S = VesselSearch(through, P, cfg)
+    unit = S.tau * cfg.lam_vessel
+    assert abs(S._attach_total() - unit) < 1e-6
+    assert S._attach_total() + 0 == S.energy_total()["attach"]
+    S2 = VesselSearch(strict, P, cfg)
+    assert S2._attach_total() == 0.0
+    # through -> strict: replace the parent by its two halves; the branch end no longer lies on an interior
+    halves = [e for k, e in strict.edges.items() if k < 2]
+    d = S._attach_delta([0], halves)
+    assert abs(d - (-unit)) < 1e-6
+    # remove the branch: its attached end goes
+    assert abs(S._attach_delta([1], []) + unit) < 1e-6
+    # random replacements: delta equals the recount
+    rng = np.random.default_rng(0)
+    for trial in range(10):
+        new = []
+        for _ in range(int(rng.integers(1, 3))):
+            p = rng.uniform([10, 10], [190, 110])
+            q = p + rng.uniform(-60, 60, 2)
+            new.append(_edge_obj_in((H, W), _line(p, np.clip(q, [1, 1], [W - 2, H - 2]))))
+        gone = [int(k) for k in rng.choice(list(S.net.edges), int(rng.integers(0, 2)), replace=False)]
+        d = S._attach_delta(gone, new)
+        after = S.net.copy()
+        for k in gone:
+            after.remove_edge(k)
+        for e in new:
+            k = after.add_edge_dense(*(edge_samples(e, 1.0)[x] for x in ("xy", "r", "s", "a")))
+        S3 = VesselSearch(after, P, _cfg(strict_forks=True, init_iters=0, tau=S.tau))   # the same unit
+        assert abs(d - (S3._attach_total() - S._attach_total())) < 1e-6, trial
+
+
+def _edge_obj_in(shape, xy):
+    net = VesselNetwork(shape)
+    k = _edge(net, xy)
+    return net.edges[k]
+
+
 def test_phi_off_is_zero():
     H, W = 120, 240
     I, P = _scene([_vessel(_line((-10, 60), (250, 60)))], (H, W))

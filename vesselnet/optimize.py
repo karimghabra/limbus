@@ -27,6 +27,14 @@ from vesselmap.render import NetworkModel
 from vesselmap.search import BG_SPACING, SearchConfig, VesselSearch
 
 
+def energy_config(**kw) -> SearchConfig:
+    """vesselnet's energy (decided in iteration 0 from the energy check): vesselscene's strict convention
+    (strict_forks: three ends at a branch point are a fork, an end on another vessel's interior pays a
+    vessel) and the floor price tau * lam_length per px (no texture null: the null's price deleted 16 of 20
+    faint observable vessels; texture is told from vessels by a learned prior instead, PLAN §4D)."""
+    return SearchConfig(**{**dict(strict_forks=True, texture_null=False), **kw})
+
+
 def to_unit(img: np.ndarray) -> np.ndarray:
     """A still in sensor DN (float, NaN = no data) as vesselmap's [0, 1] intensities (load_image's rule)."""
     a = np.asarray(img, np.float32)

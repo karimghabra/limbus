@@ -120,7 +120,10 @@ class SearchConfig:
                                     # every end pays (an ablation)
     strict_forks: bool = False      # three vessel ends meeting at one point are a fork (each
                                     # vessel ends there), not a vessel in pieces: Phi does not
-                                    # charge pairs among them (fork_clusters)
+                                    # charge pairs among them (fork_clusters); and an end on
+                                    # another vessel's interior pays tau * lam_vessel (that
+                                    # vessel is two vessels there), so E counts vessels as the
+                                    # strict convention does
     tau: float = 0.0                # data temperature; <= 0: reduced chi-square of the map
     t_scale: float = 150.0          # energy scale (x tau) of the schedule and the cache:
     t_start: float = 0.1            # first temperature (x tau * t_scale)
@@ -780,7 +783,7 @@ class VesselSearch:
         self._index = None
         self.n_evaluated = 0
         self.endS = {}                  # (S0, S1, l) of every vessel's ends (end_evidence)
-        self._egraph = None
+        self._egraph = self._att = None
         self.move_log = []
         if cfg.init_iters > 0:
             self.global_fit(cfg.init_iters)
@@ -833,7 +836,7 @@ class VesselSearch:
         self._smp.clear()
         self._cache.clear()
         self._index = None
-        self._egraph = None
+        self._egraph = self._att = None
 
     def optical_density(self):
         V = self.V.reshape(self.H, self.W)
@@ -914,8 +917,100 @@ class VesselSearch:
             pr = float(m.prior(**self.priors))
         cst = sum(self.cost(e, self.samples(k)["L"]) for k, e in self.net.edges.items())
         G = self._graph()
-        return dict(total=nll + pr + cst + G.total, nll=nll, prior=pr, cost=cst, frag=G.total,
-                    matched_pairs=G.matched, facing_pairs=G.n_facing)
+        att = self._attach_total()
+        return dict(total=nll + pr + cst + G.total + att, nll=nll, prior=pr, cost=cst, frag=G.total + att,
+                    phi=G.total, attach=att, matched_pairs=G.matched, facing_pairs=G.n_facing)
+
+    # ------------------------------------------------------------ attachments (strict forks)
+    def _attach_on(self):
+        return bool(self.cfg.strict_forks)
+
+    def _body(self, smp):
+        """(xy, reach, interior) of a vessel's samples: an end of another vessel
+        attaches where it lies within reach = r + s + attach_tol of a sample
+        more than max(4, r + s) px from this vessel's own ends."""
+        rs = smp["r"] + smp["s"]
+        a, L = smp["s_arc"], smp["s_arc"][-1]
+        m = np.maximum(4.0, rs)
+        return smp["xy"], rs + self.cfg.attach_tol, (a > m) & (a < L - m)
+
+    def _ends_xy(self, vid, smp):
+        return [(vid, end, smp["xy"][0 if end == 0 else -1]) for end in (0, 1)
+                if not self._border(smp["xy"][0 if end == 0 else -1])]
+
+    def _bodies_index(self, bodies):
+        """KD-tree over the interior samples of bodies {vid: (xy, reach, interior)}."""
+        X, R, V = [], [], []
+        for v, (xy, reach, inner) in bodies.items():
+            X.append(xy[inner])
+            R.append(reach[inner])
+            V.append(np.full(int(inner.sum()), v))
+        X = np.concatenate(X) if X else np.zeros((0, 2))
+        return (cKDTree(X) if len(X) else None, np.concatenate(R) if R else np.zeros(0),
+                np.concatenate(V) if V else np.zeros(0, int), float(max([r.max() for r in R if len(r)] + [0.0])))
+
+    @staticmethod
+    def _attached(p, vid, index, extra=None, skip=()):
+        """Whether the end p of vessel vid lies on another vessel's interior (index, and the bodies in
+        extra {vid: (xy, reach, interior)}), ignoring the vessels in skip."""
+        tree, R, V, rmax = index
+        if tree is not None:
+            for i in tree.query_ball_point(p, rmax):
+                if V[i] != vid and V[i] not in skip and np.linalg.norm(tree.data[i] - p) <= R[i]:
+                    return True
+        for v, (xy, reach, inner) in (extra or {}).items():
+            if v == vid:
+                continue
+            d = np.linalg.norm(xy - p, axis=1)
+            if np.any(inner & (d <= reach)):
+                return True
+        return False
+
+    def _attach_state(self):
+        """{(vid, end): attached} of the current map, and its body index (cached with the end graph)."""
+        if getattr(self, "_att", None) is None:
+            bodies = {k: self._body(self.samples(k)) for k in self.net.edges}
+            index = self._bodies_index(bodies)
+            st = {}
+            for k in self.net.edges:
+                for v, end, p in self._ends_xy(k, self.samples(k)):
+                    st[(v, end)] = self._attached(p, v, index)
+            self._att = (st, index)           # cleared with the end graph after every change
+        return self._att
+
+    def _attach_total(self):
+        if not self._attach_on():
+            return 0.0
+        st, _ = self._attach_state()
+        return self.tau * self.cfg.lam_vessel * sum(st.values())
+
+    def _attach_delta(self, gone, new_edges):
+        """Change of the attachment charge when the vessels `gone` are replaced by `new_edges`: the new
+        vessels' ends, and every remaining end within reach of a removed or added body, are tested again."""
+        if not self._attach_on():
+            return 0.0
+        st, index = self._attach_state()
+        gone = set(gone)
+        new = {-1 - q: edge_samples(e, 1.0) for q, e in enumerate(new_edges)}
+        nb = {v: self._body(s) for v, s in new.items()}
+        n_new = sum(self._attached(p, v, index, nb, skip=gone)
+                    for v, s in new.items() for _, _, p in self._ends_xy(v, s))
+        changed = [self._body(self.samples(k)) for k in gone] + list(nb.values())
+        G = self._graph()
+        near = set()
+        for xy, reach, _ in changed:
+            if G.tree is not None and len(xy):
+                for h in G.tree.query_ball_point(xy, float(reach.max()) + 1e-6):
+                    near.update(h)
+        before = after = 0
+        for i in near:
+            v, end = G.rows[i][0], G.rows[i][5]
+            if v in gone:
+                continue
+            before += st.get((v, end), False)
+            after += self._attached(G.rows[i][1], v, index, nb, skip=gone)
+        lost = sum(st.get((k, end), False) for k in gone for end in (0, 1))
+        return self.tau * self.cfg.lam_vessel * (n_new + after - before - lost)
 
     # ------------------------------------------------------------ fragmentation
     def _phi_on(self):
@@ -958,18 +1053,30 @@ class VesselSearch:
     def _phi_delta(self, prop):
         """Change of Phi a proposal makes.  Computed afresh for the current
         state (Phi depends on ends up to join_gap away), never cached."""
+        att = self._attach_delta(prop[0], prop[1])
         if not self._phi_on():
-            return 0.0
+            return att
         G = self._graph()
         gone = [i for k in prop[0] for i in G.by_vid.get(k, [])]
         new = [(-1 - q, p, t, w, self._omega(S[end], S[2]), end)
                for q, (S, ends) in enumerate(zip(prop[5]["S"], prop[5]["ends"]))
                for end, p, t, w in ends]
-        return G.delta(gone, new)
+        return G.delta(gone, new) + att
 
     def _release_bound(self, old):
-        """-dPhi of any move removing the vessels old is at most this."""
-        return self._graph().bound(old) if self._phi_on() else 0.0
+        """-dPhi of any move removing the vessels old is at most this (with
+        strict forks, plus the attachment charges it can release: the removed
+        vessels' ends, and every end near their bodies)."""
+        b = self._graph().bound(old) if self._phi_on() else 0.0
+        if self._attach_on():
+            G = self._graph()
+            n = 2 * len(old)
+            for k in old:
+                xy, reach, _ = self._body(self.samples(k))
+                if G.tree is not None:
+                    n += len({i for h in G.tree.query_ball_point(xy, float(reach.max())) for i in h})
+            b += self.tau * self.cfg.lam_vessel * n
+        return b
 
     # ------------------------------------------------------------ local model
     def _window(self, smps, extra=4.0):
@@ -1430,7 +1537,7 @@ class VesselSearch:
             self.endS[k] = S
             ids.append(k)
         self._index = None
-        self._egraph = None
+        self._egraph = self._att = None
         return ids
 
     def _apply_bg(self, grid, win):
