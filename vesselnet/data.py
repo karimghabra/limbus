@@ -45,19 +45,16 @@ COMPACT_KEYS = {
     "observable_edge_average": np.int32,                # observable image-graph edge id
     "observable_dont_care_average": bool,
     "observable_junction_dont_care_average": bool,
-    **{f"observable_junction_heat_{t}_average": np.float16 for t in JTYPES},
-    "junction_heat_any": np.float16,                    # every image junction (permissive rules)
     "junction_arm_dir": np.float16,                     # (H, W, 2)
     "junction_arm_group": np.int16,
     "junction_arm_vis": np.uint8,
-    "dominant": np.int32, "dominant_od": np.float16,
-    "runner_up": np.int32, "runner_up_od": np.float16,  # the second vessel where two overlap
+    "dominant": np.int32, "runner_up": np.int32,        # the vessels darkening a pixel most and second most
     "lumen_top": np.int32, "lumen_second": np.int32,    # depth order of overlapping lumens
     "radius": np.float16, "depth": np.float16,          # of the dominant vessel (d_c)
     "centreline": np.int32,                             # every vessel's 1 px centreline (complete truth)
-    "heat_fork": np.float16, "heat_confluence": np.float16, "heat_anastomosis": np.float16,
-    "heat_crossing": np.float16,                        # graph nodes and crossings (event granularity)
 }
+# Not stored: the junction heatmaps (Gaussians at the junctions and events of the JSON files; 11 MB a scene)
+# are rebuilt when loading, and the OD rasters (5 MB) are not a target.
 
 
 def split_of(seed: int) -> str:
