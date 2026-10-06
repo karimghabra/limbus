@@ -576,6 +576,11 @@ def test_attachment_charge_counts_vessels_as_the_strict_convention_and_is_exact(
     assert S._attach_total() + 0 == S.energy_total()["attach"]
     S2 = VesselSearch(strict, P, cfg)
     assert S2._attach_total() == 0.0
+    wide = VesselNetwork((H, W))                                     # a fork of wide vessels: r + s = 8
+    _edge(wide, _line((0, 60), (100, 60)), r=6.0, s=2.0)
+    _edge(wide, _line((100, 60), (199, 60)), r=6.0, s=2.0)
+    _edge(wide, _line((100, 60), (160, 10)), r=5.0, s=2.0)
+    assert VesselSearch(wide, P, cfg)._attach_total() == 0.0
     # through -> strict: replace the parent by its two halves; the branch end no longer lies on an interior
     halves = [e for k, e in strict.edges.items() if k < 2]
     d = S._attach_delta([0], halves)

@@ -927,12 +927,14 @@ class VesselSearch:
 
     def _body(self, smp):
         """(xy, reach, interior) of a vessel's samples: an end of another vessel
-        attaches where it lies within reach = r + s + attach_tol of a sample
-        more than max(4, r + s) px from this vessel's own ends."""
-        rs = smp["r"] + smp["s"]
+        attaches where it lies within reach = r + s + attach_tol of an interior
+        sample, one farther than reach + 2 px from this vessel's own ends (so
+        ends meeting at a fork never reach each other's interiors, however
+        wide the vessels)."""
+        reach = smp["r"] + smp["s"] + self.cfg.attach_tol
         a, L = smp["s_arc"], smp["s_arc"][-1]
-        m = np.maximum(4.0, rs)
-        return smp["xy"], rs + self.cfg.attach_tol, (a > m) & (a < L - m)
+        m = reach + 2.0
+        return smp["xy"], reach, (a > m) & (a < L - m)
 
     def _ends_xy(self, vid, smp):
         return [(vid, end, smp["xy"][0 if end == 0 else -1]) for end in (0, 1)
