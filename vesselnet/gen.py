@@ -167,8 +167,11 @@ def main():
     a = ap.parse_args()
     if not a.threads:
         a.threads = max(1, (os.cpu_count() or 1) // max(a.procs, a.of))
-    if a.procs <= 1 or a.of > 1:
+    if a.of > 1:
         return worker(a)
+    if a.procs <= 1:
+        worker(a)
+        return missing(a)
     logs = os.path.join(a.out, "logs")
     os.makedirs(logs, exist_ok=True)
     procs = []
@@ -188,7 +191,20 @@ def main():
         fh.close()
     done = len(D.list_scenes(a.out, a.split))
     print(f"workers exited {codes}; {done} finished scenes in {a.split}", flush=True)
+    return missing(a)
+
+
+def missing(a):
+    """Exit status: 0 when every seed of the range is finished or timed out before (those are not retried
+    without --retry-failed), else 3, so a runner (resume.ps1) tries again."""
+    fail_log = os.path.join(a.out, a.split, "failures.jsonl")
+    timed = set()
+    if os.path.exists(fail_log) and not a.retry_failed:
+        timed = {json.loads(l)["seed"] for l in open(fail_log, encoding="utf-8") if "timed out" in l}
+    left = [s for s in seeds_of(a) if not D.is_done(D.scene_dir(a.out, s)) and s not in timed]
+    print(f"{len(left)} seeds left in {a.split}" + (f": {left[:20]}" if left else ""), flush=True)
+    return 3 if left else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
