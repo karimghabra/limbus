@@ -1943,10 +1943,11 @@ class VesselSearch:
         """Score every move whose cached score is stale, in worker processes
         when there are enough of them.  The workers are forked from the
         current state, so they see it without copying; only the results
-        come back."""
+        come back.  Where processes cannot fork (Windows) the moves are
+        scored here, one after another."""
         todo = [i for i, m in enumerate(moves) if not self._lookup(m)[0]]
         nw = self.cfg.workers or os.cpu_count() or 1
-        if nw <= 1 or len(todo) < 2 * nw:
+        if nw <= 1 or len(todo) < 2 * nw or "fork" not in multiprocessing.get_all_start_methods():
             for i in todo:
                 self.evaluate(moves[i])
             return
