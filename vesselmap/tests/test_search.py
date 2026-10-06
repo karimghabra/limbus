@@ -581,6 +581,11 @@ def test_attachment_charge_counts_vessels_as_the_strict_convention_and_is_exact(
     _edge(wide, _line((100, 60), (199, 60)), r=6.0, s=2.0)
     _edge(wide, _line((100, 60), (160, 10)), r=5.0, s=2.0)
     assert VesselSearch(wide, P, cfg)._attach_total() == 0.0
+    slid = VesselNetwork((H, W))                                     # the trunk's end 3 px into a daughter
+    _edge(slid, _line((0, 60), (103, 60)), r=6.0, s=2.0)
+    _edge(slid, _line((100, 60), (199, 60)), r=6.0, s=2.0)
+    _edge(slid, _line((100, 60), (160, 10)), r=5.0, s=2.0)
+    assert VesselSearch(slid, P, cfg)._attach_total() == 0.0         # still a fork, not an attachment
     # through -> strict: replace the parent by its two halves; the branch end no longer lies on an interior
     halves = [e for k, e in strict.edges.items() if k < 2]
     d = S._attach_delta([0], halves)
@@ -589,10 +594,13 @@ def test_attachment_charge_counts_vessels_as_the_strict_convention_and_is_exact(
     assert abs(S._attach_delta([1], []) + unit) < 1e-6
     # random replacements: delta equals the recount
     rng = np.random.default_rng(0)
-    for trial in range(10):
+    for trial in range(30):
         new = []
         for _ in range(int(rng.integers(1, 3))):
             p = rng.uniform([10, 10], [190, 110])
+            if rng.random() < 0.5:                                    # start on an existing end: makes or
+                ends = [S.samples(k)["xy"][[0, -1]] for k in S.net.edges]   # breaks forks
+                p = np.concatenate(ends)[rng.integers(2 * len(ends))] + rng.uniform(-1, 1, 2)
             q = p + rng.uniform(-60, 60, 2)
             new.append(_edge_obj_in((H, W), _line(p, np.clip(q, [1, 1], [W - 2, H - 2]))))
         gone = [int(k) for k in rng.choice(list(S.net.edges), int(rng.integers(0, 2)), replace=False)]

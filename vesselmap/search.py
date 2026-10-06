@@ -969,14 +969,16 @@ class VesselSearch:
         return False
 
     def _attach_state(self):
-        """{(vid, end): attached} of the current map, and its body index (cached with the end graph)."""
+        """{(vid, end): charged} of the current map, and its body index (cached with the end graph).  An
+        end is charged when it lies on another vessel's interior and is not one of the three ends of a fork
+        (fork_clusters: at a fork the local fits may let an end slide a few px into a sibling's lumen)."""
         if getattr(self, "_att", None) is None:
+            G = self._graph()
             bodies = {k: self._body(self.samples(k)) for k in self.net.edges}
             index = self._bodies_index(bodies)
             st = {}
-            for k in self.net.edges:
-                for v, end, p in self._ends_xy(k, self.samples(k)):
-                    st[(v, end)] = self._attached(p, v, index)
+            for i, r in enumerate(G.rows):
+                st[(r[0], r[5])] = bool(G.fork[i] < 0 and self._attached(r[1], r[0], index))
             self._att = (st, index)           # cleared with the end graph after every change
         return self._att
 
@@ -987,30 +989,34 @@ class VesselSearch:
         return self.tau * self.cfg.lam_vessel * sum(st.values())
 
     def _attach_delta(self, gone, new_edges):
-        """Change of the attachment charge when the vessels `gone` are replaced by `new_edges`: the new
-        vessels' ends, and every remaining end within reach of a removed or added body, are tested again."""
+        """Change of the attachment charge when the vessels `gone` are replaced by `new_edges`.  Tested
+        again: the new vessels' ends, every remaining end within reach of a removed or added body, and every
+        remaining end whose fork membership the change alters (forks recomputed after the change)."""
         if not self._attach_on():
             return 0.0
         st, index = self._attach_state()
+        G = self._graph()
         gone = set(gone)
         new = {-1 - q: edge_samples(e, 1.0) for q, e in enumerate(new_edges)}
         nb = {v: self._body(s) for v, s in new.items()}
-        n_new = sum(self._attached(p, v, index, nb, skip=gone)
-                    for v, s in new.items() for _, _, p in self._ends_xy(v, s))
-        changed = [self._body(self.samples(k)) for k in gone] + list(nb.values())
-        G = self._graph()
-        near = set()
-        for xy, reach, _ in changed:
+        keep = [i for i, r in enumerate(G.rows) if r[0] not in gone]
+        new_rows = [(v, p, None, float(s["r"][0 if end == 0 else -1] + s["s"][0 if end == 0 else -1]), 0.0, end)
+                    for v, s in new.items() for _, end, p in self._ends_xy(v, s)]
+        post = fork_clusters([G.rows[i] for i in keep] + new_rows)
+        post_old = {i: post[q] for q, i in enumerate(keep)}
+        post_new = post[len(keep):]
+        n_new = sum(post_new[q] < 0 and self._attached(r[1], r[0], index, nb, skip=gone)
+                    for q, r in enumerate(new_rows))
+        near = {i for i in keep if (G.fork[i] >= 0) != (post_old[i] >= 0)}
+        for xy, reach, _ in [self._body(self.samples(k)) for k in gone] + list(nb.values()):
             if G.tree is not None and len(xy):
                 for h in G.tree.query_ball_point(xy, float(reach.max()) + 1e-6):
-                    near.update(h)
+                    near.update(i for i in h if G.rows[i][0] not in gone)
         before = after = 0
         for i in near:
-            v, end = G.rows[i][0], G.rows[i][5]
-            if v in gone:
-                continue
-            before += st.get((v, end), False)
-            after += self._attached(G.rows[i][1], v, index, nb, skip=gone)
+            r = G.rows[i]
+            before += st.get((r[0], r[5]), False)
+            after += bool(post_old[i] < 0 and self._attached(r[1], r[0], index, nb, skip=gone))
         lost = sum(st.get((k, end), False) for k in gone for end in (0, 1))
         return self.tau * self.cfg.lam_vessel * (n_new + after - before - lost)
 
