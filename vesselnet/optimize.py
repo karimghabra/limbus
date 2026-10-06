@@ -59,6 +59,23 @@ def fit(net: VesselNetwork, P: Prepared, iters: int, fit_pos=True, fit_prof=True
                 loss=hist[-1][0] if hist else None, nll=hist[-1][1] if hist else None)
 
 
+def fit_local(net: VesselNetwork, P: Prepared, pts, radius: float, iters: int, S: VesselSearch) -> dict:
+    """Fit only what lies within `radius` px of any of `pts` (control points and profile knots), with the halo,
+    the background and everything else fixed, as the search fits a move (VesselSearch._free_near / _fit;
+    S supplies its priors and learning rates).  In place; returns the time.  A global refit would let a
+    change at one point move the whole map: its drift elsewhere (up to hundreds of thousands of nats on a
+    512 px window) swamps the change being scored."""
+    t0 = time.perf_counter()
+    m = model_of(net, P, fit_background=False)
+    m.raw_hw.requires_grad_(False)
+    m.raw_hs.requires_grad_(False)
+    free = S._free_near(m, np.asarray(pts, float).reshape(-1, 2), radius)
+    S._fit(m, iters, free)
+    m.write_back()
+    return dict(seconds=round(time.perf_counter() - t0, 2), iters=iters,
+                free=int(sum(int(v.sum()) for v in free.values())))
+
+
 def _search(net: VesselNetwork, P: Prepared, tau: float | None, price: float | None,
             cfg: SearchConfig | None = None) -> VesselSearch:
     """A VesselSearch on `net` with tau and price fixed (None: computed from this map, as search_map does)."""

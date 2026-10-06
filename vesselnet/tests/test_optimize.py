@@ -40,6 +40,25 @@ def test_clip_to_frame_keeps_the_inside_and_the_fork_node():
         assert e.info.get("clip_err_px", 0.0) < 0.5
 
 
+def test_fit_local_moves_only_what_is_near_the_focus():
+    I, truth = _scene()
+    P = prepare(I)
+    net, info = O.oracle(truth, P, iters=30)
+    k = next(iter(net.edges))
+    net.edges[k].ctrl = net.edges[k].ctrl + np.array([0.0, 1.5])     # off the vessel: the fit will move it back
+    for n in (net.edges[k].u, net.edges[k].v):                        # (edge ends follow their nodes)
+        net.nodes[n].y += 1.5
+    before = net.copy()
+    S = O._search(net, P, info["tau"], info["price"])
+    O.fit_local(net, P, [(30.0, 51.5)], 15.0, 20, S)                 # near the left end only
+    c0, c1 = before.edges[k].ctrl, net.edges[k].ctrl
+    near = np.linalg.norm(c0 - [30.0, 51.5], axis=1) <= 15.0
+    assert near.any() and not near.all()
+    assert np.allclose(c0[~near], c1[~near])                         # far control points held
+    assert np.abs(c1[near] - c0[near]).max() > 0.05                  # near ones fitted
+    assert np.allclose(before.background, net.background)            # background held
+
+
 def test_to_unit_keeps_nan_and_scales_12_bit():
     a = np.array([[0.0, 4095.0], [np.nan, 2047.5]], np.float32)
     u = O.to_unit(a)

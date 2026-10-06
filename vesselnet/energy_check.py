@@ -7,8 +7,10 @@ average still with the truth (map.json, shifted and clipped to the window).  In 
 
 1. the oracle: the truth with centrelines held fixed, profiles / halo / background fitted (optimize.oracle);
    it fixes tau and the price per px for every energy of the window;
-2. the truth and every perturbation of it are given the same joint fit from the oracle's state (positions
-   free, --iters steps) and scored: dE = E(perturbed) - E(truth).  dE > 0 means E prefers the truth.
+2. every perturbation and the truth are given the same local fit from the oracle's state: --iters steps on
+   the parameters within R_EVENT px of the event (or R_VESSEL px of a deleted / added vessel), halo,
+   background and the rest fixed, as the search fits a move (a global refit drifts elsewhere by far more
+   than the change being scored); dE = E(perturbed) - E(truth).  dE > 0 means E prefers the truth.
 
 Perturbations (vesselscene's strict convention: a vessel ends at every fork):
     swap_pairing      at a crossing, each vessel continues into the other's far arm
@@ -283,43 +285,46 @@ def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_t
         variants["strict_median"] = (True, float(null["median_per_px"]))
     variants["strict_floor"] = (True, float(tau))                 # tau * lam_length: no texture null
 
-    def refit(net):
-        n = net.copy()
-        f = O.fit(n, P, iters, cfg=cfg)
-        return n, f["seconds"]
-
     def score(n):
         return {v: O.energy(n, P, tau, pr, SearchConfig(strict_forks=st)) for v, (st, pr) in variants.items()}
 
-    tfit, t_fit = refit(onet)
-    E_truth = score(tfit)
-    rows = [dict(kind="truth", E={v: e["total"] for v, e in E_truth.items()}, nll=E_truth["vesselmap"]["nll"],
-                 n_vessels=E_truth["vesselmap"]["n_vessels"], fit_seconds=t_fit,
-                 prices={v: pr for v, (_, pr) in variants.items()})]
     S = O._search(onet, P, tau, price, cfg)
+
+    def local(net, pts, radius):
+        """net fitted only near pts (the truth gets the same fit at the same focus, so both relax alike)."""
+        n = net.copy()
+        f = O.fit_local(n, P, pts, radius, iters, S)
+        return n, f["seconds"]
+
+    E_oracle = score(onet)
+    rows = [dict(kind="truth", E={v: e["total"] for v, e in E_oracle.items()}, nll=E_oracle["vesselmap"]["nll"],
+                 n_vessels=E_oracle["vesselmap"]["n_vessels"], prices={v: pr for v, (_, pr) in variants.items()})]
     cases = []
     cx = list(_crossings(onet, jw, size))
     for p, ks in cx[:per_type]:
-        cases.append(("swap_pairing", dict(xy=p.round(1).tolist()), lambda p=p, ks=ks: p_swap_pairing(onet, p, ks)))
+        cases.append(("swap_pairing", dict(xy=p.round(1).tolist()), lambda p=p, ks=ks: p_swap_pairing(onet, p, ks),
+                      [p], R_EVENT))
     for p, ks in cx[per_type:2 * per_type] or cx[:per_type]:
         cases.append(("crossing_to_node", dict(xy=p.round(1).tolist()),
-                      lambda p=p, ks=ks: p_crossing_to_node(onet, p, ks)))
+                      lambda p=p, ks=ks: p_crossing_to_node(onet, p, ks), [p], R_EVENT))
     for p, t, bs in list(_forks(onet, jw, size))[:per_type]:
         def f(p=p, t=t, bs=bs):
             n, turn = p_fork_to_through(onet, p, t, bs)
             n.meta["turn_deg"] = round(turn, 1)
             return n
-        cases.append(("fork_to_through", dict(xy=p.round(1).tolist()), f))
+        cases.append(("fork_to_through", dict(xy=p.round(1).tolist()), f, [p], R_EVENT))
     seen = observable_vids(obs, x0, y0, size)
     byv = _by_vessel(onet)
     long_obs = [(float(np.median(onet.edges[k].a)), k) for v, ks in byv.items() if v in seen and seen[v] >= 40
                 for k in ks if onet.length(k) >= 40]
     for _, k in sorted(long_obs)[:per_type]:
         cases.append(("delete_observable", dict(eid=k, a=round(float(np.median(onet.edges[k].a)), 4)),
-                      lambda k=k: _without(onet, k)))
+                      lambda k=k: _without(onet, k), _along(onet, k), R_VESSEL))
     mids = sorted(long_obs, key=lambda t: -onet.length(t[1]))[:per_type]
     for _, k in mids:
-        cases.append(("split", dict(eid=k, L=round(onet.length(k), 1)), lambda k=k: p_split(onet, k)))
+        mid = onet.sample(k, 0.5)["xy"]
+        cases.append(("split", dict(eid=k, L=round(onet.length(k), 1)), lambda k=k: p_split(onet, k),
+                      [mid[len(mid) // 2]], R_EVENT))
     merged = {m["vid"] for m in obs.get("merged", [])}
     seen_mask = seen_px[y0:y0 + size, x0:x0 + size]
 
@@ -329,11 +334,12 @@ def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_t
     hidden = [k for v, ks in byv.items() if v not in seen and v not in merged for k in ks
               if onet.length(k) >= 20 and on_seen(k) < 0.05]
     for k in hidden[:per_type]:
-        cases.append(("delete_hidden", dict(eid=k, L=round(onet.length(k), 1)), lambda k=k: _without(onet, k)))
+        cases.append(("delete_hidden", dict(eid=k, L=round(onet.length(k), 1)), lambda k=k: _without(onet, k),
+                      _along(onet, k), R_VESSEL))
     tex, tinfo = p_texture_vessel(onet, P, S)
     if tex is not None:
-        cases.append(("texture_vessel", tinfo, lambda: tex))
-    for kind, where, make in cases:
+        cases.append(("texture_vessel", tinfo, lambda: tex, _along(tex, max(tex.edges)), R_VESSEL))
+    for kind, where, make, pts, radius in cases:
         try:
             n = make()
         except Exception as e:                                   # noqa: BLE001
@@ -341,19 +347,30 @@ def check_window(img, truth, obs, junctions, seen_px, y0, x0, size, iters, per_t
             continue
         if n is None:
             continue
-        nf, t = refit(n)
-        E = score(nf)
-        b, b0 = E["vesselmap"], E_truth["vesselmap"]
+        tf, t0f = local(onet, pts, radius)
+        nf, t = local(n, pts, radius)
+        E, E0 = score(nf), score(tf)
+        b, b0 = E["vesselmap"], E0["vesselmap"]
         row = dict(kind=kind, where=where, dnll=b["nll"] - b0["nll"], dprior=b["prior"] - b0["prior"],
-                   n_vessels=b["n_vessels"], fit_seconds=t, extra=n.meta.get("turn_deg"),
-                   dE={v: E[v]["total"] - E_truth[v]["total"] for v in variants},
-                   dcost={v: E[v]["cost"] - E_truth[v]["cost"] for v in variants},
-                   dphi={v: E[v]["frag"] - E_truth[v]["frag"] for v in variants})
+                   n_vessels=b["n_vessels"], fit_seconds=t + t0f, extra=n.meta.get("turn_deg"),
+                   dE={v: E[v]["total"] - E0[v]["total"] for v in variants},
+                   dcost={v: E[v]["cost"] - E0[v]["cost"] for v in variants},
+                   dphi={v: E[v]["frag"] - E0[v]["frag"] for v in variants})
         rows.append(row)
         log(f"    {kind:18s} dNLL {row['dnll']:+10.0f}  " +
             "  ".join(f"{v} {row['dE'][v]:+.0f}" for v in variants))
     return dict(window=[y0, x0, size], tau=tau, price=price, oracle=info, rows=rows,
                 seconds=round(time.perf_counter() - t0, 1))
+
+
+R_EVENT = 40.0        # px around an event (crossing, fork, cut) that the local fits may move
+R_VESSEL = 20.0       # px around a deleted or added vessel
+
+
+def _along(net, k, step=4.0):
+    """Points every `step` px along edge k (the focus of a deleted or added vessel)."""
+    xy = net.sample(k, 1.0)["xy"]
+    return xy[::int(step)]
 
 
 def _without(net, k):
