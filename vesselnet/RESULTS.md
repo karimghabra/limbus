@@ -139,10 +139,26 @@ E prefers the truth (count / n):
   0.68 on seed 2,000,000 with them.
 - **Hand-built detector**, retuned on 10 validation windows (zoo-tuned defaults: junction F1 0.095, recall
   0.05): best texture off, no traced-arm requirement, darkness width 31, z_junction 2, z_arm 4: junction
-  recall 0.406, precision 0.650, **F1 0.500**, event recall 0.334. Test windows: pending.
+  recall 0.406, precision 0.650, **F1 0.500**, event recall 0.334. On the 20 test windows: recall 0.429,
+  precision 0.660, **F1 0.520**, event recall 0.306; 6 s per window.
 - **vesselmap pipeline**: running (first window: ΔE to the oracle +26.8M after build_map, +13.7M after
   refine, +16.4M after consolidate; search pending).
 
-Pending for this iteration: vesselmap and detector baselines on the test windows; the pilot reproduced on
-512² averages (stopped by Claude Code's memory guard; to be rerun when asked); test scoring; numeric targets
+**Pilot reproduced on averages** (`pilot/`, 60 scenes of 512² averages, 54 train / 6 held out, 3000
+iterations, contrast gain 0.6–2.6; GPU 0.07 s / iteration against 2.2–2.5 s on 2 CPU threads):
+
+| threshold | recall | precision | F1 | type accuracy |
+|---|---|---|---|---|
+| 0.10 | 0.962 | 0.476 | 0.637 | 0.58 |
+| 0.15 | 0.817 | 0.754 | **0.784** | 0.57 |
+| 0.20 | 0.711 | 0.837 | 0.769 | 0.57 |
+| 0.30 | 0.530 | 0.922 | 0.673 | 0.55 |
+
+470 held-out observable junctions (entry 0, single frames: F1 0.705 at 0.15 on 407). Zoo, seeds 0/10/20 (609
+marked): 483 found / 52 false at 0.3, 440 / 13 at 0.4 (entry 0: 483 / 57, 454 / 26).
+
+**Tests.** vesselmap's search tests and vesselnet's tests after the energy changes: 56 passed (12 min).
+
+Pending for this iteration: the vesselmap pipeline on the 20 test windows (about 3 days, running beside
+iteration 1, at the user's choice); the two missing test seeds (retried when memory allows); numeric targets
 for iterations 1–3.
