@@ -14,6 +14,8 @@ amount, through the app's own grab thread, preview, writers and analysis:
   bursts       the Capture-burst panel and the Record button save TIFF bursts
                bit-exact, with manifest.json and frames.csv; a snapshot is a
                bit-exact 16-bit PNG
+  foot pedal   a stand-in USB foot pedal captures for exactly as long as it
+               is held, and the key it types is kept out of the app
   review       bursts and videos open and play in the Review tab
   stabilize    translation and non-rigid, run from the Review tab as separate
                analysis processes, recover the known drift
@@ -71,7 +73,7 @@ import tifffile  # noqa: E402
 
 sys.path.insert(0, APP)
 import camera_recorder as cr  # noqa: E402
-from PyQt5 import QtCore, QtWidgets  # noqa: E402
+from PyQt5 import QtCore, QtGui, QtWidgets  # noqa: E402
 
 INSTALLED = cr.INSTALLED or ARGS.expect_installed
 INSTALL_ROOT = os.path.dirname(APP) if cr.INSTALLED else None
@@ -576,6 +578,98 @@ def bursts():
     return panel, ks
 
 
+@step("foot pedal")
+def foot_pedal():
+    pedal = win.pedal
+    if not pedal.available:
+        skip("foot pedal", "Windows only")
+        return
+    check(pedal.listening, "listens for a USB foot pedal (Windows raw input)")
+    note(f"a real pedal is {'plugged in' if pedal.present else 'not plugged in'}")
+    # Stand in for a pedal: a device the pedal code takes for one, fed what a
+    # PCsensor pedal sends — key "b" down, repeated while held, then up.
+    dev, B = 0x7EDA1, 0x42
+    pedal._known[dev] = True
+    pedal._add(dev)
+    pump(0.1)
+    check("foot pedal" in win.record_hint.text(), "the Record hint mentions the pedal",
+          win.record_hint.text())
+
+    def ready():
+        return wait_for(lambda: win.record_btn.isEnabled() and not win.bursting
+                        and not win.recording, 60)
+
+    win.record_mode.setCurrentIndex(win.record_mode.findData("burst"))
+    ready()
+    before = set(glob.glob(os.path.join(RECORDINGS, "burst_*")))
+    pedal._key(dev, B, False)
+    pump(0.1)
+    check(win.recording and win.record_btn.isDown(), "pressing the pedal starts a capture")
+    end = time.time() + 1.5
+    while time.time() < end:
+        pedal._key(dev, B, False)                   # the key repeats while held
+        pump(0.03)
+    check(win.recording, "holding the pedal keeps capturing (its key repeats ignored)")
+    pedal._key(dev, B, True)
+    pump(0.1)
+    check(not win.record_btn.isDown(), "releasing the pedal releases the button")
+    wait_for(lambda: not win.bursting and not win.recording, 60)
+    new = sorted(set(glob.glob(os.path.join(RECORDINGS, "burst_*"))) - before)
+    if check(len(new) == 1, f"pedal burst (held 1.5 s): {win.record_info.text()}"):
+        check_burst("Pedal burst", new[0], int(0.8 * 1.5 * FPS))
+
+    # unlike a tap of the button, a short press doesn't latch
+    ready()
+    pedal._key(dev, B, False)
+    pump(0.15)
+    pedal._key(dev, B, True)
+    pump(0.1)
+    check(not win.recording, "a short press records only while pressed (no latch)")
+
+    # a capture the button latched on: the pedal ends it
+    ready()
+    win._record_pressed()
+    win._record_released()                          # a tap: latched
+    pump(0.3)
+    pedal._key(dev, B, False)
+    pump(0.1)
+    check(not win.recording, "pressing the pedal stops a tapped-on capture")
+    pedal._key(dev, B, True)
+    pump(0.1)
+    check(not win.recording, "...and releasing it doesn't start another")
+
+    # The key events the pedal's keystrokes become are dropped: the press,
+    # each auto-repeat (Qt makes up a release before every repeated press)
+    # and the release. A keyboard "b" with nothing pending goes through.
+    def key_event(kind, autorep=False):
+        return QtGui.QKeyEvent(kind, QtCore.Qt.Key_B, QtCore.Qt.NoModifier,
+                               0x30, B, 0, "b", autorep)
+
+    press, release = QtCore.QEvent.KeyPress, QtCore.QEvent.KeyRelease
+    pedal._pending.clear()
+    dropped = []
+    for up, events in ((False, [key_event(press)]),
+                       (False, [key_event(release, True), key_event(press, True)]),
+                       (True, [key_event(release)])):
+        pedal._pending.append((B, up, time.monotonic()))   # its raw input, first
+        dropped += [pedal.eventFilter(win, ev) for ev in events]
+    check(all(dropped) and not pedal._pending,
+          "the key events the pedal types are dropped, repeats included", str(dropped))
+    check(not pedal.eventFilter(win, key_event(press))
+          and not pedal.eventFilter(win, key_event(release)),
+          "the keyboard's own 'b' goes through")
+    ready()
+
+    # unplugged mid-press: its release will never come, so the capture ends
+    pedal._key(dev, B, False)
+    pump(0.3)
+    pedal._on_device_change(2, dev)                 # GIDC_REMOVAL
+    pump(0.2)
+    check(not win.recording and not pedal.held, "unplugging the pedal mid-press ends the capture")
+    check(dev not in pedal._pedals, "the unplugged pedal is forgotten")
+    ready()
+
+
 @step("review")
 def review(panel):
     tab = win.review
@@ -831,6 +925,7 @@ def main():
             review(panel)
             stabilize(panel, ks)
             find_vessels(panel)
+        foot_pedal()
         live_view(info.get("cuda", False))
     real_camera()
     closing()

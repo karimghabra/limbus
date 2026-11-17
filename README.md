@@ -45,6 +45,17 @@ Desktop, or run:
    Anything held for less than half a second counts as a tap, so a clip
    is always at least that long. Videos are saved as `.mp4` files in the
    `recordings` folder, named by date and time.
+
+   **Foot pedal (Windows):** a USB foot pedal (PCsensor FootSwitch and
+   similar) records for exactly as long as you hold it down, leaving both
+   hands free. It works even when another window has the focus. Out of
+   the box these pedals type the letter "b". LIMBUS recognizes the pedal
+   by its USB ID, not by that letter, so the keyboard's own "b" never
+   records and the pedal's "b" never lands in LIMBUS's fields. In other
+   programs the pedal still types its letter; if that matters, program it
+   to send an unused key such as F13 with the pedal maker's tool. Pressing
+   the pedal during a tapped-on recording stops it. Supported pedals are
+   listed in `foot_pedal.py` (`PEDAL_IDS`).
 3. **📷 Snapshot** saves a single still image (`.png`).
    **Stabilize the live view** (under it) holds the picture steady against
    eye motion while you aim and focus: every frame is registered on the
