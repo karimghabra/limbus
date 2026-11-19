@@ -21,3 +21,12 @@ _work/
 # Installer builds (installer/build_bundle.py, installer/limbus.iss)
 build/
 dist/
+
+# Python environments
+.venv/
+
+# what the notebooks make when run from their own folder (notebooks/README.md)
+notebooks/previews/
+notebooks/vessel_pictures/
+notebooks/neural_cache/
+__marimo__/

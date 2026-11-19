@@ -1,0 +1,12 @@
+# The analysis notebooks (notebooks/README.md). Tested with Python 3.12: marimo 0.25.2, numpy 2.5.5,
+# scipy 1.18.1, opencv-python-headless 5.1.0.95, scikit-image 0.26.0, matplotlib, pillow, ipython 9.18.1.
+marimo>=0.25.2
+watchdog            # lets `marimo edit --watch` see file changes at once instead of polling
+ipython             # the notebook's previews use IPython.display, which marimo renders
+nbformat            # `marimo export ipynb`, for a Jupyter or Colab copy
+numpy>=2.0
+scipy>=1.14
+opencv-python-headless>=4.8
+scikit-image>=0.24
+matplotlib>=3.8
+pillow>=10

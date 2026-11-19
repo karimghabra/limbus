@@ -1,0 +1,15 @@
+# marimo settings for the notebooks in this folder (marimo reads [tool.marimo] from the nearest pyproject.toml).
+# The foundation notebook loads a whole burst and runs for many minutes, so nothing runs on its own:
+# opening it, editing a cell or pulling a changed file only marks cells stale until they are run.
+[tool.marimo.runtime]
+auto_instantiate = false
+on_cell_change = "lazy"
+watcher_on_save = "lazy"
+
+# Several browsers open on one notebook share one session and one kernel, and see each other's edits,
+# instead of each starting a kernel of its own (and loading the burst again). Experimental in marimo 0.25.
+[tool.marimo.experimental]
+rtc_v2 = true
+
+[tool.marimo.save]
+autosave = "after_delay"
