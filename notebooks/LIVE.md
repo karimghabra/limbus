@@ -40,7 +40,9 @@ build that runs without administrator rights) and makes the access token. `start
 server and Tailscale. The first time it prints a **sign-in link**: the PC is not on a tailnet yet.
 
 `notebooks/live.sh status` shows what runs and where; `notebooks/live.sh stop` stops the server.
-After a restart of the PC, run `notebooks/live.sh start` again.
+After a restart of the PC, run the same `notebooks/live.sh start --burst …` again: the burst is not
+remembered. The server and Tailscale run as systemd user services, so WSL needs systemd on
+(`systemd=true` under `[boot]` in `/etc/wsl.conf`).
 
 ## Once, on the laptop
 

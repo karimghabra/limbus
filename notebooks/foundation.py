@@ -35,7 +35,7 @@ def _(mo):
     | 9 | The mean frame of each fixation | `fixation_means` | 10 |
     | 10 | Fit the background, measure the density | `background_fits`, `density_fixations`, `density_means` | 12 |
     | 11 | Find the quiet pixels | `fluctuation_ratio`, `quiet_pixels`, `changing_pixels` | 12 |
-    | 12 | Refit the background on the quiet pixels | `background_fits`, **`density_fixations`** | 12 |
+    | 12 | Refit the background on the quiet pixels | `final_background_fits`, **`final_density_fixations`** | 12 |
     | 13 | Follow the shading from frame to frame | `frame_shadings`, `temporal_frame()` | 13–14 |
     | 14 | The smear of the temporal burst | `burst_smears` | 15 |
     | 15 | Clean the smear's background | `smear_fits`, `cleaned_smears` | 16 |
@@ -1632,7 +1632,8 @@ def _(
           3. refit the background B on the pixels outside M: a local mean
              (masked_mean, sigma) while the mask is still being built, a thin
              plate (thin_plate_background, wavelength) for every background
-             that is used: the last iteration and the refits below
+             that is used: the last iteration and the refits below. with
+             wavelength=None those are local means too (§15's smear)
           4. OD = B - L
         then two optional extra refits:
           - od refit: add every pixel whose OD is above od_threshold x noise to
@@ -1651,9 +1652,9 @@ def _(
         first-guess settings (see first_background), number of refits, mask
         thresholds (z_low=None for a plain threshold, od_threshold=None or
         glare_threshold=None to skip those refits), mask closing and dilation,
-        background sigma (mask-building refits), thin-plate wavelength (final
-        refits), noise window, contrast bands, saturation level (all sizes in
-        pixels)
+        background sigma (mask-building refits), thin-plate wavelength
+        (final refits; None for a local mean of `sigma` there as well),
+        noise window, contrast bands, saturation level (all sizes in pixels)
 
         output: dict with L, ok, B0, OD0, bg0 (the first guess and its background
         pixels), B (fitted background, log units), OD (B - L, the target),
@@ -1673,7 +1674,7 @@ def _(
         def refit(name, final=False):
             nonlocal bg, B, od
             bg = ok & ~vessels
-            B = thin_plate_background(L, bg, wavelength) if final else masked_mean(L, bg, sigma)
+            B = thin_plate_background(L, bg, wavelength) if final and wavelength else masked_mean(L, bg, sigma)
             od = B - L
             history.append({'name': name, 'M': vessels, 'bg': bg, 'B': B, 'OD': od})
 
@@ -2142,7 +2143,7 @@ def _(
         _axis.axis("off")
     _figure.tight_layout()
     plt.show()
-    return SLOW_WINDOW, blur_valid, changing_pixels, quiet_pixels
+    return SLOW_WINDOW, blur_valid, changing_pixels, fluctuation_ratio, quiet_pixels
 
 
 @app.cell(hide_code=True)
@@ -2154,12 +2155,12 @@ def _(mo):
 
     **The guard.** A quiet pixel is not background when it stands out spatially as a vessel: `blur(OD, 1)` above `VESSEL_GUARD` times the local noise, `fit_background`'s own criterion. Vessels without countable cells show no fast change: the packed cores of the big vessels, and the deep, blurred vessels below the focal plane. On this burst the guard removes about a fifth of the quiet pixels; without it the background would be fitted through those vessels and take them out of the density.
 
-    Every frame is then measured again against the refitted $B$, and `density_means` is made again. Each fixation's first measurement is freed before the second is made, so the two never sit in memory together. The cell can be run again: it always refits from §10's fit.
+    Every frame is then measured again against the refitted $B$, and `density_means` is made again. Each fixation's first measurement is freed before the second is made, so the two never sit in memory together: §10's lists are refitted in place. The cell gives them back under names of their own, `final_…`, and every later section reads those, so marimo knows that what follows depends on this cell. The cell can be run again: it always refits from §10's fit.
 
     | Output | Content |
     |---|---|
-    | `background_fits` | updated: `B`, `OD`, `bg` and `M` are now the quiet refit's. Its `history` ends with a `"quiet refit"` entry, and the entry before that is §10's fit. |
-    | `density_fixations`, `density_offsets`, `density_means` | measured again against the refitted background: **the final density** |
+    | `final_background_fits` | `background_fits`, updated: `B`, `OD`, `bg` and `M` are now the quiet refit's. Its `history` ends with a `"quiet refit"` entry, and the entry before that is §10's fit. |
+    | `final_density_fixations`, `final_density_offsets`, `final_density_means` | `density_fixations`, `density_offsets` and `density_means`, measured again against the refitted background: **the final density** |
     """)
     return
 
@@ -2214,7 +2215,14 @@ def _(
               f"{from_quiet * 100:.0f}% of them quiet pixels (the guard kept {guarded * 100:.0f}% of the quiet pixels out); "
               f"density of the mean on them "
               f"{robust_sd(_fit['OD'][_fit['bg']]):.4f} (robust sd) | frame offsets {_offsets.min():+.4f} to {_offsets.max():+.4f}")
-    return
+    final_background_fits, final_density_fixations = background_fits, density_fixations
+    final_density_offsets, final_density_means = density_offsets, density_means
+    return (
+        final_background_fits,
+        final_density_fixations,
+        final_density_means,
+        final_density_offsets,
+    )
 
 
 @app.cell(hide_code=True)
@@ -2226,12 +2234,12 @@ def _(mo):
 
 
 @app.cell
-def _(background_fits, fixation_means, fixations, np, plt):
+def _(final_background_fits, fixation_means, fixations, np, plt):
     DENSITY_RANGE = (-0.1, 0.5)  # optical density shown from black to white, here and in the preview below
 
     # show each fit: the fixation's mean, the fitted background, the density of the mean and the pixels kept out of the fit
     _figure, _axes = plt.subplots(len(fixations), 4, figsize=(16, 2.9 * len(fixations)), squeeze=False)
-    for _number, (_fit, _mean, _row) in enumerate(zip(background_fits, fixation_means, _axes)):
+    for _number, (_fit, _mean, _row) in enumerate(zip(final_background_fits, fixation_means, _axes)):
         brightness = np.nanpercentile(_mean[::4, ::4], [0.5, 99.5])
         _panels = (
             (f"fixation {_number}: mean frame", _mean, brightness),
@@ -2265,7 +2273,7 @@ def _(
     anchor_to_reference,
     create_animation,
     cv2,
-    density_fixations,
+    final_density_fixations,
     fixations,
     fps,
     frame_height,
@@ -2290,7 +2298,7 @@ def _(
 
     if SHOW_PREVIEWS:
         _preview_frames = np.empty((num_frames, preview_height, PREVIEW_WIDTH), dtype=np.uint8)
-        for _number, (_fixation, _density) in enumerate(zip(fixations, density_fixations)):
+        for _number, (_fixation, _density) in enumerate(zip(fixations, final_density_fixations)):
             for _index, _frame in zip(_fixation["frames"], _density):
                 _preview_frames[_index] = preview_tile(_frame, _number, *DENSITY_RANGE)
         create_animation(_preview_frames, "density_burst", fps=fps)
@@ -2303,11 +2311,11 @@ def _(mo):
     mo.md(r"""
     ## 13 · Follow the shading from frame to frame
 
-    The **temporal burst** is each frame's density minus its fixation's mean density, `density_means` (§12). A fixation's background $B$ is the same in every frame, so it drops out of this difference. That also means it no longer matters which pixels the background was fitted on: fitted on the quiet pixels (§12) or without any temporal data (§10), the two backgrounds differ by one constant per frame. The cell prints how large that constant is.
+    The **temporal burst** is each frame's density minus its fixation's mean density, `final_density_means` (§12). A fixation's background $B$ is the same in every frame, so it drops out of this difference. That also means it no longer matters which pixels the background was fitted on: fitted on the quiet pixels (§12) or without any temporal data (§10), the two backgrounds differ by one constant per frame. The cell prints how large that constant is.
 
     What is left in the temporal burst are large soft shadows that drift across the picture. They are not vessels. The illumination is fixed to the camera, and within a fixation the eye still moves by tens of pixels, so the lighting pattern slides over the tissue from frame to frame. One background per fixation cannot follow it.
 
-    **The slow movement.** Finer than the shading, patches of the field drift by 1 to 2% over a second or two (§11). `slow_movement` is each pixel's running mean of the temporal burst over `SLOW_WINDOW` frames, and `fast_frame` takes it out, keeping only what changes within a few frames: the blood. It is a guard for looking, as §11's is for judging; `density_fixations` itself is unchanged.
+    **The slow movement.** Finer than the shading, patches of the field drift by 1 to 2% over a second or two (§11). `slow_movement` is each pixel's running mean of the temporal burst over `SLOW_WINDOW` frames, and `fast_frame` takes it out, keeping only what changes within a few frames: the blood. It is a guard for looking, as §11's is for judging; `final_density_fixations` itself is unchanged.
 
     **A background for every frame removes the shadows.** Each frame's density is brought to 0 on the background pixels around each pixel, not only over the frame as a whole. The local mean of the frame's density over the background pixels, `SHADING_SIGMA` pixels wide, is the frame's **shading**. Under a vessel it is bridged from the background on either side, so what happens inside the vessel is left alone. No temporal data is used here: the background and its pixels are those `fit_background` found from the mean frame alone, before the quiet refit, and each frame's shading is measured in that frame by itself.
 
@@ -2316,8 +2324,8 @@ def _(mo):
     | `density_noise`, `density_limit` | the noise of the temporal burst, and the ± range (`DISPLAY_SIGMAS` times the noise) that the previews show |
     | `frame_shadings` | per fixation, `(frames, rows / SHADING_SCALE, columns / SHADING_SCALE)`: what each frame's shading adds to the fixation's average shading, on a coarse grid. `enlarge` brings one to full size. |
     | `frame_centres` | per fixation, `(frames,)`: the constant that goes with each frame's shading |
-    | `temporal_frame(n, i)` | frame `i` of fixation `n`: its density with the moving shading taken out. Positive in vessels, about 0 on background. `density_fixations` itself is unchanged. |
-    | `slow_movement(n, i)`, `fast_frame(n, i)` | the running mean of the temporal burst (`temporal_frame` minus `density_means`) over `SLOW_WINDOW` frames around frame `i`, §11's slow movement per pixel; and `temporal_frame` with it taken out: what moves from one frame to the next |
+    | `temporal_frame(n, i)` | frame `i` of fixation `n`: its density with the moving shading taken out. Positive in vessels, about 0 on background. `final_density_fixations` itself is unchanged. |
+    | `slow_movement(n, i)`, `fast_frame(n, i)` | the running mean of the temporal burst (`temporal_frame` minus `final_density_means`) over `SLOW_WINDOW` frames around frame `i`, §11's slow movement per pixel; and `temporal_frame` with it taken out: what moves from one frame to the next |
     """)
     return
 
@@ -2327,11 +2335,11 @@ def _(
     SLOW_WINDOW,
     ThreadPoolExecutor,
     anchor,
-    background_fits,
     changing_pixels,
     cv2,
-    density_fixations,
-    density_means,
+    final_background_fits,
+    final_density_fixations,
+    final_density_means,
     fixations,
     frame_height,
     frame_width,
@@ -2343,7 +2351,7 @@ def _(
     DISPLAY_SIGMAS = 4.0  # the previews show this many noise standard deviations either side of 0
 
     density_noise = 1.4826 * np.nanmedian(
-        np.abs(density_fixations[anchor][::8, ::8, ::8] - density_means[anchor][::8, ::8])
+        np.abs(final_density_fixations[anchor][::8, ::8, ::8] - final_density_means[anchor][::8, ::8])
     )
     density_limit = DISPLAY_SIGMAS * density_noise
     print(f"The temporal burst has a noise of {density_noise:.4f} optical density; "
@@ -2369,9 +2377,9 @@ def _(
 
     def spatial_frame(number, position):
         """Return what centres one frame on the background fitted without temporal data, and the frame's shading."""
-        fit = background_fits[number]
+        fit = final_background_fits[number]
         spatial = fit["history"][-2]  # the last fit made from the mean frame alone, before the quiet refit
-        density = density_fixations[number][position] + (spatial["B"] - fit["B"])
+        density = final_density_fixations[number][position] + (spatial["B"] - fit["B"])
         centre = np.median(density[spatial["bg"] & np.isfinite(density)])  # centred on 0 over its background, as in §12
         return centre, frame_shading(density - centre, spatial["bg"])
 
@@ -2380,7 +2388,7 @@ def _(
         """Return one frame of a fixation with the shading that moves from frame to frame taken out: its density,
         positive in vessels, about 0 on background, NaN where the frame has no data."""
         shading = enlarge(frame_shadings[number][position]) + np.float32(frame_centres[number][position])
-        return density_fixations[number][position] - shading
+        return final_density_fixations[number][position] - shading
 
 
     def slow_movement(number, position):
@@ -2391,7 +2399,7 @@ def _(
         first = max(0, min(position - SLOW_WINDOW // 2, count - SLOW_WINDOW))
         window = np.stack([temporal_frame(number, p) for p in range(first, min(first + SLOW_WINDOW, count))])
         with np.errstate(invalid="ignore"):
-            return np.nanmean(window, axis=0) - density_means[number]
+            return np.nanmean(window, axis=0) - final_density_means[number]
 
 
     def fast_frame(number, position):
@@ -2425,7 +2433,7 @@ def _(
     _sample = range(SLOW_WINDOW // 2, len(fixations[anchor]["frames"]) - SLOW_WINDOW // 2, 8)
     slow_quiet, slow_changing, all_quiet, all_changing = [], [], [], []
     for _position in _sample:
-        burst = temporal_frame(anchor, _position) - density_means[anchor]  # the temporal burst, as the preview shows it
+        burst = temporal_frame(anchor, _position) - final_density_means[anchor]  # the temporal burst, as the preview shows it
         slow = slow_movement(anchor, _position)
         for mask, slow_part, whole in ((quiet_pixels[anchor], slow_quiet, all_quiet),
                                        (changing_pixels[anchor], slow_changing, all_changing)):
@@ -2452,8 +2460,8 @@ def _(
     SHOW_PREVIEWS,
     create_animation,
     density_limit,
-    density_means,
     fast_frame,
+    final_density_means,
     fixations,
     fps,
     np,
@@ -2467,8 +2475,8 @@ def _(
         for _number, _fixation in enumerate(fixations):
             for _position, _index in enumerate(_fixation["frames"]):
                 # the frame minus the mean over time, negated so dark means less light
-                followed = density_means[_number] - temporal_frame(_number, _position)
-                fast = density_means[_number] - fast_frame(_number, _position)
+                followed = final_density_means[_number] - temporal_frame(_number, _position)
+                fast = final_density_means[_number] - fast_frame(_number, _position)
                 comparison_frames[_index, :, :PREVIEW_WIDTH] = preview_tile(followed, _number, -density_limit, density_limit)
                 comparison_frames[_index, :, PREVIEW_WIDTH:] = preview_tile(fast, _number, -density_limit, density_limit)
         create_animation(comparison_frames, "per_frame_background_and_slow_movement_removed", fps=fps, width=2 * PREVIEW_WIDTH)
@@ -2499,10 +2507,10 @@ def _(
     DENSITY_RANGE,
     anchor,
     blur_valid,
-    density_fixations,
     density_limit,
-    density_means,
     enlarge,
+    final_density_fixations,
+    final_density_means,
     fixation_means,
     fixations,
     frame_shadings,
@@ -2518,7 +2526,7 @@ def _(
 
     burst_smears = []  # per fixation: the temporal burst's standard deviation over time, shot noise evened out
     burst_averages = []
-    for _number, (_density, _mean_density, _changes) in enumerate(zip(density_fixations, density_means, frame_shadings)):
+    for _number, (_density, _mean_density, _changes) in enumerate(zip(final_density_fixations, final_density_means, frame_shadings)):
         summed, soft_sum, soft_squares = (np.zeros(frame_shape, dtype=np.float64) for _ in range(3))
         _seen = np.zeros(frame_shape, dtype=np.uint16)
         for _frame, _change in zip(_density, _changes):
@@ -2543,7 +2551,7 @@ def _(
     _figure, _axes = plt.subplots(len(fixations), 3, figsize=(16, 3.8 * len(fixations)), squeeze=False)
     for _number, _row in enumerate(_axes):
         _shown = (
-            (f"fixation {_number}: mean density, which was subtracted", density_means[_number], DENSITY_RANGE),
+            (f"fixation {_number}: mean density, which was subtracted", final_density_means[_number], DENSITY_RANGE),
             ("average of the temporal burst over time: 0", burst_averages[_number], (-density_limit, density_limit)),
             ("smear of the temporal burst: its fluctuation over time", burst_smears[_number], smear_range),
         )
@@ -2570,9 +2578,9 @@ def _(mo):
     \text{cleaned smear} \;=\; \frac{\text{smear} - \text{fitted background of the smear}}{\text{noise floor}}:
     $$
 
-    0 where nothing flows and, on a vessel, the fluctuation above the background in multiples of the noise floor. The smear's background is a much wider local mean than the average frame's (`SMEAR_SIGMA` pixels against 8). The noise floor is nearly flat, and a narrow fit creeps up the widest vessels and hollows them out.
+    0 where nothing flows and, on a vessel, the fluctuation above the background in multiples of the noise floor. The smear's background is a local mean, `SMEAR_SIGMA` pixels wide, in every refit: `fit_background` is called with `wavelength=None`, so it fits no thin plate here, unlike §10 with its `BACKGROUND_WAVELENGTH` of 30 pixels. The noise floor is nearly flat, and a fit that follows the picture that closely creeps up the widest vessels and hollows them out.
 
-    The cleaned smear is compared with the **background-cleaned average frame**, `background_fits[n]["OD"]`. The average frame shows how much light a place takes away on average; the smear shows how much that changes from frame to frame. A pixel *stands out* in either picture when it is more than `STANDS_OUT` times that picture's background noise above 0.
+    The cleaned smear is compared with the **background-cleaned average frame**, `final_background_fits[n]["OD"]`. The average frame shows how much light a place takes away on average; the smear shows how much that changes from frame to frame. A pixel *stands out* in either picture when it is more than `STANDS_OUT` times that picture's background noise above 0.
 
     Two figures: **the cleaning** per fixation (the smear, its fitted background, what is left, and the pixels kept out of the fit), and **the comparison** per fixation. In the comparison's last panel the average frame is magenta and the smear green: white is a place both mark, magenta one that takes light away without changing, green one that only changes.
 
@@ -2588,8 +2596,8 @@ def _(mo):
 def _(
     DENSITY_RANGE,
     anchor,
-    background_fits,
     burst_smears,
+    final_background_fits,
     fit_background,
     fixations,
     gray,
@@ -2610,13 +2618,13 @@ def _(
         _histogram, _edges = np.histogram(_values, bins=400, range=(0, np.percentile(_values, 99)))
         _floor = _edges[np.argmax(_histogram):][:2].mean()
         # exp(-smear / floor) is bright where the smear is low and dark on the vessels; its log is -smear / floor
-        _fit = fit_background(np.exp(-smear / _floor), sigma=SMEAR_SIGMA)
+        _fit = fit_background(np.exp(-smear / _floor), sigma=SMEAR_SIGMA, wavelength=None)
         _seen = np.isfinite(smear)
         _cleaned = np.where(_seen, _fit["OD"], np.nan)
         smear_fits.append(_fit)
         cleaned_smears.append(_cleaned)
 
-        _average_fit = background_fits[_number]
+        _average_fit = final_background_fits[_number]
         _average = np.where(_seen, _average_fit["OD"], np.nan)  # the background-cleaned average frame, where the smear has data
         average_noise = robust_sd(_average[_average_fit["bg"] & _seen])
         smear_noise = robust_sd(_cleaned[_fit["bg"] & _seen])
@@ -2695,8 +2703,8 @@ def _(
     Image,
     STANDS_OUT,
     anchor,
-    background_fits,
     cleaned_smears,
+    final_background_fits,
     fixations,
     gray,
     np,
@@ -2709,7 +2717,7 @@ def _(
     shown_together = []
     for _number, _cleaned in enumerate(cleaned_smears):
         _seen = np.isfinite(_cleaned)
-        _average_fit, smear_fit = background_fits[_number], smear_fits[_number]
+        _average_fit, smear_fit = final_background_fits[_number], smear_fits[_number]
         in_average = np.where(_seen, _average_fit["OD"], np.nan) / robust_sd(_average_fit["OD"][_average_fit["bg"] & _seen])
         in_smear = _cleaned / robust_sd(_cleaned[smear_fit["bg"] & _seen])
         combined_sums.append(in_average + in_smear)
@@ -2784,10 +2792,10 @@ def _(mo):
     |---|---|
     | The recording | `raw_burst`, `fps`, `gated_frames`, `gated_indices`, `frame_times` |
     | The motion | `step_shifts`, `frame_positions`, `fixation_members`, `fixations`, `anchor` |
-    | Frames, per fixation | `raw_fixations` → `stabilized_fixations` → `density_fixations` |
+    | Frames, per fixation | `raw_fixations` → `stabilized_fixations` → `final_density_fixations` |
     | Frames, whole burst | `stabilized_frames`, in the anchor's frame |
-    | Pictures, per fixation | `fixation_means`, `density_means`, `background_fits[n]["OD"]`, `burst_smears`, `cleaned_smears`, `combined_sums` |
-    | Masks, per fixation | `quiet_pixels`, `changing_pixels`, `background_fits[n]["bg"]`, `background_fits[n]["ok"]` |
+    | Pictures, per fixation | `fixation_means`, `final_density_means`, `final_background_fits[n]["OD"]`, `burst_smears`, `cleaned_smears`, `combined_sums` |
+    | Masks, per fixation | `quiet_pixels`, `changing_pixels`, `final_background_fits[n]["bg"]`, `final_background_fits[n]["ok"]` |
     | Functions | `phase_shift`, `frame_spectrum`, `clean_frame`, `anchor_to_reference`, `frame_area`, `fit_background`, `measure_density`, `temporal_mean`, `masked_mean`, `robust_sd`, `blur`, `blur_valid`, `enlarge`, `temporal_frame`, `create_animation` |
 
     The cell below lists the arrays with their shapes, types and sizes in memory.
@@ -2796,16 +2804,36 @@ def _(mo):
 
 
 @app.cell
-def _():
-    OUTPUTS = ("raw_burst", "gated_frames", "raw_fixations", "stabilized_frames", "stabilized_fixations",
-               "density_fixations", "aligned_fixation_averages", "fixation_means", "density_means", "burst_smears",
-               "cleaned_smears", "combined_sums", "quiet_pixels", "changing_pixels", "fluctuation_ratio", "sensor_map",
-               "frame_shadings")
+def _(
+    aligned_fixation_averages,
+    burst_smears,
+    changing_pixels,
+    cleaned_smears,
+    combined_sums,
+    final_density_fixations,
+    final_density_means,
+    fixation_means,
+    fluctuation_ratio,
+    frame_shadings,
+    gated_frames,
+    quiet_pixels,
+    raw_burst,
+    raw_fixations,
+    sensor_map,
+    stabilized_fixations,
+    stabilized_frames,
+):
+    OUTPUTS = {"raw_burst": raw_burst, "gated_frames": gated_frames, "raw_fixations": raw_fixations,
+               "stabilized_frames": stabilized_frames, "stabilized_fixations": stabilized_fixations,
+               "final_density_fixations": final_density_fixations, "aligned_fixation_averages": aligned_fixation_averages,
+               "fixation_means": fixation_means, "final_density_means": final_density_means, "burst_smears": burst_smears,
+               "cleaned_smears": cleaned_smears, "combined_sums": combined_sums, "quiet_pixels": quiet_pixels,
+               "changing_pixels": changing_pixels, "fluctuation_ratio": fluctuation_ratio, "sensor_map": sensor_map,
+               "frame_shadings": frame_shadings}
 
     held = 0
     print(f"{'name':28s} {'shape':40s} {'dtype':8s} {'MB':>7s}")
-    for _name in OUTPUTS:
-        value = globals()[_name]
+    for _name, value in OUTPUTS.items():
         arrays = value if isinstance(value, list) else [value]
         _shapes = ", ".join(str(array.shape) for array in arrays)
         views = sum(array.base is not None for array in arrays)  # a view shows memory that another output holds
@@ -2826,10 +2854,10 @@ def _(mo):
 
     | What | Where |
     |---|---|
-    | the still picture: density of the mean frame, vessels bright on 0 | `background_fits[anchor]["OD"]` |
-    | the data area those pictures share | `np.isfinite(cleaned_smears[anchor]) & background_fits[anchor]["ok"]` |
-    | background pixels, to calibrate a noise level against | `quiet_pixels[anchor] & background_fits[anchor]["bg"]`, within the data area |
-    | what flows: the change in density between two frames | `(density_fixations[anchor][i + 1] - density_fixations[anchor][i]) / np.diff(fixations[anchor]["times"])[i]` |
+    | the still picture: density of the mean frame, vessels bright on 0 | `final_background_fits[anchor]["OD"]` |
+    | the data area those pictures share | `np.isfinite(cleaned_smears[anchor]) & final_background_fits[anchor]["ok"]` |
+    | background pixels, to calibrate a noise level against | `quiet_pixels[anchor] & final_background_fits[anchor]["bg"]`, within the data area |
+    | what flows: the change in density between two frames | `(final_density_fixations[anchor][i + 1] - final_density_fixations[anchor][i]) / np.diff(fixations[anchor]["times"])[i]` |
     | one frame with the drifting shading taken out | `temporal_frame(anchor, i)` |
     | where the tissue fluctuates | `cleaned_smears[anchor]` |
     | the two pictures together | `combined_sums[anchor]` |
@@ -2890,7 +2918,7 @@ def _(mo):
 
     The exploratory versions of these steps live in `karim_attempt_exploration.ipynb`: the on/off-centre field, the 3D views, the walker comparison at crossings, the 2D signal comparisons, and greedy subtraction.
 
-    **Input.** The average over time of `density_fixations[0]` is `density_means[0]`, from §12: optical density, with vessels bright on a background at 0. Glare leaves a few small holes inside the data; each is filled with the mean of the data around it. Outside the data the input is 0, the background's level, and neurons within reach of the data's outer edge stay silent. The background's spread, `nf_noise`, is measured on the quiet background pixels of §11–§12. It is the noise level that later tests are stated in.
+    **Input.** The average over time of `final_density_fixations[0]` is `final_density_means[0]`, from §12: optical density, with vessels bright on a background at 0. Glare leaves a few small holes inside the data; each is filled with the mean of the data around it. Outside the data the input is 0, the background's level, and neurons within reach of the data's outer edge stay silent. The background's spread, `nf_noise`, is measured on the quiet background pixels of §11–§12. It is the noise level that later tests are stated in.
 
     **Saved to disk.** The orientation field is saved in `neural_cache/` under a hash of its input image, its settings and the source code of the functions that compute it. A later run with the same three loads it instead of computing it again. Every figure goes to `vessel_pictures/neural_fields/` under the same hash.
     """)
@@ -2900,9 +2928,9 @@ def _(mo):
 @app.cell
 def _(
     Path,
-    background_fits,
     cv2,
-    density_means,
+    final_background_fits,
+    final_density_means,
     hashlib,
     json,
     masked_mean,
@@ -2973,15 +3001,15 @@ def _(
         print(f"Saved {path}")
 
 
-    nf_average = density_means[NF_FIXATION]  # the average over time of density_fixations[NF_FIXATION] (temporal_mean, §12)
-    nf_data = np.isfinite(nf_average) & background_fits[NF_FIXATION]["ok"]
+    nf_average = final_density_means[NF_FIXATION]  # the average over time of final_density_fixations[NF_FIXATION] (temporal_mean, §12)
+    nf_data = np.isfinite(nf_average) & final_background_fits[NF_FIXATION]["ok"]
     nf_outline = scipy.ndimage.binary_fill_holes(nf_data)  # the data's outline, without the small holes glare leaves inside
     nf_holes = nf_outline & ~nf_data
     nf_image = np.where(nf_data, nf_average, 0).astype(np.float32)  # outside the outline: the background's density, 0
     nf_image = np.where(nf_holes, masked_mean(nf_image, nf_data, 4), nf_image).astype(np.float32)  # a hole: the data around it
     nf_margin = max(NF_KERNEL_SIZES) // 2 + int(np.ceil(2 * max(NF_BLURS)))  # pixels; how far the widest neuron reaches
     nf_inside = cv2.erode(nf_outline.astype(np.uint8), np.ones((2 * nf_margin + 1,) * 2, np.uint8), borderValue=0) > 0
-    nf_background = quiet_pixels[NF_FIXATION] & background_fits[NF_FIXATION]["bg"] & nf_inside
+    nf_background = quiet_pixels[NF_FIXATION] & final_background_fits[NF_FIXATION]["bg"] & nf_inside
     nf_noise_pixels = np.flatnonzero(nf_background)[::4]  # every neuron's noise is measured on these pixels
     nf_noise = robust_sd(nf_image.flat[nf_noise_pixels])  # optical density; the spread of the background, for §20's test
     print(f"Fixation {NF_FIXATION}: neurons fire on {nf_inside.mean() * 100:.0f}% of the frame, at least {nf_margin} px from "
@@ -4754,7 +4782,7 @@ def _(
     banded_key,
     cores_picture,
     cv2,
-    density_fixations,
+    final_density_fixations,
     final_fit,
     final_vessels,
     fit_field,
@@ -5098,7 +5126,7 @@ def _(
         return float(np.median(values))
 
 
-    nf_null = split_half_null(density_fixations[NF_FIXATION])
+    nf_null = split_half_null(final_density_fixations[NF_FIXATION])
     print(f"Split-half null: the noise of the mean density is {robust_sd(nf_null[nf_background]):.4f} on the background "
           f"pixels (nf_noise, which also holds what the background fit left, is {nf_noise:.4f}) and "
           f"{robust_sd(nf_null[(vessel_cover(final_fit) >= 0.5) & nf_data]):.4f} in the vessels' cores")
@@ -5331,7 +5359,7 @@ def _(mo):
     | Output | Content |
     |---|---|
     | `flows` | the flow pictures, variance less floor, of `"all"` the frames, the `"even"` and the `"odd"` ones |
-    | `flow_vessels`, `flow_fit` | the vessels and the density's fit that §25 uses: §23's, or with `FLOW_LEVELS`, those of the joint fit after settling |
+    | `flow_vessels`, `flow_fit`, `joint_haze` | the vessels, the density's fit and the haze that §25 uses: §23's, or with `FLOW_LEVELS`, those of the joint fit after settling |
     | `flow_per_density`, `still` | per vessel: its median flow over its median density amplitude, and whether that is below `NO_FLOW_SHARE` of the median |
     | `flow_amplitude_fit`, `flow_haze` | every vessel's flow amplitude along it (`["amplitudes"]`), fitted on all the frames, and the flow between the vessels |
     | `flow_residual` | the flow the vessels do not explain: flowing structure that was never traced |
@@ -5351,9 +5379,9 @@ def _(
     box_ratios,
     cores_picture,
     cv2,
-    density_fixations,
     estimate_haze,
     failing_pixels,
+    final_density_fixations,
     fine_fit,
     fine_region,
     fine_vessels,
@@ -5430,14 +5458,14 @@ def _(
 
     def flow_misfits(name, vessels, fit, flow_fit, flow_haze):
         """The residual rms over the field of the density, and of the even (fitted) and odd (held out) frames' flow."""
-        flow_check[name] = {"density": residual_rms(nf_image - haze - fit["model"], fine_region),
+        flow_check[name] = {"density": residual_rms(nf_image - joint_haze - fit["model"], fine_region),
                             "even": residual_rms(flows["even"] - flow_haze - flow_fit["model"], fine_region),
                             "odd": residual_rms(flows["odd"] - flow_haze - flow_fit["model"], fine_region)}
 
 
     flow_started = time.time()
-    variances = frame_variances(density_fixations[NF_FIXATION])
-    flow_seen = nf_data & (variances.pop("frames") >= FLOW_MIN_FRAMES * len(density_fixations[NF_FIXATION]))  # not glare's halo
+    variances = frame_variances(final_density_fixations[NF_FIXATION])
+    flow_seen = nf_data & (variances.pop("frames") >= FLOW_MIN_FRAMES * len(final_density_fixations[NF_FIXATION]))  # not glare's halo
     flows = {}  # the flow pictures: each pixel's variance over time, less the floor that noise alone gives
     for key, _variance in variances.items():
         _floor = local_mean(_variance, nf_background & flow_seen & np.isfinite(_variance), FLOW_FLOOR_SIGMA)
@@ -5454,6 +5482,7 @@ def _(
 
     # the flow on §23's geometry: every vessel's flow amplitude, fitted on the even frames, judged on the odd ones
     flow_check = {}
+    joint_haze = haze  # §23's haze; the joint levels estimate it again
     even_fit, even_haze = flow_fit_of(fine_vessels, fine_fit["bases"], flows["even"])
     flow_misfits("§23's geometry", fine_vessels, fine_fit, even_fit, even_haze)
 
@@ -5465,7 +5494,7 @@ def _(
     for _level, (_blur, _box, _spacing) in enumerate(FLOW_LEVELS, start=1):
         assert _blur == 0, "the flow picture is a variance: it is never blurred"
         _started = time.time()
-        leftovers = {"amplitude": (nf_image - haze - _fit["model"]).astype(np.float64),
+        leftovers = {"amplitude": (nf_image - joint_haze - _fit["model"]).astype(np.float64),
                      "flow": (flows["even"] - flow_haze - even_fit["model"]).astype(np.float64)}
         weights = {"amplitude": 1 / np.mean(leftovers["amplitude"][fine_region] ** 2),
                    "flow": FLOW_WEIGHT / np.mean(leftovers["flow"][fine_region] ** 2)}
@@ -5494,15 +5523,15 @@ def _(
             _changed += 1
             _moved.append(_result["moved"])
         del leftovers
-        _fit = fit_field(_vessels, target=nf_image - haze)
-        haze[...] = estimate_haze(nf_image - _fit["model"], vessel_cover(_fit) < HAZE_CLEAR)  # in place: §25 reads it
-        _fit = fit_field(_vessels, _fit["bases"], target=nf_image - haze)
+        _fit = fit_field(_vessels, target=nf_image - joint_haze)
+        joint_haze = estimate_haze(nf_image - _fit["model"], vessel_cover(_fit) < HAZE_CLEAR)
+        _fit = fit_field(_vessels, _fit["bases"], target=nf_image - joint_haze)
         even_fit, flow_haze = flow_fit_of(_vessels, _fit["bases"], flows["even"])
         print(f"joint level {_level} (knots every {_spacing:g} px): {_changed} vessels corrected, centres moved "
               f"{np.mean(_moved):.2f} px ({time.time() - _started:.0f} s)")
     if FLOW_LEVELS:
         flow_misfits("joint geometry", _vessels, _fit, even_fit, flow_haze)
-        flow_vessels, flow_fit, flow_counts = settle(_vessels, target=nf_image - haze)
+        flow_vessels, flow_fit, flow_counts = settle(_vessels, target=nf_image - joint_haze)
         unique_share(flow_fit)
     else:
         flow_vessels, flow_fit = fine_vessels, fine_fit
@@ -5566,7 +5595,7 @@ def _(
     _figure.tight_layout()
     save_figure(_figure, "flow_vessels", banded_key)
     plt.show()
-    return flow_amplitude_fit, flow_fit, flow_per_density, flow_vessels
+    return flow_amplitude_fit, flow_fit, flow_per_density, flow_vessels, joint_haze
 
 
 @app.cell(hide_code=True)
@@ -5580,7 +5609,7 @@ def _(mo):
     |---|---|
     | `vessel_table` | per vessel: its centreline (`centre`, n × 2), `width` (σ, px), profile `shape`, `amplitude` (optical density), `flow` (variance over time) and `z` at every pixel along it, its `length`, and its `flow_per_density` |
     | `junctions` | per junction: its two `vessels` (indices into `vessel_table`), its place `at`, its `kind` (X, T or V), the `angle` between the vessels, its `share` and its `verdict`: crossing, joining or unclear |
-    | `vessel_model` | the model of the whole field as a picture: every vessel and junction rendered in optical density; the density is `vessel_model + haze` plus what is left |
+    | `vessel_model` | the model of the whole field as a picture: every vessel and junction rendered in optical density; the density is `vessel_model + joint_haze` plus what is left |
 
     A junction's verdict is **unclear** in either of two cases: merging could change the model there by less than 5 noise levels (the fainter vessel is too faint to tell), or the share's standard error is above 0.25.
 
@@ -5609,7 +5638,7 @@ def _(
     flow_per_density,
     flow_vessels,
     geometry_of,
-    haze,
+    joint_haze,
     junction_table,
     matplotlib,
     nf_image,
@@ -5637,10 +5666,10 @@ def _(
     junction_table(flow_fit)
 
     # with and without the junction terms: the same vessels refitted as if every overlap simply added up
-    additive_fit = fit_field(_vessels, flow_fit["bases"], junctions=False, target=nf_image - haze)
+    additive_fit = fit_field(_vessels, flow_fit["bases"], junctions=False, target=nf_image - joint_haze)
     at_junctions = np.unique(np.concatenate([junction["pixels"] for junction in junctions]))
     for _title, _model in (("with the junction terms", vessel_model), ("every overlap additive", additive_fit["model"])):
-        _residual = (nf_image - haze - _model).ravel()[at_junctions]
+        _residual = (nf_image - joint_haze - _model).ravel()[at_junctions]
         print(f"   {_title:24s}: residual rms {np.sqrt(np.mean(_residual ** 2)):.4f} over the {len(at_junctions)} junction pixels, "
               f"mean {_residual.mean():+.4f}")
 
@@ -5694,8 +5723,8 @@ def _(
         half = int(max(20, 6 * max(np.median(vessel_table[k]["width"]) for k in junction["vessels"])))
         _window = (slice(max(cy - half, 0), cy + half), slice(max(cx - half, 0), cx + half))
         _panels = (("density", nf_image, "gray", DENSITY_RANGE), ("model", vessel_model, "gray", DENSITY_RANGE),
-                  ("density - haze - model", nf_image - haze - vessel_model, "RdBu_r", (-RESIDUAL_RANGE, RESIDUAL_RANGE)),
-                  ("the same, all additive", nf_image - haze - additive_fit["model"], "RdBu_r",
+                  ("density - haze - model", nf_image - joint_haze - vessel_model, "RdBu_r", (-RESIDUAL_RANGE, RESIDUAL_RANGE)),
+                  ("the same, all additive", nf_image - joint_haze - additive_fit["model"], "RdBu_r",
                    (-RESIDUAL_RANGE, RESIDUAL_RANGE)))
         for _column, (_title, _picture, _colormap, (_low, _high)) in enumerate(_panels):
             _axes[_row, _column].imshow(_picture[_window], cmap=_colormap, vmin=_low, vmax=_high)
@@ -5723,7 +5752,7 @@ def _(
 
     # what the model still misses: the orientation layer of §17 run on the residual, in the same noise units as on the
     # density. Line structure the vessels do not explain (a vessel never traced, or one misplaced) still makes it fire.
-    missed = banded_orientation_field((nf_image - haze - vessel_model).astype(np.float32))["scores"].max(axis=(0, 1))
+    missed = banded_orientation_field((nf_image - joint_haze - vessel_model).astype(np.float32))["scores"].max(axis=(0, 1))
     missed = missed.astype(np.float32)
     for _title, _response in (("on the density", strongest_response), ("on the residual", missed)):
         print(f"the orientation layer {_title:19s}: fires above SEED_LEVEL ({SEED_LEVEL:g} noise units) on "

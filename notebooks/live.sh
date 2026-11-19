@@ -14,17 +14,18 @@
 set -euo pipefail
 
 NOTEBOOKS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-NOTEBOOK=${LIMBUS_LIVE_NOTEBOOK:-$NOTEBOOKS_DIR/foundation.py}
-VENV=${LIMBUS_LIVE_VENV:-$NOTEBOOKS_DIR/.venv}
-PORT=${LIMBUS_LIVE_PORT:-2718}
-TAILNET_NAME=${LIMBUS_LIVE_HOSTNAME:-limbus}  # this computer's name on the tailnet
+NOTEBOOK=$NOTEBOOKS_DIR/foundation.py
+VENV=$NOTEBOOKS_DIR/.venv
+PORT=2718
+TAILNET_NAME=limbus  # this computer's name on the tailnet
 CONFIG_DIR=${XDG_CONFIG_HOME:-$HOME/.config}/limbus-live
 STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}/limbus-live
 TAILSCALE_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/limbus-live/tailscale
+TAILSCALE=$TAILSCALE_DIR/tailscale
 TOKEN_FILE=$CONFIG_DIR/token
 SOCKET=$STATE_DIR/tailscaled.sock
 # where the notebook writes what it makes (previews/, vessel_pictures/, neural_cache/): outside the repository
-WORK_DIR=${LIMBUS_LIVE_WORK_DIR:-$HOME/limbus-work}
+WORK_DIR=$HOME/limbus-work
 # the notebook server's share of this computer, which runs other jobs too
 MEMORY_MAX=${LIMBUS_LIVE_MEMORY_MAX:-12G}
 THREADS=${LIMBUS_LIVE_THREADS:-6}
@@ -41,14 +42,12 @@ JOIN_UNIT=limbus-live-join
 say() { printf '%s\n' "$*"; }
 die() { printf 'live.sh: %s\n' "$*" >&2; exit 1; }
 
-have_systemd() { systemctl --user show-environment >/dev/null 2>&1; }
-
-tailscale_bin() {
-    if [ -x "$TAILSCALE_DIR/tailscale" ]; then echo "$TAILSCALE_DIR/tailscale"
-    else command -v tailscale || true; fi
+need_systemd() {
+    systemctl --user show-environment >/dev/null 2>&1 \
+        || die "systemd user services are needed (systemctl --user does not answer); in WSL, set systemd=true under [boot] in /etc/wsl.conf and restart WSL"
 }
 
-ts() { "$(tailscale_bin)" --socket="$SOCKET" "$@"; }
+ts() { "$TAILSCALE" --socket="$SOCKET" "$@"; }
 
 # One field of `tailscale status --json`, such as BackendState, AuthURL or Self.DNSName ("" if absent).
 ts_field() {
@@ -63,35 +62,19 @@ for key in sys.argv[1].split("."):
 print((value or "").rstrip("."))' "$1" || true
 }
 
-running() {  # running UNIT
-    if have_systemd; then systemctl --user is-active --quiet "$1"
-    else [ -f "$STATE_DIR/$1.pid" ] && kill -0 "$(cat "$STATE_DIR/$1.pid")" 2>/dev/null; fi
-}
+running() { systemctl --user is-active --quiet "$1"; }  # running UNIT
 
-# Start a program as a user service (in the background without systemd), logging to LOG.
-# Extra systemd properties come in the array UNIT_PROPERTIES.
+# Start a program as a user service, logging to LOG. Extra systemd properties come in the array UNIT_PROPERTIES.
 launch() {  # launch UNIT LOG -- command...
     local unit=$1 log=$2
     shift 3
-    if have_systemd; then
-        systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
-        systemd-run --user --quiet --unit="$unit" --collect \
-            -p StandardOutput="append:$log" -p StandardError="append:$log" \
-            ${UNIT_PROPERTIES[@]+"${UNIT_PROPERTIES[@]}"} "$@"
-    else
-        nohup "$@" >>"$log" 2>&1 &
-        echo $! >"$STATE_DIR/$unit.pid"
-    fi
+    systemctl --user reset-failed "$unit" >/dev/null 2>&1 || true
+    systemd-run --user --quiet --unit="$unit" --collect \
+        -p StandardOutput="append:$log" -p StandardError="append:$log" \
+        ${UNIT_PROPERTIES[@]+"${UNIT_PROPERTIES[@]}"} "$@"
 }
 
-halt() {  # halt UNIT
-    if have_systemd; then
-        systemctl --user stop "$1" >/dev/null 2>&1 || true
-    elif [ -f "$STATE_DIR/$1.pid" ]; then
-        kill "$(cat "$STATE_DIR/$1.pid")" 2>/dev/null || true
-        rm -f "$STATE_DIR/$1.pid"
-    fi
-}
+halt() { systemctl --user stop "$1" >/dev/null 2>&1 || true; }  # halt UNIT
 
 write_url() {
     local name
@@ -115,7 +98,7 @@ cmd_install() {
     say "  marimo $("$VENV/bin/marimo" --version)"
 
     if [ -x "$TAILSCALE_DIR/tailscaled" ]; then
-        say "Tailscale $("$TAILSCALE_DIR/tailscale" version | head -n 1): already in $TAILSCALE_DIR"
+        say "Tailscale $("$TAILSCALE" version | head -n 1): already in $TAILSCALE_DIR"
     else
         say "Tailscale $TAILSCALE_VERSION -> $TAILSCALE_DIR"
         local download
@@ -146,9 +129,9 @@ start_marimo() {  # start_marimo BURST
     local environment=("OMP_NUM_THREADS=1" "OPENBLAS_NUM_THREADS=1" "MKL_NUM_THREADS=1" "OPENCV_FOR_THREADS_NUM=1")
     [ -n "$burst" ] && environment+=("LIMBUS_BURST=$burst")
     # on this computer only, behind the token; --watch takes in changes made to the file on disk
-    (cd "$WORK_DIR" && launch "$MARIMO_UNIT" "$STATE_DIR/marimo.log" -- env "${environment[@]}" \
+    launch "$MARIMO_UNIT" "$STATE_DIR/marimo.log" -- env "${environment[@]}" \
         "$VENV/bin/marimo" -q edit "$NOTEBOOK" --host 127.0.0.1 --port "$PORT" --headless --watch \
-        --skip-update-check --token-password-file "$TOKEN_FILE")
+        --skip-update-check --token-password-file "$TOKEN_FILE"
     for _ in $(seq 150); do
         curl -fs -o /dev/null "http://127.0.0.1:$PORT/health" && return 0
         sleep 0.2
@@ -157,12 +140,10 @@ start_marimo() {  # start_marimo BURST
 }
 
 start_tailscaled() {
-    local tailscaled
-    [ -n "$(tailscale_bin)" ] || die "Tailscale is not installed: run notebooks/live.sh install"
+    [ -x "$TAILSCALE_DIR/tailscaled" ] || die "Tailscale is not installed: run notebooks/live.sh install"
     if ! running "$TAILSCALED_UNIT"; then
-        tailscaled=$(dirname "$(tailscale_bin)")/tailscaled
         UNIT_PROPERTIES=(-p Restart=on-failure)
-        launch "$TAILSCALED_UNIT" "$STATE_DIR/tailscaled.log" -- "$tailscaled" \
+        launch "$TAILSCALED_UNIT" "$STATE_DIR/tailscaled.log" -- "$TAILSCALE_DIR/tailscaled" \
             --tun=userspace-networking --statedir="$STATE_DIR/tailscale" --socket="$SOCKET" --port=0
     fi
     for _ in $(seq 50); do
@@ -177,7 +158,7 @@ start_tailscaled() {
 SERVE=(serve --bg --yes --https=443)
 
 cmd_start() {
-    local burst=${LIMBUS_BURST:-} url
+    local burst=${LIMBUS_BURST:-} state url
     while [ $# -gt 0 ]; do
         case $1 in
             --burst) burst=$(cd "$2" && pwd); shift 2 ;;
@@ -191,8 +172,35 @@ cmd_start() {
     say "Notebook server: http://127.0.0.1:$PORT (this computer only)${burst:+, burst $burst}"
 
     start_tailscaled
-    if [ "$(ts_field BackendState)" = Running ]; then
-        timeout 120 "$(tailscale_bin)" --socket="$SOCKET" "${SERVE[@]}" "http://127.0.0.1:$PORT" \
+    # a tailscaled that has just started takes a moment to say whether it is signed in
+    for _ in $(seq 150); do
+        state=$(ts_field BackendState)
+        case $state in ''|NoState|Starting) sleep 0.2 ;; *) break ;; esac
+    done
+
+    if [ "$state" != Running ]; then
+        # Not on the tailnet. In the background, `tailscale up` joins it, waiting for the sign-in if one is needed,
+        # and then the notebook is served on the tailnet, so nothing more has to be done on this computer.
+        if ! running "$JOIN_UNIT"; then
+            UNIT_PROPERTIES=()
+            # shellcheck disable=SC2016  # the arguments expand in the inner shell
+            launch "$JOIN_UNIT" "$STATE_DIR/join.log" -- bash -c '"$0" --socket="$1" up --hostname="$2" &&
+                "$0" --socket="$1" serve --bg --yes --https=443 "http://127.0.0.1:$3"' \
+                "$TAILSCALE" "$SOCKET" "$TAILNET_NAME" "$PORT"
+        fi
+        url=
+        for _ in $(seq 150); do
+            state=$(ts_field BackendState)
+            [ "$state" = Running ] && break
+            url=$(ts_field AuthURL)
+            [ -n "$url" ] && break
+            sleep 0.2
+        done
+    fi
+
+    if [ "$state" = Running ]; then
+        halt "$JOIN_UNIT"  # it joined without a sign-in: the notebook is served from here
+        timeout 120 "$TAILSCALE" --socket="$SOCKET" "${SERVE[@]}" "http://127.0.0.1:$PORT" \
             >"$STATE_DIR/serve.log" 2>&1 \
             || { cat "$STATE_DIR/serve.log" >&2; die "tailscale serve did not finish: see the message above"; }
         write_url
@@ -201,22 +209,7 @@ cmd_start() {
         return 0
     fi
 
-    # Not on the tailnet yet. In the background, `tailscale up` waits for the sign-in and then the notebook is
-    # served on the tailnet, so nothing more has to be done on this computer.
-    if ! running "$JOIN_UNIT"; then
-        UNIT_PROPERTIES=()
-        # shellcheck disable=SC2016  # the arguments expand in the inner shell
-        launch "$JOIN_UNIT" "$STATE_DIR/join.log" -- bash -c '"$0" --socket="$1" up --hostname="$2" &&
-            "$0" --socket="$1" serve --bg --yes --https=443 "http://127.0.0.1:$3"' \
-            "$(tailscale_bin)" "$SOCKET" "$TAILNET_NAME" "$PORT"
-    fi
-    url=
-    for _ in $(seq 150); do
-        url=$(ts_field AuthURL)
-        [ -n "$url" ] && break
-        sleep 0.2
-    done
-    [ -n "$url" ] || die "no sign-in link from Tailscale; see $STATE_DIR/join.log"
+    [ -n "$url" ] || die "Tailscale neither joined the tailnet nor gave a sign-in link; see $STATE_DIR/join.log"
     (umask 077; echo "$url" >"$STATE_DIR/signin-url")
     say ""
     say "This computer is not on the tailnet yet. To add it, open this link on any device and sign in to the"
@@ -230,7 +223,7 @@ cmd_start() {
 cmd_status() {
     if running "$MARIMO_UNIT"; then say "notebook server: running, http://127.0.0.1:$PORT"
     else say "notebook server: stopped"; fi
-    if [ -n "$(tailscale_bin)" ] && ts status --json >/dev/null 2>&1; then
+    if [ -x "$TAILSCALE" ] && ts status --json >/dev/null 2>&1; then
         local state
         state=$(ts_field BackendState)
         say "tailscale: $state $(ts_field Self.DNSName)"
@@ -250,7 +243,7 @@ cmd_status() {
 
 cmd_stop() {
     halt "$MARIMO_UNIT"
-    if [ -n "$(tailscale_bin)" ] && ts status --json >/dev/null 2>&1; then
+    if [ -x "$TAILSCALE" ] && ts status --json >/dev/null 2>&1; then
         ts serve reset >/dev/null 2>&1 || true
         if [ "${1:-}" = --all ]; then
             halt "$JOIN_UNIT"
@@ -263,9 +256,6 @@ cmd_stop() {
 }
 
 case ${1:-} in
-    install) shift; cmd_install "$@" ;;
-    start) shift; cmd_start "$@" ;;
-    status) shift; cmd_status "$@" ;;
-    stop) shift; cmd_stop "$@" ;;
+    install|start|status|stop) need_systemd; action=$1; shift; "cmd_$action" "$@" ;;
     *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac

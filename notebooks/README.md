@@ -41,7 +41,16 @@ code is otherwise the notebooks' own, with these changes:
   it as it was.
 - The `import scipy.…` lines of §17 and §23 are in §0, with the other imports.
 - §23's own `blur_valid` (a blur over the pixels with data, unlike §11's) is called `fine_blur_valid`.
-- §24 updates `haze` in place (`haze[...] = …`), where it assigned it anew.
+- A cell that changed another cell's output in place gives it back under a name of its own, and the
+  later cells read that name, so marimo knows what depends on what: §12 refits §10's `background_fits`,
+  `density_fixations`, `density_offsets` and `density_means` in place (the two measurements never sit
+  in memory together) and returns them as `final_background_fits`, `final_density_fixations`,
+  `final_density_offsets` and `final_density_means`; §24's haze after the joint levels is `joint_haze`,
+  where it assigned `haze` anew. The table of outputs after §16 takes its arrays as the cell's inputs,
+  not from `globals()`.
+- §15 calls `fit_background` with `wavelength=None`, which keeps the smear's background the 64 px local
+  mean of the 2026-10-26 notebook; with §10's newer `fit_background` it would otherwise have become a
+  30 px thin plate.
 - §1 loads the burst named by the environment variable `LIMBUS_BURST`, when it is set; otherwise it
   searches as before.
 
