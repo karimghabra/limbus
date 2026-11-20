@@ -44,6 +44,10 @@ After a restart of the PC, run the same `notebooks/live.sh start --burst …` ag
 remembered. The server and Tailscale run as systemd user services, so WSL needs systemd on
 (`systemd=true` under `[boot]` in `/etc/wsl.conf`).
 
+User services stop when your last login session on the PC ends (the last terminal is closed), unless
+*lingering* is on for your user. `install` and `start` print a warning while it is off. To keep the
+server and Tailscale running without a session, run once on the PC: `loginctl enable-linger $USER`.
+
 ## Once, on the laptop
 
 1. **A Tailscale account.** Open the sign-in link that `start` printed (it works from any device) and

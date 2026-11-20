@@ -47,6 +47,16 @@ need_systemd() {
         || die "systemd user services are needed (systemctl --user does not answer); in WSL, set systemd=true under [boot] in /etc/wsl.conf and restart WSL"
 }
 
+# User services stop when this user's last login session ends, unless lingering is on for the user.
+warn_linger() {
+    local user
+    user=$(id -un)
+    [ "$(loginctl show-user "$user" --property=Linger --value 2>/dev/null)" = yes ] && return 0
+    say "" >&2
+    say "Warning: the notebook server and Tailscale stop when $user's last login session on this computer ends." >&2
+    say "To keep them running after that, run once:  loginctl enable-linger $user" >&2
+}
+
 ts() { "$TAILSCALE" --socket="$SOCKET" "$@"; }
 
 # One field of `tailscale status --json`, such as BackendState, AuthURL or Self.DNSName ("" if absent).
@@ -256,6 +266,7 @@ cmd_stop() {
 }
 
 case ${1:-} in
-    install|start|status|stop) need_systemd; action=$1; shift; "cmd_$action" "$@" ;;
+    install|start) need_systemd; action=$1; shift; "cmd_$action" "$@"; warn_linger ;;
+    status|stop) need_systemd; action=$1; shift; "cmd_$action" "$@" ;;
     *) sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
 esac
