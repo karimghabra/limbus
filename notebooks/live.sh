@@ -113,7 +113,10 @@ cmd_install() {
         say "Tailscale $TAILSCALE_VERSION -> $TAILSCALE_DIR"
         local download
         download=$(mktemp -d "$TAILSCALE_DIR/.download.XXXXXX")
-        curl -fsSL -o "$download/$TAILSCALE_TARBALL" "https://pkgs.tailscale.com/stable/$TAILSCALE_TARBALL"
+        # a 40 MB download: try again when the connection breaks part way
+        curl -fsSL --retry 5 --retry-all-errors -o "$download/$TAILSCALE_TARBALL" \
+            "https://pkgs.tailscale.com/stable/$TAILSCALE_TARBALL" \
+            || { rm -rf "$download"; die "could not download Tailscale; run notebooks/live.sh install again"; }
         echo "$TAILSCALE_SHA256  $download/$TAILSCALE_TARBALL" | sha256sum --check --quiet \
             || { rm -rf "$download"; die "the Tailscale download does not match its checksum"; }
         tar -xzf "$download/$TAILSCALE_TARBALL" -C "$download"
