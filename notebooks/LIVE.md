@@ -23,8 +23,8 @@ the laptop work on the same running notebook.
   `git pull`), the change appears in the open browsers within a second. Changed cells are marked
   stale; they run when someone runs them.
 - **Nothing runs by itself.** Opening the notebook does not run it (`notebooks/pyproject.toml`). Press
-  *Run all* (or run cells one by one). Sections 0–16 take about 3 minutes on a whole burst; the full
-  notebook needs roughly 8–11 GB (see [README.md](README.md#memory-and-time)).
+  *Run all* (or run cells one by one). For how long a run takes and how much memory it needs, see
+  [README.md](README.md#memory-and-time).
 
 ## Once, on the PC
 

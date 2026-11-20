@@ -277,6 +277,7 @@ python analysis/tests/test_live.py            # live stabilization vs known moti
 | `analysis/limbusflow/` | red-cell velocimetry used by vesselmap's flow step |
 | `vesselmap/` | the spline-network vessel map (`python -m vesselmap`), with its own README |
 | `analysis/tests/` | synthetic ground-truth and smoke tests |
+| `notebooks/` | the analysis notebooks, with their own README (`notebooks/README.md`) |
 | `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |
 | `tools/` | building and fetching the reference-data release |
 | `installer/`, `assets/` | the Windows installer (`installer/README.md`) and the app icon |
