@@ -24,7 +24,7 @@ TAILSCALE_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/limbus-live/tailscale
 TAILSCALE=$TAILSCALE_DIR/tailscale
 TOKEN_FILE=$CONFIG_DIR/token
 SOCKET=$STATE_DIR/tailscaled.sock
-# where the notebooks write what they make (previews/, vessel_pictures/, preprocessed/, neural_cache/): outside the repository
+# where the notebooks write what they make (previews/, vessel_pictures/, preprocessed/, neural_cache/, flow_outputs/): outside the repository
 WORK_DIR=$HOME/limbus-work
 # the notebook server's share of this computer, which runs other jobs too
 MEMORY_MAX=${LIMBUS_LIVE_MEMORY_MAX:-12G}
