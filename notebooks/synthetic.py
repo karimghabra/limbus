@@ -487,7 +487,17 @@ def _(mo):
 @app.cell
 def _(FLOW_OUTPUTS, Path, SERIES, burst_folder, mo, np, plt, show_figure, validate):
     flow_rows = None
-    if FLOW_OUTPUTS and Path(FLOW_OUTPUTS).exists():
+    _needed = ("velocities.csv", "flow_maps.npz")
+    _missing = [] if not FLOW_OUTPUTS else [n for n in _needed if not (Path(FLOW_OUTPUTS) / n).exists()]
+    if not FLOW_OUTPUTS or _missing:
+        mo.output.append(mo.callout(mo.md(
+            "**Section 9 skipped: no flow analysis of the synthetic burst was given.** "
+            + (f"`{FLOW_OUTPUTS}` lacks {', '.join(_missing)}. " if FLOW_OUTPUTS else "")
+            + "This section needs the output of the flow notebook (`flow.py`, from the flow-analysis branch until it "
+            "is merged) run on the synthetic burst of §8: run it with `LIMBUS_BURST` set to that burst, then set "
+            "`SYNTH_FLOW_OUTPUTS` to the `flow_outputs/<burst>` folder it wrote and run this section again. "
+            "Everything else in this notebook is complete without it."), kind="info"))
+    else:
         flow_rows, _registration = validate.compare_flow(burst_folder, FLOW_OUTPUTS)
         _summary = validate.summarise(flow_rows)
         mo.output.append(mo.md(f"Registration to the truth: dx {_registration['dx']:.1f}, dy {_registration['dy']:.1f} px "
@@ -502,8 +512,6 @@ def _(FLOW_OUTPUTS, Path, SERIES, burst_folder, mo, np, plt, show_figure, valida
         _axis.plot([-_lim, _lim], [-_lim, _lim], color="k", lw=0.8)
         _axis.set(xlabel="true velocity along the segment (px/frame)", ylabel="flow notebook (px/frame)", aspect="equal")
         show_figure(_figure, "flow_against_truth")
-    else:
-        print("SYNTH_FLOW_OUTPUTS not set: run the flow notebook on the synthetic burst first")
     return (flow_rows,)
 
 
