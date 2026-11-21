@@ -253,6 +253,8 @@ def write_burst(result: Result, folder, name=None):
 
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
+    for stale in folder.glob("frame_*.tif"):            # frames of an earlier, longer burst written here
+        stale.unlink()
     scene = result.scene
     o = scene.optics
     period = 1.0 / o.fps

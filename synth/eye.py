@@ -41,7 +41,7 @@ from scipy.spatial import cKDTree
 
 from .anatomy import Scene
 from .haemodynamics import Flow, solve
-from .network import Edge, Network, _Builder, _smooth_noise, generate_fine, resample
+from .network import _prune_terminals, width_profile, wiggle, Edge, Network, _Builder, _smooth_noise, generate_fine, resample
 
 MUSCLES = {"superior": 0.0, "temporal": 90.0, "inferior": 180.0, "nasal": 270.0}   # clock angle of each rectus
 
@@ -74,14 +74,17 @@ class EyeAnatomy:
     coarse_growth_influence_um: float = 1500.0
     coarse_growth_kill_um: float = 450.0
     coarse_leaf_diameter: tuple = (20.0, 28.0)       # where the coarse level hands over to the tiles (µm)
+    coarse_radial_bias: float = 0.5                  # conjunctival vessels converge radially on the limbus [Akagi2018]
+    coarse_branch_spacing_um: float = 600.0          # least distance between branch points of a coarse tree (as at
+    coarse_max_terminal_um: float = 1500.0           # the patch level, docs §5, at trunk scale)
     conjunctival_artery_diameter: tuple = (25.0, 40.0)   # within the 5.9-61 µm of conjunctival arterioles [Khansari2017]
     watershed_mm: float = 4.0                        # lid branches supply the conjunctiva from 4 mm on [Sun2022]
     fornix_mm: dict = field(default_factory=lambda: {"superior": 15.0, "temporal": 12.0, "inferior": 10.5,
                                                      "nasal": 8.0})   # fornix depths 15.3-16.1 / 10.1-10.9 mm [Jutley2016, Khan2014]; horizontal assumed
-    episcleral_veins_per_mm: float = 1.2             # radial episcleral veins per mm of limbus (fitted, docs §5)
+    episcleral_veins_per_mm: float = 0.6             # radial episcleral veins per mm of limbus (fitted, docs §5)
     episcleral_vein_diameter: tuple = (50.0, 100.0)  # [Asanad2021, Kim2024]
     episcleral_heading_spread: float = 0.5          # rad about the meridian (fitted, as at the patch level, docs §5)
-    episcleral_curvature: float = 0.00015            # rad/µm, slow bends (docs §5)
+    episcleral_curvature: float = 0.0004             # rad/µm, gentle bends over millimetres (docs §5)
     episcleral_avas_per_mm2: float = 0.75            # arteriovenous anastomoses, 0.5-1 per mm2 [Selbach2005]
     episcleral_depth_um: float = 350.0               # docs §2.2
     conjunctival_trunk_depth_um: float = 160.0       # docs §2.2
@@ -218,20 +221,29 @@ def _ring_path(globe, s, clock0, clock1, depth, step=10.0):
     return globe.point(np.full(n, s), clocks, np.full(n, depth))
 
 
+def _shape(rng, xy, anatomy, kind):
+    """A coarse vessel's path in the unrolled band with the patch level's shape: its meander and its gentle bends of
+    100-300 µm (docs §5); both taper to nothing at the ends, so junctions stay put."""
+    xy = wiggle(xy, rng, *anatomy.wiggle[kind], step=8.0)
+    return wiggle(xy, rng, *anatomy.bend_wiggle, step=8.0)
+
+
 def _plane_vessel(globe, rng, s0, clock0, s_end, depth0, depth1, heading_spread, curvature_sd, heading_offset=0.0,
                   step=12.0):
-    """A long vessel that runs away from the limbus with a heading drawn about the meridian and a slow random bend
-    (a mean-reverting curvature), until it reaches s_end; returned in eye coordinates."""
+    """A long vessel that runs away from the limbus, leaving at a heading drawn about the meridian (plus
+    heading_offset for a side branch) and turning back towards the meridian with a slow random bend (a
+    mean-reverting curvature), until it reaches s_end; returned in eye coordinates. Episcleral veins run radially
+    from the limbus [Meyer1988], so none spirals round the globe."""
     heading = rng.normal(0.0, heading_spread) + heading_offset          # 0 is straight away from the limbus
     s, c = float(s0), float(clock0)
     pts = []
     n_max = int(3 * abs(s_end - s0) / step) + 10
-    curvature = curvature_sd * _smooth_noise(rng, n_max, 800.0 / step)
-    target = heading
+    curvature = curvature_sd * _smooth_noise(rng, n_max, 250.0 / step)
+    target = rng.normal(0.0, 0.12)
     for k in range(n_max):
         theta = float(globe.theta(s))
         pts.append((s, c))
-        heading += curvature[k] * step + (target - heading) * step / 600.0
+        heading += curvature[k] * step + (target - heading) * step / 1000.0
         s += step * math.cos(heading)
         c += math.degrees(step * math.sin(heading) / (globe.R * math.sin(theta)))
         if s >= s_end or s <= 0:
@@ -284,6 +296,7 @@ class Eye:
 def build_coarse(eye: Eye):
     """The coarse network of the whole globe. Returns (network in eye coordinates, trunk registry)."""
     a, g = eye.anatomy, eye.globe
+    A = eye.scene.anatomy                            # the patch level's shape parameters
     rng = np.random.default_rng([eye.seed, 11])
     b = _Builder()
     pressure = {}
@@ -342,7 +355,7 @@ def build_coarse(eye: Eye):
         lv.append(b.node(g.point(a.limbal_vein_mm * 1000.0, c, conj)))
     for k in range(len(lv)):
         pts = _ring_path(g, a.limbal_vein_mm * 1000.0, lv_clocks[k], lv_clocks[(k + 1) % len(lv)], conj)
-        edge(pts, 25.0, "limbal vein", "conjunctival", u=lv[k], v=lv[(k + 1) % len(lv)])
+        edge(pts, 35.0, "limbal vein", "conjunctival", u=lv[k], v=lv[(k + 1) % len(lv)])
     # 4. the coarse conjunctival network, grown over the conjunctival band unrolled around the clock: anterior
     #    conjunctival arteries rise from the episcleral circle and branch back towards the watershed, posterior
     #    conjunctival arteries enter from the fornix and branch forward to meet them; venular trees drain to the
@@ -369,6 +382,7 @@ def build_coarse(eye: Eye):
     keep = (ss < np.array([fornix_of(c) for c in clocks])) & (rng.random(n_att * 2) < np.sin(g.theta(ss)) * np.array([density(c) for c in clocks]) / 1.2)
     attractors = to_plane(ss[keep], clocks[keep])
     roots, headings, sources = [], [], []
+    arcade_ends = []
     clock = rng.uniform(0, 360)
     end = clock + 360.0
     while clock < end:                                   # anterior conjunctival arteries from the circle
@@ -387,7 +401,8 @@ def build_coarse(eye: Eye):
         clock += np.degrees(a.posterior_artery_spacing_mm * 1000.0 / (g.R * math.sin(float(g.theta(f))))) * rng.uniform(0.8, 1.2)
     positions, parent, tree = colonise(rng, roots, headings, attractors, a.coarse_growth_step_um,
                                        a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=0.85,
-                                       radial_bias=0.0)
+                                       radial_bias=a.coarse_radial_bias, branch_spacing=a.coarse_branch_spacing_um)
+    positions, parent, tree = _prune_terminals(positions, parent, tree, a.coarse_max_terminal_um)
     paths, children = _tree_paths(parent)
     leaf_d = rng.uniform(*a.coarse_leaf_diameter, len(parent))
     d = np.minimum(_murray_diameters(parent, children, leaf_d, eye.scene.anatomy.murray_exponent_arterial), 58.0)
@@ -403,6 +418,7 @@ def build_coarse(eye: Eye):
         xy = _chaikin(positions[path], rounds=3)
         chord = xy[0] + np.linspace(0, 1, len(xy))[:, None] * (xy[-1] - xy[0])
         xy = chord + 0.6 * (xy - chord)
+        xy = _shape(rng, xy, A, "arteriole")
         pts = from_plane(resample(xy, 10.0), conj)
         u, v = node_for(path[0], conj), node_for(path[-1], conj)
         b.edge(u, v, pts, float(np.median(d[path[1:]])), "conjunctival artery", "conjunctival", b.vessel("conjunctival artery"))
@@ -440,6 +456,17 @@ def build_coarse(eye: Eye):
                           b.nodes[lv[lv_k]]])
         li, _, _ = edge(resample(loop, 10.0), 8.0, "capillary", "conjunctival", u=f_end, v=lv[lv_k])
         b.edges[li].length_override = rng.uniform(1500.0, 2100.0)     # a palisade hairpin, 1.5-2.1 mm [Kemenes2025]
+        arcade_ends.append((c % 360.0, f_end))
+    # the arterial limbal arcade: the forward branches' ends joined around the limbus [VanBuskirk1989, Kemenes2025]
+    arcade_ends.sort()
+    for k in range(len(arcade_ends)):
+        c0, n0 = arcade_ends[k]
+        c1, n1 = arcade_ends[(k + 1) % len(arcade_ends)]
+        if n0 == n1:
+            continue
+        pts = _ring_path(g, a.limbal_arcade_mm * 1000.0, c0, c1, conj)
+        pts[0], pts[-1] = b.nodes[n0], b.nodes[n1]
+        edge(pts, rng.uniform(18.0, 28.0), "conjunctival artery", "conjunctival", u=n0, v=n1)
     # the venular trees: roots at the fornix (outlets) and on the limbal venous ring; half of their attractors lie
     # beside the arteries just grown, so veins accompany arteries
     art_pts = np.vstack([to_plane(*g.surface_coordinates(b.edges[i].points)[:2]) for i in artery_edges])
@@ -459,8 +486,10 @@ def build_coarse(eye: Eye):
         v_roots.append(to_plane([a.limbal_vein_mm * 1000.0 + 50.0], [c])[0])
         v_headings.append(math.pi / 2)
         v_sources.append(("limbal", 2 * k))
-    vpos, vpar, _ = colonise(rng, v_roots, v_headings, v_attractors, a.coarse_growth_step_um,
-                             a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=0.85, radial_bias=0.0)
+    vpos, vpar, vtree = colonise(rng, v_roots, v_headings, v_attractors, a.coarse_growth_step_um,
+                                 a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=0.85,
+                                 radial_bias=a.coarse_radial_bias, branch_spacing=a.coarse_branch_spacing_um)
+    vpos, vpar, vtree = _prune_terminals(vpos, vpar, vtree, a.coarse_max_terminal_um)
     vpaths, vchildren = _tree_paths(vpar)
     vleaf = rng.uniform(*a.coarse_leaf_diameter, len(vpar)) * 1.3
     vd = np.minimum(_murray_diameters(vpar, vchildren, vleaf, eye.scene.anatomy.murray_exponent_venous), 72.0)
@@ -472,6 +501,7 @@ def build_coarse(eye: Eye):
         xy = _chaikin(vpos[path], rounds=3)
         chord = xy[0] + np.linspace(0, 1, len(xy))[:, None] * (xy[-1] - xy[0])
         xy = chord + 0.6 * (xy - chord)
+        xy = _shape(rng, xy, A, "venule")
         pts = from_plane(resample(xy, 10.0), conj + 10.0)
         ends = []
         for i in (path[0], path[-1]):
@@ -564,6 +594,12 @@ def build_coarse(eye: Eye):
     beds = [e for e in b.edges if e.kind == "bed"]
     b.edges = [e for e in b.edges if e.kind != "bed"]
     _attach_beds(b, beds, a)
+    # the calibre varies and tapers along every vessel, as at the patch level (docs §5)
+    for e in b.edges:
+        if e.kind in ("conjunctival artery", "conjunctival vein", "episcleral vein", "episcleral artery",
+                      "ciliary artery", "limbal vein") and len(e.points) >= 4:
+            seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
+            e.width = width_profile(rng, np.r_[0.0, np.cumsum(seg)], A, step=max(float(np.median(seg)), 1.0))
     net = Network(np.asarray(b.nodes), b.edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = {k: v for k, v in pressure.items()}
     return net, trunks

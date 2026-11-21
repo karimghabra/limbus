@@ -135,7 +135,8 @@ recorder's own format, so `foundation.py` and the flow analysis run on it unchan
 exact answer beside the frames. Its sections: the parameters and their sources (§1), the 3D network (§2), blood flow
 with conservation at every junction (§3), the anatomy check against cited ranges (§4), red cells (§5), the camera
 and real and synthetic clips side by side (§6), the target statistics of a real and a synthetic burst through one
-estimator (§7), the ground truth (§8), and a flow analysis of the synthetic burst against the truth (§9).
+estimator (§7), the ground truth (§8), a flow analysis of the synthetic burst against the truth (§9), and the
+whole anterior eye with its overview, a view at one pose and its 3D network (§10).
 
 ```bash
 export LIMBUS_BURST="/mnt/d/Conjunctiva Code/limbus/recordings/burst_2026-09-16_15-50-52"   # the real burst to compare with

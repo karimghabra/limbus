@@ -11,6 +11,14 @@ result = simulate(Scene(seed=1), n_frames=120)        # ~4 min at 768 x 512 on 6
 write_burst(result, "burst_synthetic_seed1")         # the recorder's format, plus truth/
 ```
 
+A whole eye, recorded at any position and magnification:
+
+```python
+from synth.eye import Eye, Pose, simulate_view
+eye = Eye(seed=4)                                         # the coarse network of the globe, ~12 s
+burst = simulate_view(eye, Pose(s_mm=3.0, clock_deg=90))  # the temporal conjunctiva, 3 mm from the limbus
+```
+
 `notebooks/synthetic.py` walks through every stage and compares a synthetic burst with a real one. The
 specification, with the source of every number, is
 [docs/synthetic_conjunctiva_anatomy.md](../docs/synthetic_conjunctiva_anatomy.md); the validation is
@@ -31,6 +39,8 @@ specification, with the source of every number, is
 | `validate.py` | a flow analysis of a synthetic burst against its truth |
 | `randomize.py` | random scenes from a seed and a configuration: anatomy within cited ranges, appearance domain-randomised |
 | `media.py` | side-by-side animated previews, on one shared optical-density scale |
+| `view3d.py` | interactive 3D views (plotly) of a patch network on the globe and of a whole eye, and a rotating render |
+| `eye.py` | the whole anterior eye grown from its arterial sources and venous sinks, with levels of detail: the coarse network of the globe, fine tiles generated on demand from their position, and camera views at any pose and magnification (`Eye`, `Pose`, `simulate_view`, `overview`) |
 
 ## The ground truth
 

@@ -211,14 +211,16 @@ class _Builder:
 # ----------------------------------------------------------------------------------------------- space colonisation
 
 def colonise(rng, roots, root_headings, attractors, step, influence, kill, persistence=0.5, max_iterations=3000,
-             branch_angle=(20.0, 70.0), radial_bias=0.0):
+             branch_angle=(20.0, 70.0), radial_bias=0.0, branch_spacing=0.0):
     """Grow trees towards attractors (space colonisation [Runions2007]).
 
     A tip grows on towards the attractors nearest to it; a node that already has a child may sprout one side
     branch, whose first step makes an angle with the continuation within branch_angle (degrees), and never more
     than one. Candidates
     closer than half a step to an existing node are dropped, so trees neither double back nor overlap.
-    radial_bias pulls every tree along the y axis in the direction its root heads (radial vessels).
+    radial_bias pulls every tree along the y axis in the direction its root heads (radial vessels). No side branch
+    leaves within branch_spacing of an existing branch point of the same tree, so a trunk passing through a field
+    of attractors does not sprout a comb of closely spaced side branches.
     Returns (positions (n, 2), parent (n,), tree (n,))."""
     capacity = len(roots) + 20 * len(attractors) + 1000
     P = np.zeros((capacity, 2))
@@ -227,6 +229,8 @@ def colonise(rng, roots, root_headings, attractors, step, influence, kill, persi
     tree = np.zeros(capacity, int)
     n_children = np.zeros(capacity, int)
     first_child_dir = np.zeros((capacity, 2))
+    no_branch = np.zeros(capacity, bool)
+    branch_points = []
     n = len(roots)
     P[:n] = np.asarray(roots, float)
     H[:n] = np.column_stack([np.cos(root_headings), np.sin(root_headings)])
@@ -248,7 +252,7 @@ def colonise(rng, roots, root_headings, attractors, step, influence, kill, persi
         dists, idxs = dists.reshape(len(alive), k), idxs.reshape(len(alive), k)
         valid = np.isfinite(dists)
         eligible = np.zeros_like(valid)
-        eligible[valid] = n_children[idxs[valid]] < 2
+        eligible[valid] = (n_children[idxs[valid]] == 0) | ((n_children[idxs[valid]] == 1) & ~no_branch[idxs[valid]])
         dists = np.where(eligible, dists, np.inf)
         best = np.argmin(dists, axis=1)
         distance = dists[np.arange(len(alive)), best]
@@ -256,7 +260,8 @@ def colonise(rng, roots, root_headings, attractors, step, influence, kill, persi
         if n > indexed:
             recent = P[indexed:n]
             d_recent = np.linalg.norm(alive[:, None, :] - recent[None], axis=2)
-            d_recent = np.where((n_children[indexed:n] < 2)[None], d_recent, np.inf)
+            can = (n_children[indexed:n] == 0) | ((n_children[indexed:n] == 1) & ~no_branch[indexed:n])
+            d_recent = np.where(can[None], d_recent, np.inf)
             j = np.argmin(d_recent, axis=1)
             dj = d_recent[np.arange(len(alive)), j]
             better = dj < distance
@@ -269,7 +274,8 @@ def colonise(rng, roots, root_headings, attractors, step, influence, kill, persi
         vectors /= np.maximum(np.linalg.norm(vectors, axis=1, keepdims=True), 1e-9)
         pull = np.zeros((n, 2))
         np.add.at(pull, nearest[has], vectors)
-        growing = np.flatnonzero((np.linalg.norm(pull, axis=1) > 0) & (n_children[:n] < 2))
+        growing = np.flatnonzero((np.linalg.norm(pull, axis=1) > 0)
+                                 & ((n_children[:n] == 0) | ((n_children[:n] == 1) & ~no_branch[:n])))
         added = []
         for index in growing:
             direction = pull[index] / np.linalg.norm(pull[index])
@@ -301,6 +307,16 @@ def colonise(rng, roots, root_headings, attractors, step, influence, kill, persi
             P[n], H[n], parent[n], tree[n] = candidate, direction, index, tree[index]
             if n_children[index] == 0:
                 first_child_dir[index] = direction
+            elif branch_spacing > 0:
+                # a new branch point: no other side branch of this tree within branch_spacing of it
+                close = np.flatnonzero((np.linalg.norm(P[:n] - P[index], axis=1) < branch_spacing)
+                                       & (tree[:n] == tree[index]))
+                no_branch[close] = True
+                branch_points.append(index)
+            if branch_spacing > 0 and branch_points:
+                bp = np.asarray(branch_points)
+                bp = bp[tree[bp] == tree[index]]
+                no_branch[n] = bool(len(bp)) and bool(np.min(np.linalg.norm(P[bp] - candidate, axis=1)) < branch_spacing)
             n_children[index] += 1
             added.append(n)
             n += 1
@@ -422,8 +438,8 @@ def _straight_layer(builder, rng, scene, domain, layer, count_per_mm, depth_rang
         # start on the posterior border (y1) or on a side, heading towards the limbus (decreasing y)
         start = np.array([rng.uniform(x0, x1), y1])
         heading = -math.pi / 2 + rng.normal(0, scene.anatomy.episcleral_heading_spread)
-        curve = _random_curve(rng, start, heading, 3 * (y1 - y0), curvature_sd, 800.0, step=12.0,
-                              reversion=1 / 900.0, target=heading)
+        curve = _random_curve(rng, start, heading, 3 * (y1 - y0), curvature_sd, 250.0, step=12.0,
+                              reversion=1 / 1200.0, target=heading)
         curve, _ = _clip_to_domain(curve, domain)
         if len(curve) < 3:
             continue
@@ -436,30 +452,38 @@ def _straight_layer(builder, rng, scene, domain, layer, count_per_mm, depth_rang
         builder.boundary[u] = "venous" if venous else "arterial"
         builder.boundary[v] = "venous" if venous else "arterial"
         made.append(builder.edge(u, v, points, diameter, kind, layer, vessel))
-        # side branches leave at 30-70 degrees and run to the border
-        n_branches = rng.poisson(branch_rate_per_mm * (len(curve) * 12e-3))
-        for _ in range(n_branches):
-            parent_index = max((i for i, ed in enumerate(builder.edges) if ed.vessel == vessel),
-                               key=lambda i: builder.edges[i].length)
-            e = builder.edges[parent_index]
-            if len(e.points) < 20:
-                continue
-            at = int(rng.integers(5, len(e.points) - 5))
+        # side branches leave at 20-45 degrees and run to the border; past each branch the vessel narrows by
+        # Murray's law, so it tapers along its course instead of keeping one calibre (arteries branch on their way
+        # to the limbus, veins gather tributaries on their way from it: either way the limbal end is the narrower)
+        main = made[-1]
+        n_points = len(builder.edges[main].points)
+        gamma = scene.anatomy.murray_exponent_venous if venous else scene.anatomy.murray_exponent_arterial
+        floor = (vein_diameter if venous else artery_diameter)[0]
+        ats = []
+        for at in np.sort(rng.integers(10, max(n_points - 10, 11), rng.poisson(branch_rate_per_mm * (len(curve) * 12e-3)))):
+            if n_points >= 30 and (not ats or at - ats[-1] >= 25):
+                ats.append(int(at))
+        plan, d = [], diameter
+        for at in ats:
+            ratio = rng.uniform(0.45, 0.8)
+            # a side branch of a named episcleral or deep vessel is still a vessel of that class: not below its
+            # cited calibre range
+            d_branch = max(d * ratio / (1 + ratio ** gamma) ** (1 / gamma), floor)
+            d_after = max((d ** gamma - min(d_branch, 0.95 * d) ** gamma) ** (1 / gamma), floor)
+            plan.append((at, d_branch, d_after))
+            d = d_after
+        for at, d_branch, d_after in reversed(plan):
+            e = builder.edges[main]
             tangent = e.points[min(at + 2, len(e.points) - 1), :2] - e.points[at - 2, :2]
             base = math.atan2(tangent[1], tangent[0])
             angle = base + rng.choice([-1, 1]) * math.radians(rng.uniform(20, 45))
-            branch = _random_curve(rng, e.points[at, :2], angle, 1.5 * (y1 - y0), curvature_sd * 1.5, 300.0,
-                                   step=10.0)
+            branch = _random_curve(rng, e.points[at, :2], angle, 1.5 * (y1 - y0), curvature_sd, 250.0,
+                                   step=10.0, reversion=1 / 1200.0, target=angle)
             branch, _ = _clip_to_domain(branch, domain)
             if len(branch) < 6:
                 continue
-            node = builder.split(parent_index, at)
-            gamma = scene.anatomy.murray_exponent_venous if venous else scene.anatomy.murray_exponent_arterial
-            ratio = rng.uniform(0.45, 0.8)
-            d_branch = diameter * ratio / (1 + ratio ** gamma) ** (1 / gamma)
-            # a side branch of a named episcleral or deep vessel is still a vessel of that class: not below its
-            # cited calibre range
-            d_branch = max(d_branch, (vein_diameter if venous else artery_diameter)[0])
+            node = builder.split(main, at)
+            builder.edges[-1].diameter = d_after          # the piece beyond the branch point
             z_b = builder.nodes[node][2]
             bpoints = _add_depth(branch, z_b, np.clip(z_b + rng.normal(0, 25), *depth_range), rng,
                                  undulation=8.0, correlation=150.0, step=6.0)
@@ -492,6 +516,32 @@ def _oblique_path(rng, top, bottom, step=4.0):
         normal = np.array([-direction[1], direction[0]]) / np.linalg.norm(direction)
         path[:, :2] += (bend * np.sin(np.pi * s))[:, None] * normal
     return path
+
+
+def _prune_terminals(positions, parent, tree, max_length):
+    """Cut every unbranched terminal branch to max_length from its branch point. Space colonisation sends a lone
+    branch straight across a region that its attractors leave to it, which draws long parallel unbranched combs;
+    terminal arterioles and collecting venules are short, and the capillary mesh serves the rest (docs §5)."""
+    positions, parent = np.asarray(positions), np.asarray(parent)
+    n = len(parent)
+    children = np.zeros(n, int)
+    for p in parent[parent >= 0]:
+        children[p] += 1
+    keep = np.ones(n, bool)
+    for leaf in np.nonzero(children == 0)[0]:
+        chain = [leaf]
+        while parent[chain[-1]] >= 0 and children[parent[chain[-1]]] == 1:
+            chain.append(parent[chain[-1]])
+        if parent[chain[-1]] < 0:
+            continue                                     # a whole unbranched tree: leave it
+        chain.append(parent[chain[-1]])                  # the branch point
+        chain = chain[::-1]
+        steps = np.linalg.norm(np.diff(positions[chain], axis=0), axis=1)
+        reach = np.cumsum(steps)
+        keep[np.asarray(chain[1:])[reach > max_length]] = False
+    index = np.cumsum(keep) - 1
+    new_parent = np.where(parent[keep] >= 0, index[np.maximum(parent[keep], 0)], -1)
+    return positions[keep], new_parent, np.asarray(tree)[keep]
 
 
 def _conjunctival_trees(builder, rng, scene, domain, communicating, border_roots=True):
@@ -552,7 +602,9 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating, border_roots
             trees[kind] = None
             continue
         positions, parent, tree = colonise(rng, roots, headings, attractors, a.growth_step, a.growth_influence,
-                                           kill, persistence=a.growth_persistence, radial_bias=a.radial_bias)
+                                           kill, persistence=a.growth_persistence, radial_bias=a.radial_bias,
+                                           branch_spacing=a.branch_spacing_um)
+        positions, parent, tree = _prune_terminals(positions, parent, tree, a.max_terminal_branch_um)
         trees[kind] = dict(positions=positions, parent=parent, tree=tree, roots=roots, sources=sources)
     made = {"arteriole": dict(leaves=[]), "venule": dict(leaves=[])}
     for kind, data in trees.items():
@@ -741,7 +793,6 @@ def _roughen(network_edges, rng, scene):
     a = scene.anatomy
     jitter_amplitude, jitter_length = a.fine_jitter
     kink_rate, kink_amplitude, kink_width = a.kinks
-    cv, width_length = a.width_variation
     for e in network_edges:
         if e.layer == "communicating" or e.kind == "arteriovenous anastomosis":
             continue
@@ -756,15 +807,24 @@ def _roughen(network_edges, rng, scene):
         tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
         normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
         offset = jitter_amplitude * _smooth_noise(rng, n, jitter_length / 2.0)
-        if e.kind != "capillary":                      # capillaries stay straight between their nodes
+        if e.kind != "capillary":                      # capillaries stay smooth between their nodes
             offset += _bumps(rng, s, kink_rate * 1e-3, kink_amplitude, kink_width)
-        scale = 0.5 if e.kind == "capillary" else 1.0
+            offset += a.bend_wiggle[0] * _smooth_noise(rng, n, a.bend_wiggle[1] / 2.0)
+        scale = 0.0 if e.kind == "capillary" else 1.0          # capillaries: smooth bowed sides, no jitter
         pts[:, :2] += (scale * offset * taper)[:, None] * normal
         e.points = pts
         e.points[0], e.points[-1] = pts[0], pts[-1]
-        variation = 1.0 + cv * _smooth_noise(rng, n, width_length / 2.0)
-        variation = np.clip(variation, 0.55, 1.45)
-        e.width = variation / variation.mean()
+        e.width = width_profile(rng, s, a, step=2.0)
+
+
+def width_profile(rng, s, anatomy, step):
+    """Relative calibre along a vessel sampled at arclengths s (µm, about every step µm): a smooth random variation
+    (anatomy.width_variation) on a linear taper (anatomy.taper), with mean 1."""
+    cv, width_length = anatomy.width_variation
+    variation = 1.0 + cv * _smooth_noise(rng, len(s), width_length / step)
+    variation *= 1.0 + rng.uniform(*anatomy.taper) * rng.choice([-1.0, 1.0]) * (0.5 - s / max(s[-1], 1e-9))
+    variation = np.clip(variation, 0.55, 1.45)
+    return variation / variation.mean()
 
 
 def _vessel_chains(builder, kind):
@@ -908,7 +968,7 @@ def generate(scene: Scene) -> Network:
 
     # 2. and 3. the episcleral and deep plexuses
     _straight_layer(builder, rng, scene, domain, "episcleral", a.episcleral_vessels_per_mm, a.episcleral_plexus,
-                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, a.episcleral_curvature, 0.9)
+                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, a.episcleral_curvature, 0.6)
     _straight_layer(builder, rng, scene, domain, "deep", a.deep_vessels_per_mm, a.deep_plexus,
                     a.deep_vessel_diameter, a.deep_vessel_diameter, a.episcleral_curvature, 0.2)
 

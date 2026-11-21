@@ -529,6 +529,31 @@ def shape_stats(segments, junctions, junction_segments, distance, um_per_px, min
         daughter.append(float(np.degrees(np.arccos(np.clip(b @ c, -1, 1)))))
         continuation = -a                                       # the direction the widest vessel carries on in
         turn.append(float(np.degrees(np.arccos(np.clip(continuation @ c, -1, 1)))))
+    # broad, continuous bends: the mean |curvature| of each segment of 60 px or more, its path smoothed over 8 px
+    # (about 26 µm at 3.26 µm/px), which keeps bends of a hundred micrometres and more and drops kinks and pixel
+    # steps; and taper:
+    # the relative change of the width along a segment, from a straight-line fit of 2 x the distance to the edge
+    broad, taper = [], []
+    for points in segments:
+        p = points.astype(float)
+        if len(points) >= 60:
+            w = 2 * distance[points[:, 0], points[:, 1]].astype(float)
+            w = ndi.gaussian_filter1d(w, 3.0)[10:-10]
+            if len(w) > 20 and w.mean() > 3:
+                slope = np.polyfit(np.arange(len(w)), w, 1)[0]
+                taper.append(abs(slope) * len(w) / w.mean())
+        if len(points) < 60:
+            continue
+        smooth = np.stack([ndi.gaussian_filter1d(p[:, k], 8.0, mode="nearest") for k in (0, 1)], 1)[10:-10]
+        step = np.diff(smooth, axis=0)
+        seg_len = np.hypot(step[:, 0], step[:, 1])
+        theta = np.unwrap(np.arctan2(step[:, 0], step[:, 1]))
+        if len(theta) > 10:
+            broad.append(float(np.abs(np.diff(theta)).sum() / max(seg_len[1:].sum(), 1e-9) / (um_per_px * 1e-3)))
+    out["broad curvature p50 (rad/mm)"] = _pct(broad, 50)
+    out["broad curvature p90 (rad/mm)"] = _pct(broad, 90)
+    out["broad curvature segments (count)"] = float(len(broad))
+    out["taper along segments (relative change, median)"] = _pct(taper, 50)
     for q in (25, 50, 75):
         out[f"daughter angle p{q} (deg)"] = _pct(daughter, q)
     out["branch turn from the parent's line, median (deg)"] = _pct(turn, 50)
