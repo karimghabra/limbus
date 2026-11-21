@@ -92,7 +92,7 @@ def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, recor
     def cells_at(t):
         while red_cells.t < t - 1e-9:
             red_cells.step(min(dt, t - red_cells.t))
-        return red_cells.positions()
+        return red_cells.positions()[red_cells.visible()]
 
     start = time.perf_counter()
     for k in range(n_frames):

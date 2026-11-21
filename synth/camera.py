@@ -84,7 +84,8 @@ def _smooth(rng, n, width):
     raw = rng.standard_normal(n + 6 * int(width) + 2)
     kernel = np.exp(-0.5 * (np.arange(-3 * int(width), 3 * int(width) + 1) / width) ** 2)
     out = np.convolve(raw, kernel, mode="same")[3 * int(width) + 1:3 * int(width) + 1 + n]
-    return out / max(out.std(), 1e-9)
+    # unit SD in expectation (the filter's gain), not the sample's: a short burst would otherwise inflate it
+    return out / np.sqrt((kernel ** 2).sum())
 
 
 TEXTURE_COMPONENT_SIGMAS = (0.0,) + tuple(TEXTURE_SIGMAS) + (30.0,)
@@ -157,8 +158,17 @@ class Renderer:
         self.slab_edges = edges
         self.slab_depth = 0.5 * (edges[:-1] + edges[1:])
         self.returning = np.exp(-edges / o.scatter_veil_length_um)       # share of light returning from below
-        x0, _, y0, _ = network.field_of_view
+        x0, x1, y0, y1 = network.field_of_view
         self.origin = np.array([x0, y0])
+        self.centre_um = np.array([0.5 * (x0 + x1), 0.5 * (y0 + y1)])
+        # the globe's sagitta over the field, for the focus that varies across it: the camera depth of the surface
+        # at every pixel (fine grid), split into a few levels for the slab blur
+        hf, wf = self.fine
+        yy, xx = np.mgrid[0:hf, 0:wf].astype(np.float32)
+        surface = np.column_stack([self.origin[0] + (xx.ravel() + 0.5) * self.fine_um,
+                                   self.origin[1] + (yy.ravel() + 0.5) * self.fine_um, np.zeros(xx.size)])
+        self.surface_depth = self.camera_depth(surface).reshape(hf, wf).astype(np.float32)
+        self.sag_levels = np.linspace(float(self.surface_depth.min()), float(self.surface_depth.max()), 4)
         self.glints = self._glints(rng)
 
     def _glints(self, rng):
@@ -167,10 +177,37 @@ class Renderer:
         h, w = self.shape
         return [(rng.uniform(0, w), rng.uniform(0, h), rng.uniform(1.2, 3.0), rng.uniform(0.4, 0.9)) for _ in range(n)]
 
+    def _globe(self, xyz):
+        """Tissue points (x, y along the surface, z depth below it) on the curved globe, seen by the camera:
+        returns (X, Y) in µm in the camera's image plane, relative to the field's centre, and the depth along the
+        camera axis below the plane tangent to the globe there (µm).
+
+        The surface coordinates are arc lengths from the field's centre (an azimuthal equidistant map of the
+        sphere), so a point at arc distance r and depth z lies at polar angle theta = r / R from the camera axis,
+        at radius R - z from the eye's centre."""
+        R = self.scene.optics.eye_radius_um
+        u = xyz[:, 0] - self.centre_um[0]
+        v = xyz[:, 1] - self.centre_um[1]
+        r = np.hypot(u, v)
+        theta = r / R
+        rho = R - xyz[:, 2]
+        scale = np.where(r > 1e-9, rho * np.sin(theta) / np.maximum(r, 1e-9), 1.0)
+        X, Y = u * scale, v * scale
+        depth = R - rho * np.cos(theta)
+        tx, ty = np.radians(self.scene.optics.camera_tilt_deg)
+        depth = depth + X * np.tan(tx) + Y * np.tan(ty)
+        return X, Y, depth
+
+    def camera_depth(self, xyz):
+        """Depth of tissue points along the camera axis (µm below the tangent plane at the field's centre)."""
+        return self._globe(xyz)[2]
+
     def project(self, xyz, frame_time):
         """Camera pixel coordinates (fine grid) of world points at a fractional frame index."""
         dx, dy, rotation, _ = self.motion.at(frame_time)
-        p = (xyz[:, :2] - self.origin) / self.scene.anatomy.um_per_px                 # frame-0 pixels
+        X, Y, _ = self._globe(xyz)
+        h0, w0 = self.shape
+        p = np.stack([X, Y], 1) / self.scene.anatomy.um_per_px + np.array([w0 / 2, h0 / 2])   # frame-0 pixels
         h, w = self.shape
         c = np.array([w / 2, h / 2])
         cos, sin = np.cos(rotation), np.sin(rotation)
@@ -178,12 +215,34 @@ class Renderer:
         q = np.stack([cos * q[:, 0] - sin * q[:, 1], sin * q[:, 0] + cos * q[:, 1]], 1) + c + np.array([dx, dy])
         return q * self.ss + (self.ss - 1) / 2.0
 
-    def blur_sigma(self, depth, focus):
+    def _blur_across_field(self, t, depth, focus):
+        """Blur a slab's transmission with the blur of its depth at each place in the field: the globe curves away
+        from the camera, so the distance from the focal plane grows towards the field's edges. The slab is blurred
+        at a few levels of the surface's sagitta and the results blended by each pixel's sagitta."""
+        levels = self.sag_levels
+        if levels[-1] - levels[0] < 2.0:
+            sigma = self.blur_sigma(depth + levels[0], focus)
+            return cv2.GaussianBlur(t, (0, 0), sigma) if sigma > 0.3 else t
+        blurred = []
+        for sag in levels:
+            sigma = self.blur_sigma(depth + sag, focus, scatter_depth=depth)
+            blurred.append(cv2.GaussianBlur(t, (0, 0), sigma) if sigma > 0.3 else t)
+        position = np.clip((self.surface_depth - levels[0]) / (levels[1] - levels[0]), 0, len(levels) - 1 - 1e-6)
+        k = position.astype(int)
+        w = (position - k).astype(np.float32)
+        out = np.zeros_like(t)
+        for i in range(len(levels) - 1):
+            sel = k == i
+            out[sel] = (1 - w[sel]) * blurred[i][sel] + w[sel] * blurred[i + 1][sel]
+        return out
+
+    def blur_sigma(self, depth, focus, scatter_depth=None):
         """Blur (fine px) of a slab at a depth with the focal plane at focus."""
         o = self.scene.optics
         psf = o.psf_sigma_px * self.ss
         defocus = o.defocus_um_per_um * abs(depth - focus) / self.fine_um
-        scatter = o.scatter_blur_um_at_500 * (max(depth, 0.0) / 500.0) ** 1.5 / self.fine_um
+        tissue = depth if scatter_depth is None else scatter_depth          # scattering follows the tissue depth
+        scatter = o.scatter_blur_um_at_500 * (max(tissue, 0.0) / 500.0) ** 1.5 / self.fine_um
         return float(np.sqrt(psf ** 2 + defocus ** 2 + scatter ** 2))
 
     def transmission(self, xyz, frame_time):
@@ -212,8 +271,7 @@ class Renderer:
                     absorbed += np.float32(weight) * (1.0 - np.exp(np.float32(-2.0 * tau) * values))
                 t = np.ones((h, w), np.float32)
                 t[support] = 1.0 - absorbed
-                sigma = self.blur_sigma(self.slab_depth[b], focus)
-                t = cv2.GaussianBlur(t, (0, 0), sigma) if sigma > 0.3 else t
+                t = self._blur_across_field(t, self.slab_depth[b], focus)
                 through *= t
             detected += share * through
         detected += self.returning[-1] * through

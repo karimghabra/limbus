@@ -225,6 +225,29 @@ def _(net, np, plt, show_figure):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
+    ### The network in 3D
+
+    The same network on the curved globe (radius `eye_radius_um`, 12.5 mm), depth exaggerated three times so that
+    the layers, a few hundred micrometres apart, separate: drag to turn it. Below, a turntable of it, saved beside
+    the figures.
+    """)
+    return
+
+
+@app.cell
+def _(OUTPUT_DIR, media, mo, net, scene):
+    from synth import view3d as _view3d
+
+    _figure = _view3d.plotly_figure(net, scene.optics.eye_radius_um)
+    _turntable = media.webp(_view3d.rotating_frames(net, scene.optics.eye_radius_um, n_frames=36),
+                            OUTPUT_DIR / f"network_3d_seed{scene.seed}.webp", 12, width=640)
+    mo.vstack([mo.ui.plotly(_figure), mo.image(_turntable.read_bytes())])
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
     ## 3 · Blood flow
 
     Each segment is a Poiseuille tube whose viscosity follows the in vivo law of Pries et al. (1994); boundary

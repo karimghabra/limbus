@@ -112,6 +112,35 @@ class Cells:
         self.v = np.array([e.v for e in network.edges])
         self.incident = network.incident()
         self.boundary = network.boundary
+        # at a junction the lumens merge: the last stretch of every narrower vessel lies inside the widest one, so
+        # its cells there are not drawn a second time (otherwise the cell clouds overlap and the junction shows as
+        # a dark blob); trim_u / trim_v are the hidden lengths at each end
+        self.trim_u = np.zeros(E)
+        self.trim_v = np.zeros(E)
+        geo = self.geo
+
+        def direction_at(i, node):
+            """Unit direction of edge i leaving node (over its first 10 µm)."""
+            start, count = geo.start[i], geo.count[i]
+            pts = geo.centre[start:start + count]
+            a, b = (pts[0], pts[min(10, count - 1)]) if self.u[i] == node else (pts[-1], pts[max(count - 11, 0)])
+            v = b - a
+            return v / max(np.linalg.norm(v), 1e-9)
+
+        for node, members in enumerate(self.incident):
+            if len(members) < 3:
+                continue                                  # a plain continuation: nothing overlaps
+            widest = max(members, key=lambda i: d[i])
+            w_dir = direction_at(widest, node)
+            others = [i for i in members if i != widest]
+            continuation = min(others, key=lambda i: float(direction_at(i, node) @ w_dir))   # most opposite
+            for i in others:
+                if i == continuation:
+                    continue
+                if self.u[i] == node:
+                    self.trim_u[i] = max(self.trim_u[i], d[widest] / 2)
+                if self.v[i] == node:
+                    self.trim_v[i] = max(self.trim_v[i], d[widest] / 2)
         self.quota = {}
         # initial cells: a clumped renewal sequence along every segment
         edge_ids, s_values = [], []
@@ -334,6 +363,12 @@ class Cells:
         r = self.rfrac * self.core[e] * g.width[index]
         offset = (r * np.cos(self.theta))[:, None] * g.normal[index] + (r * np.sin(self.theta))[:, None] * g.binormal[index]
         return g.centre[index] + offset
+
+    def visible(self):
+        """The cells to draw: all but those in the stretch of a narrower vessel that lies inside the widest vessel
+        at a junction."""
+        e = self.edge
+        return (self.s >= self.trim_u[e]) & (self.s <= self.length[e] - self.trim_v[e])
 
     def warm_up(self, seconds, dt):
         for _ in range(int(round(seconds / dt))):
