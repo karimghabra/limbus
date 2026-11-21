@@ -68,7 +68,8 @@ def eye_motion(n_frames, scene: Scene, rng) -> Motion:
     saccades = []
     for k in range(1, n_frames):
         step = rng.normal(0, sigma, 2) - reversion * np.array([x[k - 1], y[k - 1]])
-        if rng.random() < o.saccade_rate_hz / o.fps:
+        refractory = saccades and (k - saccades[-1]) < 0.25 * o.fps     # saccades are separated in time (assumed 0.25 s)
+        if rng.random() < o.saccade_rate_hz / o.fps and not refractory:
             amplitude = rng.uniform(*o.saccade_px)
             angle = rng.uniform(0, 2 * np.pi)
             step += amplitude * np.array([np.cos(angle), np.sin(angle)])

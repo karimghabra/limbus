@@ -39,16 +39,17 @@ class Anatomy:
     # branching (docs §4): junction exponents, Murray's 3 [Murray1926a, MayrovitzRoy1983, KassabFung1995];
     # retinal arteries 2.59, veins 1.95 [Luo2017]
     murray_exponent_arterial: float = 2.6
-    murray_exponent_venous: float = 2.4
+    murray_exponent_venous: float = 2.7
     # density and mesh (docs §5)
-    capillary_mesh_spacing: float = 200.0            # µm between mesh cell centres (fitted to ~8 mm/mm2 of capillary, docs §5)
+    capillary_mesh_spacing: float = 215.0            # µm between mesh cell centres (fitted to ~8 mm/mm2 of capillary, docs §5)
     capillary_edge_drop: float = 0.18                # share of mesh ridges absent (open polygons)
     radial_bias: float = 0.25                        # conjunctival vessels run radially from the limbus [Akagi2018]
     arterial_trees_per_mm2: float = 0.5              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
-    venous_trees_per_mm2: float = 0.75
+    venous_trees_per_mm2: float = 0.55
     av_pair_offset: tuple = (25.0, 70.0)             # lateral distance of a paired venule from its arteriole (assumed)
-    av_pair_fraction: float = 0.5                    # share of venular attractors placed along arterioles (assumed)
+    av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
+    episcleral_curvature: float = 0.0008             # rad/µm SD of their meander, correlation 250 µm (fitted to the measured curvature)
     episcleral_vessels_per_mm: float = 3.0           # episcleral vessels per mm along the limbus (fitted to the measured diameters, docs §5)
     episcleral_avas_per_mm2: float = 0.75            # arteriovenous anastomoses, 0.5-1 per mm2 [Selbach2005]
     ava_diameter: tuple = (5.0, 8.0)                 # their smooth-muscle arteriolar segment [RohenFunk1994], at rest tone (assumed)
@@ -63,6 +64,18 @@ class Anatomy:
         "arteriole": (2.5, 60.0), "venule": (3.5, 55.0), "capillary": (3.0, 22.0),
         "episcleral": (8.0, 220.0), "deep": (8.0, 260.0), "communicating": (2.0, 40.0),
     })
+    # multi-scale irregularity on top of the meander (fitted to the measured curvature, jitter and width variation,
+    # docs §5): fine jitter (amplitude µm, correlation µm), kinks (per mm, amplitude µm, width µm), and the
+    # variation of the calibre along a vessel (coefficient of variation, correlation µm)
+    fine_jitter: tuple = (0.8, 6.0)
+    kinks: tuple = (3.0, 3.0, 6.0)
+    width_variation: tuple = (0.16, 25.0)            # CV 0.1-0.4 [Kiani1993], ~0.19 conjunctiva [Shahidi2010]
+    # companion venules beside arterioles (docs §4)
+    pair_fraction: float = 1.0                       # share of the larger arterioles that have one (fitted to the measured paired share, docs §4)
+    pair_min_diameter: float = 12.0                  # µm: only arterioles reaching this calibre are accompanied
+    pair_gap_um: tuple = (3.0, 15.0)                 # edge-to-edge gap: paired within 15 µm [NelloreHarris2002]
+    pair_max_venule_diameter: float = 70.0           # within the 75 µm largest conjunctival venule [Khansari2017]
+    pair_calibre_ratio: tuple = (1.3, 1.8)           # artery:vein calibre 0.653 ± 0.068 [Yusufu2025], ± 2 SD
     # growth (space colonisation [Runions2007]) step, reach and kill distance, µm, and attractor density
     growth_step: float = 18.0
     growth_influence: float = 400.0
@@ -82,12 +95,12 @@ class Physiology:
     rbc_diameter_um: float = 7.8                     # 7.82 µm [Fedosov2010, from Evans & Fung]
     rbc_thickness_um: float = 2.2
     # boundary pressures (mmHg), log-linear in calibre between 10 and 100 µm (docs §6.2):
-    arterial_pressure_at_100um: float = 55.0         # 45-65 mmHg in 40-50 µm arterioles [Zweifach1974]
+    arterial_pressure_at_100um: float = 50.0         # 45-65 mmHg in 40-50 µm arterioles [Zweifach1974]
     arterial_pressure_at_10um: float = 30.0          # 30-35 mmHg after the precapillary branches [Zweifach1974]
     venous_pressure_at_10um: float = 14.0            # just above capillary pressure, 13-16 mmHg [Williams1990, Hahn2004]
     venous_pressure_at_100um: float = 8.0            # episcleral venous pressure 6.3-9.6 mmHg [Zeimer1983, Sit2011, Arora2017]
     capillary_boundary_pressure: float = 15.0        # 13-16 mmHg [Williams1990, Hahn2004]; unused while the mesh is closed
-    radial_pressure_gradient_mmhg_per_mm: float = 0.2   # along episcleral and deep vessels (fitted, docs §6.2)
+    radial_pressure_gradient_mmhg_per_mm: float = 0.15   # along episcleral and deep vessels (fitted, docs §6.2)
     heart_rate_hz: float = 1.1                       # cardiac period 909 ± 86 ms [Neriyanuri2023]
     arterial_pulsatility: float = 0.22               # relative pulse of the arterial boundary pressure (docs §6.3)
     cell_free_layer_um: tuple = (0.8, 3.1)           # 0.8 µm at 10 µm to 3.1 µm at 50 µm [Kim2007]
@@ -103,11 +116,11 @@ class Optics:
     # spectral bands of the detected light: (weight, whole-blood absorption coefficient at Hct 0.45 in 1/mm, the
     # mean of oxy and deoxy at 450, 470, 500, 520, 545, 575, 600, 625 and 660 nm [Bosschaart2014]); the weights,
     # the source spectrum times the sensor's response, are fitted to the measured contrast by calibre (docs §7.1)
-    spectrum: tuple = ((0.03, 32.6), (0.04, 12.7), (0.09, 10.3), (0.09, 13.6), (0.05, 25.4), (0.05, 23.8),
-                       (0.19, 5.1), (0.23, 1.4), (0.23, 0.7))
+    spectrum: tuple = ((0.022, 32.6), (0.03, 12.7), (0.068, 10.3), (0.068, 13.6), (0.038, 25.4), (0.038, 23.8),
+                       (0.22, 5.1), (0.258, 1.4), (0.258, 0.7))
     double_pass: float = 2.0
     scatter_veil_length_um: float = 650.0            # depth at which 1 - 1/e of the detected light has turned back
-    scatter_blur_um_at_500: float = 14.0             # Gaussian sigma of the image of a point 500 µm deep
+    scatter_blur_um_at_500: float = 18.0             # Gaussian sigma of the image of a point 500 µm deep
     psf_sigma_px: float = 0.9
     defocus_um_per_um: float = 0.035                # blur sigma per µm of distance from the focal plane
     focus_depth_um: float = 160.0

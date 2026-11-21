@@ -364,8 +364,15 @@ def morphology_stats(od, mask, valid, um_per_px):
             chord = float(np.hypot(*(points[-1] - points[0])))
             if chord > 0:
                 tortuosity.append(length / chord)
-    out["tortuosity median"] = _pct(tortuosity, 50)
-    out["tortuosity p90"] = _pct(tortuosity, 90)
+    for q in (25, 50, 75, 90):
+        out[f"tortuosity p{q}"] = _pct(tortuosity, q)
+    out["tortuosity median"] = out.pop("tortuosity p50")
+    curvature = segment_curvature(segments, um_per_px)
+    for q in (25, 50, 75, 90):
+        out[f"curvature p{q} (rad/mm)"] = _pct(curvature, q)
+    out.update(pairing_stats(segments, distance, um_per_px))
+    out.update(irregularity_stats(segments, distance, od, um_per_px))
+    out.update(darkness_stats(od, mask, valid, skeleton, distance, um_per_px))
     # branch geometry at three-way junctions
     angles, exponents = [], []
     for centre, members in zip(junctions, junction_segments):
@@ -415,6 +422,130 @@ def morphology_stats(od, mask, valid, um_per_px):
     out["_diameters_um"] = diameters * um_per_px
     out["_segments"] = segments
     return out
+
+
+def segment_curvature(segments, um_per_px, smooth=2.0, min_length=30):
+    """Mean absolute curvature (rad/mm) of every skeleton segment at least min_length px long, after smoothing its
+    ordered pixels with a Gaussian of `smooth` px along its length (which removes the pixel staircase)."""
+    out = []
+    for points in segments:
+        if len(points) < min_length:
+            continue
+        xy = np.stack([ndi.gaussian_filter1d(points[:, k].astype(float), smooth, mode="nearest") for k in (0, 1)], 1)
+        step = np.diff(xy, axis=0)
+        length = np.hypot(step[:, 0], step[:, 1])
+        keep = length > 1e-6
+        angle = np.unwrap(np.arctan2(step[keep, 0], step[keep, 1]))
+        if len(angle) < 5:
+            continue
+        trim = int(2 * smooth)                                # the smoothing bends the ends; leave them out
+        turning = np.abs(np.diff(angle))[trim:-trim] if len(angle) > 2 * trim + 3 else np.abs(np.diff(angle))
+        arc = length[keep][1:][trim:-trim] if len(angle) > 2 * trim + 3 else length[keep][1:]
+        out.append(float(turning.sum() / max(arc.sum(), 1e-9) / (um_per_px * 1e-3)))
+    return np.array(out)
+
+
+def darkness_stats(od, mask, valid, skeleton, distance, um_per_px, sizes=(50.0, 130.0)):
+    """How much of the field large vessels cover, how dark the vessels are, and how sharp the large ones are.
+
+    - area share and length density of vessels wider than each size (a mask pixel belongs to the widest vessel
+      whose skeleton covers it: the skeleton's local diameter is spread over the vessel's lumen);
+    - the optical density of all vessel pixels: median, 90th and 99th percentiles (the darkness histogram);
+    - the edge steepness of vessels wider than the first size: the median gradient of optical density across their
+      edges divided by the density at their centre, in 1/µm (about 1 / the width of the edge's ramp)."""
+    out = {}
+    od0 = np.nan_to_num(od)
+    diameter_um = np.where(skeleton, 2 * distance * um_per_px, 0).astype(np.float32)
+    # spread each skeleton point's diameter over its lumen: a grey dilation by the largest radius is too coarse,
+    # so assign every mask pixel the diameter of its nearest skeleton pixel
+    _, (rows, cols) = ndi.distance_transform_edt(~skeleton, return_indices=True)
+    lumen_d = np.where(mask, diameter_um[rows, cols], 0)
+    area_um2 = valid.sum() * um_per_px ** 2
+    for size in sizes:
+        out[f"vessel area share > {size:g} um"] = float((lumen_d[valid] > size).mean())
+        length = (skeleton & valid & (diameter_um > size)).sum() * um_per_px * 1e-3
+        out[f"length density > {size:g} um (mm/mm2)"] = float(length / (area_um2 * 1e-6))
+    values = od0[mask & valid]
+    for q in (50, 90, 99):
+        out[f"vessel optical density p{q}"] = _pct(values, q)
+    smooth = cv2.GaussianBlur(od0, (0, 0), 1.0)
+    gy, gx = np.gradient(smooth)
+    gradient = np.hypot(gx, gy) / um_per_px
+    edge = mask & ~ndi.binary_erosion(mask) & valid & (lumen_d > sizes[0])
+    centre_od = smooth[rows, cols]
+    ok = edge & (centre_od > 0.02)
+    out[f"edge steepness > {sizes[0]:g} um (1/um)"] = _pct(gradient[ok] / centre_od[ok], 50)
+    out["_lumen_diameter_um"] = lumen_d
+    return out
+
+
+def irregularity_stats(segments, distance, od, um_per_px, min_length=40):
+    """Fine-scale irregularity of the vessels: the RMS lateral jitter of each centreline (its path smoothed at 1 px
+    minus the same path smoothed at 6 px, in µm), and the coefficient of variation of the vessel's width along its
+    length (2 x the distance to the mask edge, smoothed over 2 px, ends left out), per segment; medians."""
+    jitter, width_cv = [], []
+    for points in segments:
+        if len(points) < min_length:
+            continue
+        p = points.astype(float)
+        fine = np.stack([ndi.gaussian_filter1d(p[:, k], 1.0, mode="nearest") for k in (0, 1)], 1)
+        coarse = np.stack([ndi.gaussian_filter1d(p[:, k], 6.0, mode="nearest") for k in (0, 1)], 1)
+        tangent = np.gradient(coarse, axis=0)
+        tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
+        offset = ((fine - coarse) * normal).sum(1)[8:-8]
+        jitter.append(float(np.sqrt(np.mean(offset ** 2))) * um_per_px)
+        width = ndi.gaussian_filter1d(2 * distance[points[:, 0], points[:, 1]].astype(float), 2.0)[8:-8]
+        if width.mean() > 3:
+            width_cv.append(float(width.std() / width.mean()))
+    return {"centreline jitter median (um)": _pct(jitter, 50), "width variation along vessels (CV, median)": _pct(width_cv, 50)}
+
+
+def pairing_stats(segments, distance, um_per_px, near=4.0, far=35.0, parallel=0.9, end_margin=8):
+    """Vessels running side by side (arteriole-venule pairs): the share of skeleton length (away from segment ends)
+    that has a parallel skeleton point of another segment between `near` and `far` px away, the centre-to-centre
+    spacing of those neighbours, and the ratio of the wider to the narrower calibre across them."""
+    from scipy.spatial import cKDTree
+    points, labels, directions = [], [], []
+    for index, seg in enumerate(segments):
+        if len(seg) < 2 * end_margin + 10:
+            continue
+        xy = np.stack([ndi.gaussian_filter1d(seg[:, k].astype(float), 2.0, mode="nearest") for k in (0, 1)], 1)
+        d = np.gradient(xy, axis=0)
+        d /= np.maximum(np.linalg.norm(d, axis=1, keepdims=True), 1e-9)
+        sl = slice(end_margin, len(seg) - end_margin)
+        points.append(seg[sl])
+        labels.append(np.full(len(seg[sl]), index))
+        directions.append(d[sl])
+    if not points:
+        return {"paired length share": float("nan"), "pair spacing median (um)": float("nan"),
+                "pair calibre ratio median": float("nan")}
+    points = np.concatenate(points).astype(float)
+    labels = np.concatenate(labels)
+    directions = np.concatenate(directions)
+    tree = cKDTree(points)
+    paired = np.zeros(len(points), bool)
+    spacing, ratio = [], []
+    for i, neighbours in enumerate(tree.query_ball_point(points, far)):
+        best = None
+        for j in neighbours:
+            if labels[j] == labels[i]:
+                continue
+            gap = float(np.hypot(*(points[j] - points[i])))
+            if gap < near or abs(float(directions[i] @ directions[j])) < parallel:
+                continue
+            if best is None or gap < best[0]:
+                best = (gap, j)
+        if best is not None:
+            paired[i] = True
+            spacing.append(best[0])
+            a = 2 * distance[int(points[i, 0]), int(points[i, 1])]
+            b = 2 * distance[int(points[best[1], 0]), int(points[best[1], 1])]
+            if min(a, b) > 0:
+                ratio.append(max(a, b) / min(a, b))
+    return {"paired length share": float(paired.mean()),
+            "pair spacing median (um)": float(np.median(spacing) * um_per_px) if spacing else float("nan"),
+            "pair calibre ratio median": float(np.median(ratio)) if ratio else float("nan")}
 
 
 def texture_stats(mean_frame, mask, valid):

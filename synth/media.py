@@ -1,4 +1,8 @@
-"""Animated previews: real and synthetic clips side by side, as small looping WebP files."""
+"""Animated previews and stills: real and synthetic clips side by side, on one shared grey scale.
+
+Comparisons are shown in optical density, D = ln(background) - ln(frame), with the background a grey closing of the
+frame smoothed over 12 px (synth.targets.vessel_picture), and both halves mapped onto the same density range: so
+equally dark vessels look equally dark, whatever the illumination of each recording."""
 from __future__ import annotations
 
 import io
@@ -16,10 +20,35 @@ def to_gray(frames, low_pct=0.5, high_pct=99.5):
     return np.clip((np.nan_to_num(frames, nan=low) - low) / max(high - low, 1e-6) * 255, 0, 255).astype(np.uint8)
 
 
-def side_by_side(left, right, labels=("real", "synthetic"), height=None, gap=6):
+OD_RANGE = (-0.05, 0.45)       # the shared optical-density scale of the comparisons (white to black)
+
+
+def optical_density(frames):
+    """Per-frame optical density of a (T, H, W) stack (vessels positive)."""
+    from .targets import vessel_picture
+    frames = np.asarray(frames, np.float32)
+    valid = np.ones(frames.shape[1:], bool)
+    return np.stack([vessel_picture(frame, valid)[0] for frame in frames])
+
+
+def od_to_gray(od, od_range=OD_RANGE):
+    """8-bit grey of an optical-density stack on a fixed scale: low density white, high density black."""
+    low, high = od_range
+    return np.clip(255 * (high - np.nan_to_num(od, nan=low)) / (high - low), 0, 255).astype(np.uint8)
+
+
+def side_by_side(left, right, labels=("real", "synthetic"), height=None, gap=6, od_range=None):
+    """Two (T, H, W) stacks side by side. With od_range, both are converted to optical density and shown on that
+    one fixed scale (the comparison to judge darkness by); without it, each is stretched on its own percentiles."""
+    if od_range is not None:
+        left, right = od_to_gray(optical_density(left), od_range), od_to_gray(optical_density(right), od_range)
+        return _pair(left, right, labels, height, gap)
+    return _pair(to_gray(left), to_gray(right), labels, height, gap)
+
+
+def _pair(left, right, labels, height, gap):
     """Two (T, H, W) stacks, each stretched on its own, scaled to one height and placed side by side; the shorter
     clip repeats. Labels are written in the top-left corner of each half."""
-    left, right = to_gray(left), to_gray(right)
     height = height or min(left.shape[1], right.shape[1])
     n = max(len(left), len(right))
 

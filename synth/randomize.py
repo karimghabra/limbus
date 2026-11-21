@@ -7,7 +7,9 @@
 Anatomy and physiology are drawn within their cited ranges (docs/synthetic_conjunctiva_anatomy.md), so every
 random network still passes the anatomy check; the appearance - blur, focus, motion, noise, gain, texture,
 illumination, flicker - is drawn from wider domain-randomisation ranges around the values measured on the real
-bursts, so a network trained on the output does not learn one camera's settings. A range is (low, high), drawn
+bursts, so a network trained on the output does not learn one camera's settings. Most draws pass the anatomy check
+(docs/synthetic_conjunctiva_validation.md gives the rate); random_scene(seed, anatomical=True) keeps only those
+that do. A range is (low, high), drawn
 uniformly; ("log", low, high) draws log-uniformly; a scalar fixes the value. Parameters not listed keep their
 defaults.
 """
@@ -22,16 +24,16 @@ from .anatomy import Scene
 DEFAULT_RANGES = {
     # anatomy, within the cited ranges
     "anatomy.murray_exponent_arterial": (2.59, 3.0),                  # [Luo2017, MayrovitzRoy1983]
-    "anatomy.murray_exponent_venous": (2.0, 3.0),                     # [Luo2017, Murray1926a]
-    "anatomy.capillary_mesh_spacing": (170.0, 240.0),                 # capillary length density 4.4-12 mm/mm2 [Kvernebo2022]
+    "anatomy.murray_exponent_venous": (2.5, 3.0),                     # within 1.95-3.14 [Luo2017, Murray1926a]
+    "anatomy.capillary_mesh_spacing": (210.0, 260.0),                 # capillary length density 4.4-12 mm/mm2 [Kvernebo2022]
     "anatomy.episcleral_vessels_per_mm": (1.5, 4.0),
     "anatomy.episcleral_avas_per_mm2": (0.5, 1.0),                    # [Selbach2005]
     "anatomy.communicating_per_mm2": (0.6, 2.0),
     "anatomy.arterial_trees_per_mm2": (0.35, 0.7),
-    "anatomy.venous_trees_per_mm2": (0.5, 1.1),
+    "anatomy.venous_trees_per_mm2": (0.45, 0.8),
     "anatomy.radial_bias": (0.1, 0.4),
     # physiology, within the cited ranges
-    "physiology.arterial_pressure_at_100um": (45.0, 58.0),            # within 45-65 mmHg [Zweifach1974]
+    "physiology.arterial_pressure_at_100um": (45.0, 55.0),            # within 45-65 mmHg [Zweifach1974]
     "physiology.arterial_pressure_at_10um": (30.0, 33.0),             # within 30-35 mmHg [Zweifach1974]
     "physiology.venous_pressure_at_100um": (7.0, 9.6),                # within 6.3-9.6 mmHg [Zeimer1983, Sit2011]
     "physiology.heart_rate_hz": (0.9, 1.4),
@@ -71,8 +73,21 @@ def _draw(rng, spec):
     return spec
 
 
-def random_scene(seed, config=None, base: Scene | None = None) -> Scene:
-    """A Scene with every parameter in the ranges drawn from seed (config overrides or adds ranges)."""
+def random_scene(seed, config=None, base: Scene | None = None, anatomical=False, tries=20) -> Scene:
+    """A Scene with every parameter in the ranges drawn from seed (config overrides or adds ranges).
+
+    With anatomical=True the network and its flow are generated and checked (synth.check), and the draw is repeated
+    with derived seeds until every checked quantity is within its cited range; the returned scene's seed is the one
+    that passed."""
+    if anatomical:
+        from . import check, haemodynamics, network
+        for attempt in range(tries):
+            scene = random_scene(seed * 1000 + attempt if attempt else seed, config, base)
+            net = network.generate(scene)
+            flow = haemodynamics.solve(net, scene.physiology)
+            if all(row["status"] != "outside" for row in check.anatomy_report(scene, net, flow)):
+                return scene
+        raise RuntimeError(f"no anatomical scene in {tries} draws from seed {seed}: the ranges are too wide")
     ranges = dict(DEFAULT_RANGES)
     ranges.update(config or {})
     rng = np.random.default_rng([seed, 7])

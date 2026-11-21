@@ -12,13 +12,15 @@ and a truth/ folder beside them:
 |----------------------|-------------------------------------------------------------------------------------------|
 | truth/scene.json     | every parameter of the scene (anatomy, physiology, optics, size, seed)                    |
 | truth/graph.json     | the directed vessel graph: nodes with 3D position (µm) and pressure (mmHg); edges with     |
-|                      | 3D centreline, diameter, length, kind, layer, vessel id, mean flow (pl/s), mean blood and  |
+|                      | 3D centreline with the local diameter at each point, nominal diameter, length, kind,       |
+|                      | layer, vessel id, the arteriole a companion venule accompanies, mean flow (pl/s), blood and |
 |                      | red-cell velocity (mm/s), discharge and tube haematocrit, wall shear rate, and their        |
 |                      | direction (edges are stored oriented along the mean flow)                                 |
 | truth/frames.npz     | per frame: the tissue motion (dx, dy px, rotation rad), the focal depth (µm), the time (s) |
 |                      | and every edge's flow and red-cell velocity at that instant (the cardiac pulse)             |
-| truth/cells.npz      | per frame: the 3D position of every red cell the camera can see (xyz_decimicron, uint16 in |
-|                      | 0.1 µm: divide by 10 for µm), its id (stable while it stays in the domain) and its segment |
+| truth/cells.npz      | per frame: the 3D position of every red cell the camera can see (µm = origin_um +          |
+|                      | xyz_decimicron / 10, uint16 in 0.1 µm), its id (stable while it stays in the domain), its   |
+|                      | segment                                                                                     |
 |                      | (edge index); frame k's cells are rows frame_offsets[k] to frame_offsets[k + 1]          |
 | truth/masks.npz      | per frame (uint16/float16, compressed): the id of the shallowest segment at every pixel (0 |
 |                      | is none, else edge index + 1), its depth (µm), and its projected red-cell velocity (px per |
@@ -147,7 +149,9 @@ def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
         q = renderer.project(pts, frame_time) / renderer.ss * ss        # px at the mask's own supersampling
         if (q[:, 0].max() < -10 or q[:, 0].min() > w * ss + 10 or q[:, 1].max() < -10 or q[:, 1].min() > h * ss + 10):
             continue
-        thickness = max(1, int(round(e.diameter / um * ss)))
+        local = e.local_diameter[:: max(1, int(12 / max(np.median(np.linalg.norm(np.diff(e.points, axis=0), axis=1)), 1e-6)))]
+        if len(local) != len(pts):
+            local = np.full(len(pts), e.diameter)
         tangent = np.diff(q, axis=0)
         seg_len = np.linalg.norm(tangent, axis=1, keepdims=True)
         direction = tangent / np.maximum(seg_len, 1e-9)
@@ -158,6 +162,7 @@ def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
         for j in range(len(q) - 1):
             a = tuple(int(round(c)) for c in q[j])
             b = tuple(int(round(c)) for c in q[j + 1])
+            thickness = max(1, int(round(0.5 * (local[j] + local[j + 1]) / um * ss)))
             cv2.line(edge_map, a, b, int(index + 1), thickness)
             cv2.line(depth_map, a, b, float(np.mean(pts[j:j + 2, 2])), thickness)
             cv2.line(vx, a, b, float(speed[j] * direction[j, 0]), thickness)
@@ -184,8 +189,9 @@ def graph_dict(net: network.Network, flow: haemodynamics.Flow):
             rbc_velocity_mm_s=round(float(sign * flow.rbc_velocity[i]), 6),
             discharge_haematocrit=round(float(flow.hd[i]), 5), tube_haematocrit=round(float(flow.ht[i]), 5),
             relative_viscosity=round(float(flow.viscosity[i]), 5), wall_shear_rate_s=round(float(flow.shear_rate[i]), 3),
-            reversed_from_generation=not forward,
-            centreline_um=np.round(points, 2).tolist()))
+            reversed_from_generation=not forward, paired_with_vessel=int(e.paired_with),
+            centreline_um=np.round(points, 2).tolist(),
+            diameter_profile_um=np.round(e.local_diameter if forward else e.local_diameter[::-1], 2).tolist()))
     return dict(nodes=nodes, edges=edges, domain_um=list(net.domain), field_of_view_um=list(net.field_of_view),
                 vessel_kinds={int(k): v for k, v in net.vessel_names.items()},
                 conventions="x along the limbus, y away from it, z depth below the epithelial surface, all µm; "
@@ -237,8 +243,9 @@ def write_burst(result: Result, folder, name=None):
     if result.cell_frames:
         counts = np.array([len(c["id"]) for c in result.cell_frames])
         xyz = np.concatenate([c["xyz"] for c in result.cell_frames])
-        np.savez_compressed(truth / "cells.npz", frame_offsets=np.r_[0, np.cumsum(counts)],
-                            xyz_decimicron=np.clip(np.round(xyz * 10.0), 0, 65535).astype(np.uint16),
+        origin = np.floor(xyz.min(axis=0)) - 1.0 if len(xyz) else np.zeros(3)
+        np.savez_compressed(truth / "cells.npz", frame_offsets=np.r_[0, np.cumsum(counts)], origin_um=origin,
+                            xyz_decimicron=np.clip(np.round((xyz - origin) * 10.0), 0, 65535).astype(np.uint16),
                             id=np.concatenate([c["id"] for c in result.cell_frames]),
                             edge=np.concatenate([c["edge"] for c in result.cell_frames]))
     if result.masks:
