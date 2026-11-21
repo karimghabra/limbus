@@ -276,6 +276,8 @@ python analysis/tests/test_live.py            # live stabilization vs known moti
 | `analysis/segmentation/` | the vessel overlay's segmenters (`plugins/`), their runner and the overlay format |
 | `analysis/limbusflow/` | red-cell velocimetry used by vesselmap's flow step |
 | `vesselmap/` | the spline-network vessel map (`python -m vesselmap`), with its own README |
+| `synth/` | the synthetic conjunctiva: an anatomical 3D vessel network, its blood flow and red cells, and the camera, with exact ground truth (`synth/README.md`) |
+| `docs/` | specifications: `synthetic_conjunctiva_anatomy.md` (every source of the synthetic conjunctiva) and `synthetic_conjunctiva_validation.md` |
 | `analysis/tests/` | synthetic ground-truth and smoke tests |
 | `notebooks/` | the analysis notebooks, with their own README (`notebooks/README.md`) |
 | `benchmarks/` | camera, encoder and disk benchmarks, and GUI tests of the app |

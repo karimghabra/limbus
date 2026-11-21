@@ -30,4 +30,5 @@ notebooks/previews/
 notebooks/vessel_pictures/
 notebooks/preprocessed/
 notebooks/neural_cache/
+notebooks/synthetic_outputs/
 __marimo__/
