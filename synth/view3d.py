@@ -6,6 +6,8 @@ exaggerated (z_scale) so the layers, a few hundred micrometres apart over millim
 """
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 KIND_COLORS = {"arteriole": "#e34948", "venule": "#2a78d6", "capillary": "#e87ba4", "episcleral artery": "#9b1c1c",
@@ -99,3 +101,41 @@ def rotating_frames(network, eye_radius_um=12500.0, z_scale=3.0, n_frames=48, si
         frames.append(np.asarray(Image.open(buffer).convert("RGB")))
     plt.close(figure)
     return np.stack(frames)
+
+
+def eye_figure(eye, kinds=None, step=4):
+    """An interactive 3D figure of a whole eye's coarse network on the globe (eye coordinates, mm), with the globe
+    as a faint sphere and the limbus as a ring."""
+    import plotly.graph_objects as go
+
+    figure = go.Figure()
+    for kind, color in list(KIND_COLORS.items()) + [("ciliary artery", "#7a0000"), ("conjunctival artery", "#e34948"),
+                                                   ("conjunctival vein", "#2a78d6"), ("limbal vein", "#5f9fe0")]:
+        if kinds is not None and kind not in kinds:
+            continue
+        chosen = [e for e in eye.network.edges if e.kind == kind]
+        if not chosen:
+            continue
+        xs, ys, zs = [], [], []
+        for e in chosen:
+            q = e.points[::step] if len(e.points) > 2 * step else e.points
+            q = np.vstack([q, e.points[-1]]) * 1e-3
+            xs += list(q[:, 0]) + [None]
+            ys += list(q[:, 1]) + [None]
+            zs += list(q[:, 2]) + [None]
+        width = float(np.clip(np.median([e.diameter for e in chosen]) / 20.0, 1.0, 6.0))
+        figure.add_trace(go.Scatter3d(x=xs, y=ys, z=zs, mode="lines", name=kind, line=dict(color=color, width=width)))
+    R = eye.anatomy.radius_um * 1e-3 * 0.995
+    u, v = np.mgrid[0:2 * np.pi:40j, 0:np.pi / 1.6:20j]
+    figure.add_trace(go.Surface(x=R * np.cos(u) * np.sin(v), y=R * np.sin(u) * np.sin(v), z=R * np.cos(v),
+                                opacity=0.15, showscale=False, colorscale=[[0, "#dddddd"], [1, "#dddddd"]],
+                                hoverinfo="skip", name="globe"))
+    t = np.linspace(0, 2 * np.pi, 200)
+    rl = eye.anatomy.limbus_radius_um * 1e-3
+    zl = math.sqrt(max(R ** 2 - rl ** 2, 0))
+    figure.add_trace(go.Scatter3d(x=rl * np.cos(t), y=rl * np.sin(t), z=np.full(200, zl), mode="lines",
+                                  name="limbus", line=dict(color="black", width=3)))
+    figure.update_layout(scene=dict(aspectmode="data", xaxis_title="temporal (mm)", yaxis_title="superior (mm)",
+                                    zaxis_title="anterior (mm)"), margin=dict(l=0, r=0, t=30, b=0),
+                         title="the coarse network of the whole anterior eye")
+    return figure

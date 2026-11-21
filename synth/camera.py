@@ -245,17 +245,19 @@ class Renderer:
         scatter = o.scatter_blur_um_at_500 * (max(tissue, 0.0) / 500.0) ** 1.5 / self.fine_um
         return float(np.sqrt(psf ** 2 + defocus ** 2 + scatter ** 2))
 
-    def transmission(self, xyz, frame_time):
-        """The fraction of light detected at every fine pixel after the cells' absorption (1 with no cells)."""
+    def transmission(self, xyz, frame_time, weights=None):
+        """The fraction of light detected at every fine pixel after the cells' absorption (1 with no cells).
+        weights: cells per point (tubes); None is one cell per point."""
         h, w = self.fine
         q = self.project(xyz, frame_time)
         inside = (q[:, 0] >= 0) & (q[:, 0] < w - 1) & (q[:, 1] >= 0) & (q[:, 1] < h - 1)
         q, z = q[inside], xyz[inside, 2]
+        weights = None if weights is None else weights[inside]
         slab = np.clip(np.searchsorted(self.slab_edges, z) - 1, 0, len(self.slab_depth) - 1)
         _, _, _, focus = self.motion.at(frame_time)
         detected = np.zeros((h, w), np.float32)
         through = np.ones((h, w), np.float32)                 # product of the slabs above
-        all_counts = _splat(q, (h, w), slab, len(self.slab_depth)).reshape(len(self.slab_depth), h, w)
+        all_counts = _splat(q, (h, w), slab, len(self.slab_depth), weights).reshape(len(self.slab_depth), h, w)
         occupied = np.bincount(slab, minlength=len(self.slab_depth)) > 0
         for b in range(len(self.slab_depth)):
             share = self.returning[b] - self.returning[b + 1]
@@ -307,8 +309,9 @@ class Renderer:
         total = np.zeros(self.fine, np.float32)
         for j in range(n_sub):
             t_rel = (j + 0.5) / n_sub * o.exposure_s
-            xyz = cells_at(frame_index * period + t_rel)
-            total += self.transmission(xyz, frame_index + t_rel / period)
+            got = cells_at(frame_index * period + t_rel)
+            xyz, weights = got if isinstance(got, tuple) else (got, None)
+            total += self.transmission(xyz, frame_index + t_rel / period, weights)
         total /= n_sub
         detected = cv2.resize(total, (w, h), interpolation=cv2.INTER_AREA)
         texture, glint = self.tissue_maps(frame_index + 0.5 * o.exposure_s / period)
@@ -329,7 +332,7 @@ class Renderer:
         return np.clip(np.round(dn), 0, o.ceiling_dn).astype(np.uint16)
 
 
-def _splat(points, shape, layer=None, layers=1):
+def _splat(points, shape, layer=None, layers=1, weights=None):
     """Bilinear splat of unit weights at fractional (x, y) positions onto `layers` grids at once (layer gives
     each point's grid). Returns (layers, h, w) float32, or (h, w) when layers is 1."""
     h, w = shape
@@ -340,7 +343,8 @@ def _splat(points, shape, layer=None, layers=1):
     base = (np.zeros(len(x), np.int64) if layer is None else layer.astype(np.int64)) * (h * w)
     index = np.concatenate([base + y0 * w + x0, base + y0 * w + x0 + 1, base + (y0 + 1) * w + x0,
                             base + (y0 + 1) * w + x0 + 1])
-    weight = np.concatenate([(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy])
+    unit = np.ones(len(x), np.float32) if weights is None else np.asarray(weights, np.float32)
+    weight = np.concatenate([(1 - fx) * (1 - fy) * unit, fx * (1 - fy) * unit, (1 - fx) * fy * unit, fx * fy * unit])
     ok = np.concatenate([(x0 >= 0) & (x0 < w) & (y0 >= 0) & (y0 < h), (x0 + 1 < w) & (x0 >= -1) & (y0 >= 0) & (y0 < h),
                          (x0 >= 0) & (x0 < w) & (y0 + 1 < h) & (y0 >= -1), (x0 + 1 < w) & (x0 >= -1) & (y0 + 1 < h) & (y0 >= -1)])
     grid = np.bincount(index[ok], weights=weight[ok], minlength=layers * h * w).astype(np.float32)

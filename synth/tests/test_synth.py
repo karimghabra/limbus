@@ -195,3 +195,49 @@ def test_random_scenes_stay_anatomical():
         failing = [row for row in report if row["status"] == "outside"]
         assert not failing, (seed, failing)
     assert random_scene(3).optics.psf_sigma_px == random_scene(3).optics.psf_sigma_px
+
+
+# ------------------------------------------------------------------------------------------- the whole eye
+
+@pytest.fixture(scope="module")
+def eye():
+    from synth.eye import Eye
+    return Eye(seed=3)
+
+
+def test_eye_coarse_conservation_and_outflow(eye):
+    flow_error, cell_error = eye.flow.conservation(eye.network)
+    assert flow_error < 1e-6 and cell_error < 1e-8
+    # every outlet is at the episcleral venous pressure and every inlet above it: blood runs from the arteries in
+    q = eye.flow.flow
+    assert np.isfinite(q).all() and np.abs(q).max() > 0
+
+
+def test_tiles_are_reproducible(eye):
+    from synth.eye import build_tile
+    key = eye.tile_key(3000.0, 90.0)
+    a = build_tile(eye, key)
+    b = build_tile(eye, key)
+    assert len(a["network"].edges) == len(b["network"].edges) > 0
+    assert np.allclose(a["network"].nodes, b["network"].nodes)
+
+
+def test_zoom_never_changes_a_vessel(eye):
+    """The same spot at two magnifications: every vessel piece in a view carries exactly the flow of the coarse edge
+    or tile edge it came from, and the pieces common to both views agree."""
+    from synth.eye import Pose, assemble_view
+    pose = Pose(s_mm=3.0, clock_deg=90.0)
+    seen = []
+    for um in (3.26, 6.5):
+        scene = replace(eye.scene, anatomy=replace(eye.scene.anatomy, um_per_px=um), width_px=256, height_px=192)
+        net, flow = assemble_view(eye, pose, scene, fine=True)
+        flows = {}
+        for i, (source, ei) in enumerate(net.origins):
+            truth = eye.flow.flow[ei] if source == "coarse" else eye.tile(source)["flow"].flow[ei]
+            assert np.isclose(flow.flow[i], truth)
+            flows[(source, ei)] = float(flow.flow[i])
+        seen.append(flows)
+    shared = set(seen[0]) & set(seen[1])
+    assert any(src == "coarse" for src, _ in shared) and any(src != "coarse" for src, _ in shared)
+    for key in shared:
+        assert np.isclose(seen[0][key], seen[1][key])

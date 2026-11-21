@@ -70,6 +70,7 @@ class Network:
     field_of_view: tuple = (0.0, 0.0, 0.0, 0.0)        # x0, x1, y0, y1 of the camera's field (frame 0), µm
     vessel_names: dict = field(default_factory=dict)   # vessel id -> kind of its first edge
     boundary_offset: dict = field(default_factory=dict)  # node -> mmHg added to its role's boundary pressure
+    boundary_pressure: dict = field(default_factory=dict)  # node -> mmHg, overriding the role's pressure (the eye)
 
     def degree(self):
         degree = np.zeros(len(self.nodes), int)
@@ -493,8 +494,11 @@ def _oblique_path(rng, top, bottom, step=4.0):
     return path
 
 
-def _conjunctival_trees(builder, rng, scene, domain, communicating):
-    """Arteriolar and venular trees in the conjunctival plexus, the capillary mesh between them, anastomoses."""
+def _conjunctival_trees(builder, rng, scene, domain, communicating, border_roots=True):
+    """Arteriolar and venular trees in the conjunctival plexus, the capillary mesh between them, anastomoses.
+
+    communicating lists roots given from outside (dicts with venous, top (x, y, z), optionally heading); with
+    border_roots False every tree grows from one of them (the eye's tiles root their fine trees on coarse trunks)."""
     a = scene.anatomy
     x0, x1, y0, y1 = domain
     area_mm2 = (x1 - x0) * (y1 - y0) * 1e-6
@@ -503,15 +507,16 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating):
     for venous in (False, True):
         kind = "venule" if venous else "arteriole"
         per_mm2 = a.venous_trees_per_mm2 if venous else a.arterial_trees_per_mm2
-        n_roots = max(2, rng.poisson(per_mm2 * area_mm2))
+        given = [c for c in communicating if c["venous"] == venous]
+        n_roots = max(2, rng.poisson(per_mm2 * area_mm2)) if border_roots else len(given)
         roots, headings, sources = [], [], []
         # communicating roots: rise obliquely from an episcleral vessel of the same side of the circulation
-        for root in [c for c in communicating if c["venous"] == venous][:n_roots // 2]:
-            roots.append(root["top"][:2])
-            headings.append(rng.uniform(0, 2 * math.pi))
+        for root in given[:n_roots // 2] if border_roots else given:
+            roots.append(np.asarray(root["top"][:2], float))
+            headings.append(root.get("heading", rng.uniform(0, 2 * math.pi)))
             sources.append(root)
         # border roots: anterior conjunctival vessels enter from the limbal side, posterior ones from the fornix side
-        while len(roots) < n_roots:
+        while border_roots and len(roots) < n_roots:
             side = rng.random()
             if side < 0.4:
                 p, h = (rng.uniform(x0, x1), y0), math.pi / 2
@@ -526,7 +531,7 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating):
             sources.append(None)
         n_attractors = rng.poisson(a.attractors_per_mm2 * area_mm2)
         attractors = np.column_stack([rng.uniform(x0, x1, n_attractors), rng.uniform(y0, y1, n_attractors)])
-        if venous and "arteriole" in trees:
+        if venous and trees.get("arteriole") is not None:
             # venules accompany arterioles: part of the attractors lie beside the grown arterioles
             P = trees["arteriole"]["positions"]
             pick = rng.choice(len(P), int(a.av_pair_fraction * n_attractors), replace=True)
@@ -543,13 +548,18 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating):
             inside = (attractors[:, 0] > x0) & (attractors[:, 0] < x1) & (attractors[:, 1] > y0) & (attractors[:, 1] < y1)
             attractors = attractors[inside]
         kill = a.growth_kill * (a.venous_kill_ratio if venous else 1.0)
+        if not roots:
+            trees[kind] = None
+            continue
         positions, parent, tree = colonise(rng, roots, headings, attractors, a.growth_step, a.growth_influence,
                                            kill, persistence=a.growth_persistence, radial_bias=a.radial_bias)
         trees[kind] = dict(positions=positions, parent=parent, tree=tree, roots=roots, sources=sources)
-    made = {}
+    made = {"arteriole": dict(leaves=[]), "venule": dict(leaves=[])}
     for kind, data in trees.items():
+        if data is None:
+            continue
         venous = kind == "venule"
-        positions, parent = data["positions"], data["parent"]
+        positions, parent, tree = data["positions"], data["parent"], data["tree"]
         paths, children = _tree_paths(parent)
         leaf_range = a.postcapillary_venule_diameter if venous else a.terminal_arteriole_diameter
         leaf_d = rng.uniform(*leaf_range, len(parent))
@@ -571,6 +581,17 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating):
             source = data["sources"][index] if index < len(data["sources"]) else None
             if source is not None:
                 z_of[index] = source["top"][2]
+        if not border_roots:
+            # trees rooted on a trunk leave it gently: a node's depth differs from its root's by at most a quarter of
+            # its distance from it, so no first segment plunges steeply (seen end-on it would show as a dark dot)
+            for end in list(z_of):
+                r = int(tree[end])
+                source = data["sources"][r] if r < len(data["sources"]) else None
+                if source is None or end == r:
+                    continue
+                z_root = float(source["top"][2])
+                reach = 0.25 * float(np.hypot(*(positions[end] - positions[r])))
+                z_of[end] = float(np.clip(z_of[end], z_root - reach, z_root + reach))
         for end, z in z_of.items():
             node_of[end] = builder.node((positions[end][0], positions[end][1], z))
         # vessel identity: a vessel continues into the child with the larger diameter
@@ -1004,6 +1025,30 @@ def generate(scene: Scene) -> Network:
             sign = 1.0 if role == "arterial" else -1.0
             network.boundary_offset[node] = sign * gradient * (network.nodes[node][1] - y_mid) * 1e-3
     return network
+
+
+def generate_fine(scene: Scene, domain, roots, seed) -> tuple:
+    """The fine vessels of one tile of the eye: conjunctival arteriolar and venular trees grown from the given roots
+    (points on the coarse trunks, see synth.eye), the capillary mesh between them, anastomoses, and the multi-scale
+    irregularity, all from one seed (the tile's), so a tile generated again is the same tile.
+
+    roots: dicts with venous, top (x, y, z µm in the tile's own coordinates) and heading (radians). Returns the
+    network (no boundary nodes) and, per root, its node (or None when its tree did not grow)."""
+    rng = np.random.default_rng(seed)
+    builder = _Builder()
+    roots = [dict(r) for r in roots]
+    made = _conjunctival_trees(builder, rng, scene, domain, roots, border_roots=False)
+    leaves = made["arteriole"]["leaves"] + made["venule"]["leaves"]
+    _capillary_mesh(builder, rng, scene, domain, leaves)
+    x0, x1, y0, y1 = domain
+    n_anastomoses = rng.poisson(scene.anatomy.anastomoses_per_mm2 * (x1 - x0) * (y1 - y0) * 1e-6)
+    _anastomoses(builder, rng, scene, domain, "arteriole", n_anastomoses // 2)
+    _anastomoses(builder, rng, scene, domain, "venule", n_anastomoses - n_anastomoses // 2)
+    _roughen(builder.edges, np.random.default_rng([int(seed) % (2 ** 32), 2]), scene)
+    root_nodes = [r.get("conjunctival_node") for r in roots]
+    network = Network(np.asarray(builder.nodes) if builder.nodes else np.zeros((0, 3)), builder.edges, {}, domain,
+                      domain, dict(builder.vessel_kind))
+    return network, root_nodes
 
 
 def _clean(network: Network) -> Network:

@@ -327,8 +327,10 @@ class Cells:
                 continue
             out, share = self._outgoing(int(n), q_now)
             if len(out) == 0:
-                # nowhere to go at this instant (stagnation): wait at the end of the segment
-                self.s[cells_here] = np.where(forward[members], L[members] - 1e-6, 0.0)
+                # no drawn vessel carries blood away from here: the blood leaves through vessels this network does
+                # not draw (in an eye's view, the coarse level's lumped beds or a region without tiles), and so do
+                # its cells; waiting would pile them into a dark spot
+                keep[cells_here] = False
                 continue
             share = share if share.sum() > 0 else np.full(len(out), 1.0 / len(out))
             residual = self.quota.setdefault(int(n), {})
