@@ -6,7 +6,8 @@
 #   notebooks/live.sh status             what runs, and the address to open
 #   notebooks/live.sh stop [--all]       stop the notebook server (--all: take this computer off the tailnet too)
 #
-# The notebook server (marimo) listens on this computer only, behind a token. Tailscale makes it reachable
+# The notebook server (marimo) serves every notebook in this folder: the browser opens on a list of them.
+# It listens on this computer only, behind a token. Tailscale makes it reachable
 # from the devices of one Tailscale account, wherever they are, and from nothing else: nothing listens on the
 # local network or the internet. Tailscale runs as this user, without root (userspace networking). Adding this
 # computer to the tailnet takes a sign-in to the Tailscale account; `start` prints the link for it.
@@ -14,7 +15,6 @@
 set -euo pipefail
 
 NOTEBOOKS_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-NOTEBOOK=$NOTEBOOKS_DIR/foundation.py
 VENV=$NOTEBOOKS_DIR/.venv
 PORT=2718
 TAILNET_NAME=limbus  # this computer's name on the tailnet
@@ -24,7 +24,7 @@ TAILSCALE_DIR=${XDG_DATA_HOME:-$HOME/.local/share}/limbus-live/tailscale
 TAILSCALE=$TAILSCALE_DIR/tailscale
 TOKEN_FILE=$CONFIG_DIR/token
 SOCKET=$STATE_DIR/tailscaled.sock
-# where the notebook writes what it makes (previews/, vessel_pictures/, neural_cache/): outside the repository
+# where the notebooks write what they make (previews/, vessel_pictures/, preprocessed/, neural_cache/): outside the repository
 WORK_DIR=$HOME/limbus-work
 # the notebook server's share of this computer, which runs other jobs too
 MEMORY_MAX=${LIMBUS_LIVE_MEMORY_MAX:-12G}
@@ -141,9 +141,10 @@ start_marimo() {  # start_marimo BURST
                      -p "WorkingDirectory=$WORK_DIR")
     local environment=("OMP_NUM_THREADS=1" "OPENBLAS_NUM_THREADS=1" "MKL_NUM_THREADS=1" "OPENCV_FOR_THREADS_NUM=1")
     [ -n "$burst" ] && environment+=("LIMBUS_BURST=$burst")
-    # on this computer only, behind the token; --watch takes in changes made to the file on disk
+    # every notebook in this folder, on this computer only, behind the token; --watch takes in changes made to
+    # the files on disk
     launch "$MARIMO_UNIT" "$STATE_DIR/marimo.log" -- env "${environment[@]}" \
-        "$VENV/bin/marimo" -q edit "$NOTEBOOK" --host 127.0.0.1 --port "$PORT" --headless --watch \
+        "$VENV/bin/marimo" -q edit "$NOTEBOOKS_DIR" --host 127.0.0.1 --port "$PORT" --headless --watch \
         --skip-update-check --token-password-file "$TOKEN_FILE"
     for _ in $(seq 150); do
         curl -fs -o /dev/null "http://127.0.0.1:$PORT/health" && return 0
@@ -182,7 +183,7 @@ cmd_start() {
     mkdir -p "$STATE_DIR" "$WORK_DIR"
 
     start_marimo "$burst"
-    say "Notebook server: http://127.0.0.1:$PORT (this computer only)${burst:+, burst $burst}"
+    say "Notebook server: http://127.0.0.1:$PORT (this computer only), the notebooks in $NOTEBOOKS_DIR${burst:+, burst $burst}"
 
     start_tailscaled
     # a tailscaled that has just started takes a moment to say whether it is signed in
@@ -228,7 +229,7 @@ cmd_start() {
     say "This computer is not on the tailnet yet. To add it, open this link on any device and sign in to the"
     say "Tailscale account the other computer uses:"
     say "  $url"
-    say "After the sign-in it joins by itself and serves the notebook at https://$TAILNET_NAME.<tailnet>.ts.net/"
+    say "After the sign-in it joins by itself and serves the notebooks at https://$TAILNET_NAME.<tailnet>.ts.net/"
     say "(notebooks/live.sh status shows the address; if Tailscale asks for HTTPS to be enabled for the tailnet,"
     say "its link is in $STATE_DIR/join.log)."
 }

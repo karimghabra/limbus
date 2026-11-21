@@ -28,5 +28,6 @@ dist/
 # what the notebooks make when run from their own folder (notebooks/README.md)
 notebooks/previews/
 notebooks/vessel_pictures/
+notebooks/preprocessed/
 notebooks/neural_cache/
 __marimo__/
