@@ -3,7 +3,7 @@
 | Notebook | |
 |---|---|
 | `foundation.py` | **The preprocessing**: one burst, from its TIFF frames to the cleaned, stabilized pictures that vessel annotation starts from, saved to one file at the end |
-| `flow.py` | **Flow without annotation**: why subtracting each pixel's temporal mean makes flow visible, the perfusion map, the centrelines of the perfused vessels, and the red-cell velocity along each from kymographs, cross-checked by 2D cross-correlation |
+| `flow.py` | **Flow without annotation**: why subtracting each pixel's temporal mean makes flow visible, the perfusion map, the centrelines of the perfused vessels, the red-cell velocity along each from kymographs, cross-checked by 2D cross-correlation, and a comparison of the backgrounds that can be removed |
 | `archive_vessel_annotation.py` | The vessel annotation that used to follow the preprocessing (sections 17–25), kept unchanged for reference; a different annotation algorithm is planned |
 
 They are [marimo](https://marimo.io) notebooks: plain Python files that diff like code, run as scripts
@@ -61,19 +61,20 @@ order, as a Jupyter notebook.
 ## Flow: where blood moves, and how fast
 
 `flow.py` runs `foundation.py` inside it (`app.embed()`, with the preprocessing's figures and previews left out)
-and works on one fixation's stabilized density frames. It needs no vessel annotation. The only background it
-removes, from §2 on, is each pixel's temporal mean over the whole fixation, after a 1.5 px blur of every frame
-(`SPATIAL_BLUR`); a rolling mean appears only in §3, as one labelled comparison on the fine vessels:
+and works on one fixation's stabilized density frames. It needs no vessel annotation. From §2 on it removes,
+after a 1.5 px blur of every frame (`SPATIAL_BLUR`), each pixel's temporal mean over the whole fixation and then
+its rolling mean over `DRIFT_WINDOW` frames; §7 scores that choice against other backgrounds:
 
 | § | |
 |---|---|
 | 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
-| 2 | The perfusion map: the temporal variance of the mean-subtracted video, levelled for shot noise and thresholded into perfused regions |
-| 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments; and the fine vessels found with the whole-fixation mean against a rolling mean over `DRIFT_WINDOW` frames (a comparison, not used) |
+| 2 | The perfusion map: the temporal variance of the video with its rolling mean removed, levelled for shot noise and thresholded into perfused regions |
+| 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments |
 | 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties |
 | 5 | A cross-check by ensemble 2D cross-correlation of the frames around each segment |
 | 6 | The velocity map, the per-segment table, and what the frame rate and exposure allow |
-| 7 | Videos, figures and tables saved to `flow_outputs/<burst folder>/` in the working directory |
+| 7 | Which background: the rolling mean against the whole-fixation mean, a rolling median, a rolling bright-side percentile, an exponential moving average and a sliding-window SVD clutter filter, each divided (the normalised residual) and subtracted, ranked on fine-vessel centreline, fine segments, false detections on static pixels and confirmed velocities (`COMPARE_BACKGROUNDS = False` skips it) |
+| 8 | Videos, figures and tables saved to `flow_outputs/<burst folder>/` in the working directory |
 
 Velocities are in px/frame and px/s; set `UM_PER_PX` (5.86 µm divided by the optical magnification) for mm/s.
 The previews it shows in the notebook are kept under 2.5 MB each; the full side-by-side video is saved as WebM.

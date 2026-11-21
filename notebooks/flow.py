@@ -22,14 +22,15 @@ def _(mo):
     |---|---|---|
     | 0 | Setup: run the preprocessing (`foundation.py`) and take one fixation's stabilized frames | `density`, `log_frames`, the moving and static reference pixels |
     | 1 | **Why the mean-subtracted video shows flow**: signal, noise and clutter, before and after | the contrast table, the verdict, the side-by-side video |
-    | 2 | **Where flow is**: the perfusion map, from the temporal variance of the mean-subtracted video | `perfusion_z`, `perfused` |
-    | 3 | The centrelines of the perfused vessels, by skeletonising the perfusion map, and the fine vessels found with the whole-fixation mean against a rolling mean | `segments` |
+    | 2 | **Where flow is**: the perfusion map, from the temporal variance of the video with its rolling mean removed | `perfusion_z`, `perfused` |
+    | 3 | The centrelines of the perfused vessels, by skeletonising the perfusion map | `segments` |
     | 4 | **How fast**: a kymograph along every centreline, and the red-cell velocity from the slope of its streaks | `velocities` |
     | 5 | A cross-check of the velocities by 2D cross-correlation of the frames | `velocities["v_xcorr"]` |
     | 6 | The velocity map, the per-segment table, and what the frame rate allows | |
-    | 7 | Save the videos, figures and tables to `flow_outputs/<burst>/`, and the runtime | |
+    | 7 | **Which background**: the rolling mean against the whole-fixation mean and four other rolling backgrounds, each subtracted and divided, scored on the fine vessels, false detections and confirmed velocities | the ranked table |
+    | 8 | Save the videos, figures and tables to `flow_outputs/<burst>/`, and the runtime | |
 
-    **One background, everywhere.** The only background removed, in every section from §2 on (the perfusion map, the kymographs, the cross-correlation and the velocities), is each pixel's mean over the whole fixation, after a `SPATIAL_BLUR` (1.5 px) blur of every frame. A rolling mean over a shorter window appears only in §3, as one comparison on the fine vessels, and is not used: it would also remove slow flow and the sparse cells of fine vessels (§1, §3).
+    **The background.** From §2 to §6 (the perfusion map, the kymographs, the cross-correlation and the velocities) every frame is blurred by `SPATIAL_BLUR` (1.5 px), and each pixel's mean over the whole fixation is removed and then its rolling mean over `DRIFT_WINDOW` frames: what changes more slowly than the window is taken for drift, not flow. §7 measures what that choice costs and gains against the whole-fixation mean alone and against four other rolling backgrounds over the same window.
 
     Nothing here uses a vessel annotation: the vessels are found from what moves. Lengths are in pixels and times in frames unless `UM_PER_PX` is set (§0); a velocity in px/frame times the frame rate is px/s.
 
@@ -49,16 +50,18 @@ def _(mo):
     |---|---|---|
     | `FIXATION` | `None` | the fixation to analyse; `None` is the anchor, the fixation with the most frames |
     | `MIN_COVERAGE`, `EDGE` | `0.95`, `6` | a pixel is analysed when this share of the fixation's frames has data there, and it lies this many pixels inside that area |
-    | `DRIFT_WINDOW` | `15` frames | the window of the rolling mean that §3 compares with the whole-fixation mean on the fine vessels; a comparison only, never subtracted from what §2 to §6 measure |
+    | `DRIFT_WINDOW` | `15` frames | the rolling mean removed from what §2 to §6 measure (what changes more slowly than this is drift, not flow), and the window of every rolling background that §7 compares |
     | `SPATIAL_BLUR` | `1.5` px | Gaussian blur of every frame before the perfusion map, the kymographs and the cross-correlation |
-    | `NARROW_WIDTH` | `7` px | the comparison of §3: a centreline pixel belongs to a fine vessel when its perfused region is at most this wide there |
+    | `NARROW_WIDTH` | `7` px | §7: a centreline pixel belongs to a fine vessel when its perfused region is at most this wide there |
+    | `BRIGHT_PERCENTILE`, `SVD_RANK` | `85`, `2` | §7: the percentile of the rolling bright-side background, and the components that the sliding-window SVD removes |
+    | `COMPARE_BACKGROUNDS` | `True` | run the comparison of §7 (about three and a half minutes more on the crop burst); `False` skips it |
     | `PERFUSION_LEVELS` | `(4, 8)` | hysteresis thresholds on the perfusion map, in robust standard deviations of the static pixels |
     | `MIN_REGION`, `MAX_HOLE` | `150`, `300` px | perfused regions smaller than this are dropped, holes smaller than this filled |
     | `MIN_SEGMENT` | `30` px | shorter centreline segments are not measured |
     | `MAX_VELOCITY`, `MAX_LAG`, `MIN_OVERLAP` | `20` px/frame, `8`, `12` px | the slope search of §4 |
     | `BLOCKS` | `4` | the burst is split into this many blocks of time to give each velocity its uncertainty |
     | `UM_PER_PX` | `None` | micrometres per pixel at the eye (5.86 µm sensor pitch divided by the optical magnification); `None` keeps lengths in pixels |
-    | `OUTPUT_DIR` | `flow_outputs` | where §7 writes, in the working directory, one folder per burst |
+    | `OUTPUT_DIR` | `flow_outputs` | where §8 writes, in the working directory, one folder per burst |
     """)
     return
 
@@ -77,7 +80,9 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     from PIL import Image
-    from scipy.ndimage import convolve, find_objects, gaussian_filter1d, label, uniform_filter1d
+    from scipy.ndimage import convolve, find_objects, gaussian_filter1d, label, percentile_filter, uniform_filter1d
+    from scipy.signal import lfilter
+    from scipy.stats import rankdata
     from skimage.filters import apply_hysteresis_threshold
     from skimage.morphology import skeletonize
 
@@ -88,9 +93,12 @@ def _():
     FIXATION = None               # None: the anchor fixation
     MIN_COVERAGE = 0.95           # share of the fixation's frames that must have data at an analysed pixel
     EDGE = 6                      # px kept clear of the edge of that area
-    DRIFT_WINDOW = 15             # frames; the rolling mean of the comparison in §3 (not used)
+    DRIFT_WINDOW = 15             # frames; the rolling mean removed, and the window of every background of §7
     SPATIAL_BLUR = 1.5            # px
-    NARROW_WIDTH = 7              # px; a fine vessel in the comparison of §3
+    NARROW_WIDTH = 7              # px; a fine vessel in §7
+    BRIGHT_PERCENTILE = 85        # §7: the rolling bright-side background
+    SVD_RANK = 2                  # §7: components removed by the sliding-window SVD
+    COMPARE_BACKGROUNDS = True    # §7: score the candidate backgrounds
     PERFUSION_LEVELS = (4.0, 8.0) # hysteresis on the perfusion map, in robust SDs of the static pixels
     MIN_REGION = 150              # px
     MAX_HOLE = 300                # px
@@ -103,6 +111,8 @@ def _():
     OUTPUT_DIR = Path("flow_outputs")
     return (
         BLOCKS,
+        BRIGHT_PERCENTILE,
+        COMPARE_BACKGROUNDS,
         DRIFT_WINDOW,
         EDGE,
         FIXATION,
@@ -118,6 +128,7 @@ def _():
         OUTPUT_DIR,
         PERFUSION_LEVELS,
         SPATIAL_BLUR,
+        SVD_RANK,
         ThreadPoolExecutor,
         UM_PER_PX,
         apply_hysteresis_threshold,
@@ -130,9 +141,12 @@ def _():
         gaussian_filter1d,
         io,
         label,
+        lfilter,
         notebook_start,
         np,
+        percentile_filter,
         plt,
+        rankdata,
         resource,
         skeletonize,
         time,
@@ -318,7 +332,7 @@ def _(mo):
 
     The true signal-to-noise gains come from averaging: over neighbouring pixels (a blur the size of a red-cell aggregate), over many frames (the temporal variance map below, and §2), and from removing what is noise-like but not noise, such as the frame-to-frame flicker of the automatic exposure.
 
-    **Why the whole-fixation mean, and not a rolling one.** A rolling mean over `DRIFT_WINDOW` frames would also follow slow drift (tear film, focus, residual motion). It is **not used** anywhere in this notebook. A rolling background removes whatever changes more slowly than its window, and in the fine vessels some of that is flow: slow flow, and the sparse cells of a capillary that pass a pixel once in many frames, change over times comparable to the window, so a rolling mean absorbs them into the background and loses fine vessels. The mean over the whole fixation removes only what is truly static, at the price of keeping the slow drift as well. §3 measures both sides on the fine vessels of this burst.
+    **The whole-fixation mean, or a rolling one.** The mean over the whole fixation removes only what is truly static. A rolling mean over `DRIFT_WINDOW` frames also follows slow drift (tear film, focus, residual motion), which otherwise adds to the fluctuation of the static tissue and raises every threshold counted in its spread. The price is that a rolling background removes whatever changes more slowly than its window, and in the fine vessels some of that may be flow: slow flow, and the sparse cells of a capillary that pass a pixel once in many frames, change over times comparable to the window, so a rolling mean could absorb them into the background and lose fine vessels. §2 to §6 remove the rolling mean; §7 measures both sides on this burst, and compares four other rolling backgrounds.
 
     **What is measured.** For each version of the video, over the moving and the static reference pixels, on every second row and column:
 
@@ -367,6 +381,90 @@ def _(cv2, np):
 
 @app.cell
 def _(
+    DRIFT_WINDOW,
+    SVD_RANK,
+    ThreadPoolExecutor,
+    lfilter,
+    np,
+    percentile_filter,
+    uniform_filter1d,
+    workers,
+):
+    # The rolling backgrounds. Each takes a (frames, rows, columns) video in log units from which each pixel's mean
+    # over the whole fixation is already removed, NaN where a frame has no data, and returns it minus its background,
+    # NaN where it was. Where a background needs a value in a frame without data, it uses the pixel's mean, 0.
+    def _by_rows(video, work, chunk):
+        """Apply work(part) -> background to blocks of rows in parallel; return video minus the background."""
+        out = np.empty_like(video)
+
+        def one(row):
+            part = video[:, row:row + chunk]
+            has_data = np.isfinite(part)
+            out[:, row:row + chunk] = np.where(has_data, part - work(np.where(has_data, part, 0), has_data), np.nan)
+
+        with ThreadPoolExecutor(workers) as pool:
+            list(pool.map(one, range(0, video.shape[1], chunk)))
+        return out
+
+
+    def remove_rolling_mean(video, window=DRIFT_WINDOW):
+        """Minus each pixel's centred running mean over `window` frames, over the frames with data."""
+        def work(filled, has_data):
+            total = uniform_filter1d(filled, window, axis=0, mode="nearest")
+            count = uniform_filter1d(has_data.astype(np.float32), window, axis=0, mode="nearest")
+            return total / np.maximum(count, 1e-3)
+        return _by_rows(video, work, 64)
+
+
+    def remove_rolling_percentile(video, percentile, window=DRIFT_WINDOW):
+        """Minus each pixel's centred running percentile over `window` frames (50: the running median)."""
+        return _by_rows(video, lambda filled, _: percentile_filter(filled, percentile, size=(window, 1, 1), mode="nearest"), 32)
+
+
+    def remove_moving_average(video, window=DRIFT_WINDOW):
+        """Minus each pixel's exponential moving average, causal, with the weight 2 / (window + 1) of a span of
+        `window` frames (the same mean delay as a running mean over `window` frames); it starts from the mean of the
+        first `window` frames."""
+        weight = 2 / (window + 1)
+
+        def work(filled, _):
+            start = filled[:window].mean(axis=0, keepdims=True)
+            average, _ = lfilter([weight], [1, weight - 1], filled, axis=0, zi=(1 - weight) * start)
+            return average.astype(np.float32)
+        return _by_rows(video, work, 64)
+
+
+    def remove_sliding_svd(video, mean_image, rank=SVD_RANK, window=DRIFT_WINDOW):
+        """The clutter filter of Doppler imaging over a sliding window: the frames, with their whole-fixation mean
+        `mean_image` put back, as a Casorati matrix (frames x pixels); for each frame, the `window` frames around it are
+        projected on their `rank` strongest temporal modes, and the frame minus its part of that projection is returned.
+        Its first mode is the static picture of the window, so rank 1 is close to a rolling mean; the next modes are the
+        changes that most pixels share."""
+        frames = len(video)
+        has_data = np.isfinite(video)
+        flat = (np.where(has_data, video, 0) + np.nan_to_num(mean_image)[None]).reshape(frames, -1)
+        gram = (flat @ flat.T).astype(np.float64)
+        out = np.empty_like(flat)
+        for t in range(frames):
+            first = min(max(t - window // 2, 0), frames - window)
+            _, modes = np.linalg.eigh(gram[first:first + window, first:first + window])
+            strongest = modes[:, -rank:]
+            out[t] = flat[t] - (strongest @ strongest[t - first]).astype(np.float32) @ flat[first:first + window]
+        del flat
+        out = out.reshape(video.shape)
+        out[~has_data] = np.nan
+        return out
+
+    return (
+        remove_moving_average,
+        remove_rolling_mean,
+        remove_rolling_percentile,
+        remove_sliding_svd,
+    )
+
+
+@app.cell
+def _(
     analysed,
     blur_valid,
     contrast_measures,
@@ -407,7 +505,7 @@ def _(
 
 
 @app.cell
-def _(SPATIAL_BLUR, contrast_markdown, contrast_table, mo):
+def _(DRIFT_WINDOW, SPATIAL_BLUR, contrast_markdown, contrast_table, mo):
     _before, _after = contrast_table["log frame"], contrast_table["log − temporal mean"]
     _blurred = contrast_table["log − temporal mean, blurred 1.5 px"]
     _dn_before, _dn_after = contrast_table["stabilized frame (DN)"], contrast_table["DN − temporal mean"]
@@ -432,7 +530,7 @@ def _(SPATIAL_BLUR, contrast_markdown, contrast_table, mo):
 
     **The verdict on this burst.** Subtracting the temporal mean leaves the signal-to-noise ratio of a pixel in a frame where it was ({_before["SNR"]:.2f} before, {_after["SNR"]:.2f} after: the moving signal is *{_level}* the noise in one pixel of one frame). It takes the contrast of the moving signal against everything else on the screen from {_before["CNR"]:.2f} to {_after["CNR"]:.2f}, {_after["CNR"] / _before["CNR"]:.3g} times, because the clutter it competes with goes from {_before["clutter"]:.3f} to {_after["clutter"]:.1g} in log units; shown stretched to its range, the moving signal goes from {_before["gray levels"]:.0f} to {_after["gray levels"]:.0f} gray levels. In the recorded units (DN): CNR {_dn_before["CNR"]:.2f} → {_dn_after["CNR"]:.2f}, {_dn_before["gray levels"]:.0f} → {_dn_after["gray levels"]:.0f} gray levels; {_dn_note}. **Whatever is gained here is a contrast gain from removing static clutter, not a signal-to-noise gain.** {_fine_note}
 
-    What the eye then does is where a signal-to-noise gain can come from: it pools neighbouring pixels and successive frames. A 1.5 px blur alone takes the SNR from {_after["SNR"]:.2f} to {_blurred["SNR"]:.2f}; the variance over all the frames (below, and §2) pools the frames as well. The notebook uses the temporal mean of the whole fixation, after a {SPATIAL_BLUR:g} px blur, as its only background (§2 to §6).
+    What the eye then does is where a signal-to-noise gain can come from: it pools neighbouring pixels and successive frames. A 1.5 px blur alone takes the SNR from {_after["SNR"]:.2f} to {_blurred["SNR"]:.2f}; the variance over all the frames (below, and §2) pools the frames as well. From §2 on the notebook removes, after a {SPATIAL_BLUR:g} px blur, the temporal mean of the whole fixation and then the rolling mean over {DRIFT_WINDOW} frames (§7 compares the choice).
     """)
     return
 
@@ -516,13 +614,13 @@ def _(
     _figure.tight_layout()
     show_figure(_figure, "separation_by_frames")
     print(f"SD map, median over the moving pixels in robust SDs of the static ones: {separation_by_frames[-1]:.1f}")
-    return
+    return (zoom,)
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **The video.** The fixation's frames side by side, at half size: left the log frame (the stabilized burst with the flicker removed), middle minus each pixel's temporal mean, right the same after the `SPATIAL_BLUR` blur of every frame, which is the video that §2 to §5 measure. The left panel is stretched from its 0.5th to its 99.5th percentile over the whole video; the two mean-subtracted panels share one gray scale, symmetric about 0 and set by the 99.5th percentile of the unblurred one's magnitude, so what the blur changes is seen at the same contrast. Pixels without data in a frame are black. It is saved at that size as WebM (VP8, which browsers play) to `flow_outputs/<burst>/`; the preview here is an animated WebP of at most 150 frames, narrowed until it is under 2.5 MB so that marimo can show it.
+    **The video.** The fixation's frames side by side, at half size: left the log frame (the stabilized burst with the flicker removed), middle minus each pixel's temporal mean, right after the `SPATIAL_BLUR` blur of every frame minus its temporal mean and its rolling mean over `DRIFT_WINDOW` frames, which is the video that §2 to §5 measure. The left panel is stretched from its 0.5th to its 99.5th percentile over the whole video; the two background-subtracted panels share one gray scale, symmetric about 0 and set by the 99.5th percentile of the middle one's magnitude, so what the blur and the rolling mean change is seen at the same contrast. Pixels without data in a frame are black. It is saved at that size as WebM (VP8, which browsers play) to `flow_outputs/<burst>/`; the preview here is an animated WebP of at most 150 frames, narrowed until it is under 2.5 MB so that marimo can show it.
     """)
     return
 
@@ -540,6 +638,7 @@ def _(
     mo,
     np,
     output_folder,
+    remove_rolling_mean,
 ):
     PREVIEW_MAX_BYTES = 2_500_000  # an inline preview is embedded in the output (base64, a third larger); marimo refuses ~10 MB
 
@@ -589,20 +688,20 @@ def _(
     _half = _halve(log_frames)
     _removed = _halve(log_frames - np.nanmean(log_frames, axis=0))
     _blurred = np.stack([blur_valid(_frame, SPATIAL_BLUR) for _frame in log_frames]).astype(np.float32)
-    _blurred = _halve(_blurred - np.nanmean(_blurred, axis=0))
-    _limit = float(np.nanpercentile(np.abs(_removed[::4]), 99.5))  # one gray scale for both mean-subtracted panels
+    _blurred = _halve(remove_rolling_mean(_blurred - np.nanmean(_blurred, axis=0)))
+    _limit = float(np.nanpercentile(np.abs(_removed[::4]), 99.5))  # one gray scale for both background-subtracted panels
     _panels = [to_gray(_half), to_gray(_removed, -_limit, _limit), to_gray(_blurred, -_limit, _limit)]
-    _labels = ("recorded (log, flicker removed)", "minus temporal mean", f"minus temporal mean, blur {SPATIAL_BLUR:g} px")
+    _labels = ("recorded (log, flicker removed)", "minus temporal mean", f"blur {SPATIAL_BLUR:g} px, minus rolling mean")
     for _panel, _label in zip(_panels, _labels):
         for _frame in _panel:
             cv2.putText(_frame, _label, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, 255, 2, cv2.LINE_AA)
     _video = np.concatenate(_panels, axis=2)
-    side_by_side_path = save_video(_video, output_folder / "recorded_vs_mean_subtracted.webm", fps)
+    side_by_side_path = save_video(_video, output_folder / "recorded_vs_background_subtracted.webm", fps)
     print(f"Saved {side_by_side_path} ({side_by_side_path.stat().st_size / 1e6:.1f} MB, {_video.shape[2]} x {_video.shape[1]})")
     _shown = preview(_video, fps, 1000)
     del _half, _removed, _blurred, _panels, _video
     _shown
-    return
+    return preview, save_video, to_gray
 
 
 @app.cell(hide_code=True)
@@ -613,33 +712,38 @@ def _(mo):
     The perfusion map is the motion-contrast map of §1 made at full resolution:
 
     1. Every frame of the log video is blurred by `SPATIAL_BLUR` pixels (over the pixels with data), which pools a red-cell aggregate's pixels.
-    2. Each pixel's temporal mean over the whole fixation is subtracted: `mean_removed`, the right panel of §1's video. Nothing else is subtracted, so slow flow and the sparse cells of fine vessels count in full (§1). Slow drift of the static tissue counts as well, and it shows in the spread of the map over the static pixels, which is the unit of the thresholds.
-    3. The temporal standard deviation of `mean_removed`, times the square root of the mean brightness (shot noise), divided by its median over the static pixels, is the **perfusion level**; minus 1, in robust standard deviations of the static pixels, it is the **perfusion map** `perfusion_z`.
+    2. Each pixel's temporal mean over the whole fixation is subtracted (`mean_removed`), and then its rolling mean over `DRIFT_WINDOW` frames (`high_passed`, the right panel of §1's video): a high-pass in time. The reason is drift: blood adds power in the moving pixels across the temporal frequencies, but at the lowest ones the static tissue drifts too, and the drift differs from place to place, which widens the spread of the map over the static pixels, the unit of the thresholds. The spectrum below shows both for this burst; §7 measures what the rolling mean costs in the fine vessels.
+    3. The temporal standard deviation of `high_passed`, times the square root of the mean brightness (shot noise), divided by its median over the static pixels, is the **perfusion level**; minus 1, in robust standard deviations of the static pixels, it is the **perfusion map** `perfusion_z`.
     4. Blurred by 1.5 px, it is thresholded by hysteresis at `PERFUSION_LEVELS` (pixels above the higher level, and those above the lower one connected to them), small regions dropped and small holes filled: the **perfused regions** `perfused`.
 
     The spectrum below shows at which temporal frequencies the moving pixels have more power than the static ones.
 
     | Output | Content |
     |---|---|
-    | `mean_removed` | `(frames, rows, columns)` `float32`: the blurred log video minus each pixel's temporal mean over the whole fixation |
+    | `mean_removed`, `high_passed` | `(frames, rows, columns)` `float32`: the blurred log video minus each pixel's temporal mean over the whole fixation, and minus its rolling mean as well |
+    | `blurred_mean` | `(rows, columns)`: the blurred log video's temporal mean, which `mean_removed` lacks |
     | `perfusion_z` | `(rows, columns)`: the perfusion map, `NaN` outside `analysed` |
     | `perfused` | `(rows, columns)` `bool`: the perfused regions |
     | `perfusion_unit` | the robust standard deviation of the perfusion level on the static pixels: the unit of `perfusion_z` |
-    | `perfusion_regions()` | steps 3 and 4 as a function of a mean-subtracted video, returning the map, the regions and the unit |
+    | `perfusion_regions()` | steps 3 and 4 as a function of a background-subtracted video, returning the map, the regions and the unit |
     """)
     return
 
 
 @app.cell
-def _(SPATIAL_BLUR, blur_valid, log_frames, np):
+def _(DRIFT_WINDOW, SPATIAL_BLUR, blur_valid, log_frames, np, remove_rolling_mean):
     mean_removed = np.stack([blur_valid(_frame, SPATIAL_BLUR) for _frame in log_frames]).astype(np.float32)
-    mean_removed -= np.nanmean(mean_removed, axis=0)
-    print(f"mean_removed: {mean_removed.shape}, {mean_removed.nbytes / 1e6:.0f} MB")
-    return (mean_removed,)
+    blurred_mean = np.nanmean(mean_removed, axis=0)
+    mean_removed -= blurred_mean
+    high_passed = remove_rolling_mean(mean_removed, DRIFT_WINDOW)
+    print(f"mean_removed and high_passed: {mean_removed.shape}, {2 * mean_removed.nbytes / 1e6:.0f} MB together")
+    return blurred_mean, high_passed, mean_removed
 
 
 @app.cell
 def _(
+    DRIFT_WINDOW,
+    INK_MUTED,
     SERIES,
     analysed,
     fps,
@@ -664,6 +768,7 @@ def _(
     _axes[0].semilogy(spectrum_frequencies[1:], spectrum_static[1:], color=SERIES[0], label="static pixels")
     _axes[0].set_xlabel("frequency (Hz)")
     _axes[0].set_ylabel("power (log units², per frequency)")
+    _axes[0].axvline(fps / DRIFT_WINDOW, color=INK_MUTED, ls=":", label="fps / DRIFT_WINDOW")
     _axes[0].set_title("temporal power spectrum of the mean-subtracted video")
     _axes[0].legend()
     _axes[1].plot(spectrum_frequencies[1:], spectrum_moving[1:] / spectrum_static[1:], color=SERIES[2])
@@ -687,9 +792,9 @@ def _(
     analysed,
     apply_hysteresis_threshold,
     blur_valid,
+    high_passed,
     label,
     log_frames,
-    mean_removed,
     moving_reference,
     np,
     robust_sd,
@@ -704,13 +809,16 @@ def _(
         return keep[labels]
 
 
-    _brightness = np.sqrt(np.exp(np.nanmean(log_frames, axis=0)))
+    _intensity = np.exp(np.nanmean(log_frames, axis=0))
 
 
-    def perfusion_regions(video):
-        """Steps 3 and 4 for a mean-subtracted (frames, rows, columns) video: the perfusion map, the perfused regions,
-        and the robust SD of the perfusion level on the static pixels, the unit of the map."""
-        spread = np.sqrt(np.nanmean(video ** 2, axis=0)) * _brightness
+    def perfusion_regions(video, levelling=0.5):
+        """Steps 3 and 4 for a background-subtracted (frames, rows, columns) video: the perfusion map, the perfused
+        regions, and the robust SD of the perfusion level on the static pixels, the unit of the map. The spread is
+        multiplied by the mean intensity to the power `levelling`: 0.5 for a relative video (log units, or divided by
+        its background), whose shot noise goes as one over the square root of the intensity; -0.5 for a video in
+        intensity units, whose shot noise goes as the square root."""
+        spread = np.sqrt(np.nanmean(video ** 2, axis=0)) * _intensity ** levelling
         level = spread / np.nanmedian(spread[static_reference])
         unit = robust_sd(level[static_reference])
         z = np.where(analysed, (level - 1) / unit, np.nan).astype(np.float32)
@@ -720,7 +828,7 @@ def _(
         return z, (regions | ~drop_small(~regions, MAX_HOLE)) & analysed, float(unit)  # small holes filled
 
 
-    perfusion_z, perfused, perfusion_unit = perfusion_regions(mean_removed)
+    perfusion_z, perfused, perfusion_unit = perfusion_regions(high_passed)
     print(f"Perfused: {perfused[analysed].mean():.0%} of the analysed field | "
           f"{perfused[moving_reference].mean():.0%} of the foundation's changing pixels, "
           f"{perfused[static_reference].mean():.2%} of its static background pixels | "
@@ -857,142 +965,9 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ### The fine vessels, with the whole-fixation mean and with a rolling mean
-
-    The one place a rolling mean appears: a comparison only; nothing after it uses it. The same perfusion map and thresholds (`perfusion_regions()`, §2) are made once more from the same blurred video with each pixel's rolling mean over `DRIFT_WINDOW` frames removed instead of its mean over the whole fixation, and its centrelines are found in the same way. At every centreline pixel the **width** of the perfused region is twice its distance to the region's edge, less 1 px; a pixel at most `NARROW_WIDTH` wide is on a **fine vessel**, and a segment whose median width is at most `NARROW_WIDTH` is a **fine segment**. The table gives, for each background, the unit of its perfusion map (the robust spread of the perfusion level on the static pixels, in which the thresholds are counted), the perfused share of the field and of the static background pixels (a perfused static pixel is a false detection), the length of centreline (all of it, and on fine vessels), the segments of at least `MIN_SEGMENT` px (all, and fine), and the fine-vessel centreline that lies outside the other background's perfused regions altogether: what that background finds and the other misses. The width comes from the perfused region, which the blur of the map widens, so it ranks vessels by size rather than measuring their lumen.
-    """)
-    return
-
-
-@app.cell
-def _(
-    DRIFT_WINDOW,
-    MIN_SEGMENT,
-    NARROW_WIDTH,
-    analysed,
-    centrelines,
-    cv2,
-    mean_removed,
-    mo,
-    np,
-    perfused,
-    perfusion_regions,
-    perfusion_unit,
-    plt,
-    static_reference,
-    segments,
-    show_figure,
-    skeletonize,
-    still_gray,
-    still_picture,
-    still_range,
-    uniform_filter1d,
-):
-    def _remove_rolling_mean(video, window, chunk=64):
-        """Return video minus each pixel's centred running mean over `window` frames (over the frames with data),
-        row block by row block so that only one extra stack is held. NaN stays NaN."""
-        out = np.empty_like(video)
-        for row in range(0, video.shape[1], chunk):
-            part = video[:, row:row + chunk]
-            has_data = np.isfinite(part)
-            total = uniform_filter1d(np.where(has_data, part, 0), window, axis=0, mode="nearest")
-            count = uniform_filter1d(has_data.astype(np.float32), window, axis=0, mode="nearest")
-            out[:, row:row + chunk] = np.where(has_data, part - total / np.maximum(count, 1e-3), np.nan)
-        return out
-
-
-    def _fine(mask, lines):
-        """The skeleton of a mask, its fine-vessel pixels, and the number of fine segments among `lines`."""
-        width = 2 * cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5) - 1
-        skeleton = skeletonize(mask)
-        fine = skeleton & (width <= NARROW_WIDTH)
-        fine_lines = sum(np.median(width[np.round(_l[:, 0]).astype(int), np.round(_l[:, 1]).astype(int)]) <= NARROW_WIDTH
-                         for _l in lines)
-        return skeleton, fine, int(fine_lines)
-
-
-    _, _rolling_perfused, _rolling_unit = perfusion_regions(_remove_rolling_mean(mean_removed, DRIFT_WINDOW))
-    _rolling_segments = centrelines(_rolling_perfused, MIN_SEGMENT)
-    _whole_name, _rolling_name = "whole-fixation mean (used)", f"rolling mean, {DRIFT_WINDOW} frames (not used)"
-    _found = {}
-    fine_vessel_comparison = {}
-    for _name, _mask, _lines, _other, _unit in ((_whole_name, perfused, segments, _rolling_perfused, perfusion_unit),
-                                                (_rolling_name, _rolling_perfused, _rolling_segments, perfused, _rolling_unit)):
-        _skeleton, _fine_pixels, _fine_lines = _fine(_mask, _lines)
-        _found[_name] = _fine_pixels
-        fine_vessel_comparison[_name] = {
-            "map unit": _unit,
-            "perfused share": float(_mask[analysed].mean()),
-            "static pixels perfused": float(_mask[static_reference].mean()),
-            "centreline (px)": int(_skeleton.sum()),
-            "fine-vessel centreline (px)": int(_fine_pixels.sum()),
-            "segments": len(_lines),
-            "fine segments": _fine_lines,
-            "fine centreline outside the other's regions (px)": int((_fine_pixels & ~_other).sum()),
-        }
-
-    _figure, _axis = plt.subplots(figsize=(14, 9))
-    _axis.imshow(still_picture, cmap=still_gray, vmin=still_range[0], vmax=still_range[1])
-    _grow = np.ones((3, 3), np.uint8)
-    _whole, _rolling = _found[_whole_name], _found[_rolling_name]
-    # a fine-vessel centreline pixel is found by both when it lies inside the other background's perfused regions
-    for _pixels, _color, _label in (((_whole & _rolling_perfused) | (_rolling & perfused), "#ffffff",
-                                     "fine centreline inside both backgrounds' perfused regions"),
-                                    (_whole & ~_rolling_perfused, "#1baf7a", "only with the whole-fixation mean (used)"),
-                                    (_rolling & ~perfused, "#e0459b", "only with the rolling mean (not used)")):
-        _shown = cv2.dilate(_pixels.astype(np.uint8), _grow).astype(float)
-        _axis.imshow(np.ma.masked_where(_shown == 0, _shown), cmap=plt.matplotlib.colors.ListedColormap([_color]),
-                     vmin=0, vmax=1, interpolation="nearest")
-        _axis.plot([], [], color=_color, lw=3, label=f"{_label}: {int(_pixels.sum())} px")
-    _axis.legend(loc="lower right", fontsize=8, facecolor="#333333", labelcolor="w")
-    _axis.set_title(f"fine-vessel centrelines (perfused region at most {NARROW_WIDTH} px wide), by the background removed")
-    _axis.axis("off")
-    _figure.tight_layout()
-    show_figure(_figure, "fine_vessels")
-
-    _columns = list(fine_vessel_comparison[_whole_name])
-    _table = ["| background removed | " + " | ".join(_columns) + " |", "|---" * (len(_columns) + 1) + "|"]
-    for _name, _values in fine_vessel_comparison.items():
-        _table.append(f"| {_name} | " + " | ".join(f"{_values[_c]:.1%}" if "perfused" in _c else f"{_values[_c]:.3f}" if _c == "map unit" else f"{_values[_c]}"
-                                                     for _c in _columns) + " |")
-    _w, _r = fine_vessel_comparison[_whole_name], fine_vessel_comparison[_rolling_name]
-    _fine_w, _fine_r = _w["fine-vessel centreline (px)"], _r["fine-vessel centreline (px)"]
-    _verdict = (f"The perfusion map finds {_fine_r} px of fine-vessel centreline with the rolling mean against {_fine_w} px "
-                f"with the whole-fixation mean, and {_r['fine segments']} fine segments against {_w['fine segments']}")
-    if _fine_r == _fine_w:
-        _verdict += (": no fine vessel is found with either background, so this burst does not tell them apart."
-                     if _fine_w == 0 else ": the same length with both backgrounds.")
-    elif _fine_r < _fine_w:
-        _verdict += f": the rolling mean loses {1 - _fine_r / _fine_w:.0%} of the fine-vessel length."
-    else:
-        _verdict += ": on this burst the rolling mean does not lose fine-vessel length overall."
-        _unit_ratio = _w["map unit"] / _r["map unit"]
-        if _unit_ratio > 1:
-            _verdict += (" The reason is the drift that the whole-fixation mean keeps: the unit of its perfusion map, the "
-                         f"spread on the static pixels, is {_unit_ratio:.2f} times the rolling mean's, so the same "
-                         "thresholds sit that much higher, and fine vessels whose flow is weak against that drift fall "
-                         "below them.")
-        else:
-            _verdict += (" The drift that the whole-fixation mean keeps does not explain it: the unit of its perfusion "
-                         f"map, the spread on the static pixels, is {_unit_ratio:.2f} times the rolling mean's, so its "
-                         "thresholds do not sit higher.")
-        _verdict += (" Whether the extra detections are real is told by the static pixels: "
-                     f"{_r['static pixels perfused']:.1%} of them are perfused with the rolling mean against "
-                     f"{_w['static pixels perfused']:.1%} with the whole-fixation mean.")
-    _outside = "fine centreline outside the other's regions (px)"
-    _verdict += (f" {_w[_outside]} px of the whole-fixation mean's fine-vessel centreline lie outside the rolling mean's "
-                 f"perfused regions altogether, and {_r[_outside]} px of the rolling mean's lie outside the whole-fixation "
-                 "mean's.")
-    mo.md("\n".join(_table) + "\n\n**On this burst.** " + _verdict)
-    return (fine_vessel_comparison,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
     ## 4 · How fast: kymographs and the slope of their streaks
 
-    **The kymograph.** For a segment with centreline $\mathbf{r}(s)$, one point per pixel of length, the kymograph is the mean-subtracted video read along it, averaged over the centreline and the lines 1 px to either side. Each frame is one row. The temporal mean of every pixel is already gone, so the vessel walls and anything else that does not move leave nothing behind. It is read from `mean_removed`, the video of the perfusion map, from which nothing but each pixel's mean over the whole fixation has been removed, so slow flow keeps its full contrast. Patches of the vessel that brighten and darken slowly draw vertical streaks as well, which pull the search towards $v = 0$; the checks of §6 (the opposite velocity, the blocks of time and the cross-correlation) flag a segment on which they decide the peak. Each row's mean along the segment is subtracted as well, which removes what changes the whole segment at once. Red-cell aggregates and plasma gaps carried by the flow then draw streaks: $K(t, s) \approx f(s - v t)$, and the slope $ds/dt$ of the streaks is the velocity $v$ in px/frame.
+    **The kymograph.** For a segment with centreline $\mathbf{r}(s)$, one point per pixel of length, the kymograph is the mean-subtracted video read along it, averaged over the centreline and the lines 1 px to either side. Each frame is one row. The temporal mean of every pixel is already gone, so the vessel walls and anything else that does not move leave nothing behind. It is read from `high_passed`, the video of the perfusion map, with the rolling mean over `DRIFT_WINDOW` frames removed as well: read from `mean_removed`, patches of the vessel that brighten and darken slowly draw vertical streaks, which pull the search towards $v = 0$ on a segment in which the cross-correlation finds clear flow. The price is that flow slower than about a pattern length per `DRIFT_WINDOW` frames is weakened (0.2 px/frame for a 3 px pattern and the default window; §6 measures the pattern length, §7 the effect on the fine vessels). Each row's mean along the segment is subtracted as well, which removes what changes the whole segment at once. Red-cell aggregates and plasma gaps carried by the flow then draw streaks: $K(t, s) \approx f(s - v t)$, and the slope $ds/dt$ of the streaks is the velocity $v$ in px/frame.
 
     **The slope search.** The Radon transform integrates $K$ along every line $s = s_0 + v t$; along the streaks' slope the integrals vary most from one $s_0$ to the next. The variance of those integrals is a sum, over every pair of rows $t, t'$, of the correlation of row $t$ with row $t'$ shifted by $v (t' - t)$. The search keeps the part of that sum that carries the flow:
 
@@ -1123,10 +1098,11 @@ def _(mo):
     mo.md(r"""
     ## 5 · The cross-check: 2D cross-correlation of the frames
 
-    An estimate that does not go through the kymograph or the centreline's exact position: ensemble particle image velocimetry on the frames themselves. The segment is cut into pieces of at most 48 px. For each piece, every frame of `mean_removed` inside a tube 3 px either side of the centreline is cross-correlated with the next frame within `MAX_VELOCITY` + 1 px around it, and the correlations of all pairs of frames are added up before the peak is looked for (the ensemble average, which finds a peak where single pairs are too noisy). Slow drift shared by the tube and its surroundings adds to the correlation at zero shift; comparing with the slope search (§6) shows where it decides the peak. The peak, interpolated by a parabola in each direction, is the displacement per frame; its component along the piece is the velocity, and its component across the piece should be close to 0. The pieces' velocities are averaged, weighted by length.
+    An estimate that does not go through the kymograph or the centreline's exact position: ensemble particle image velocimetry on the frames themselves. The segment is cut into pieces of at most 48 px. For each piece, every frame of `high_passed` inside a tube 3 px either side of the centreline is cross-correlated with the next frame within `MAX_VELOCITY` + 1 px around it, and the correlations of all pairs of frames are added up before the peak is looked for (the ensemble average, which finds a peak where single pairs are too noisy). `high_passed` rather than `mean_removed`, so that slow drift shared by the tube and its surroundings adds no peak at zero shift. The peak, interpolated by a parabola in each direction, is the displacement per frame; its component along the piece is the velocity, and its component across the piece should be close to 0. The pieces' velocities are averaged, weighted by length.
 
     | Output | Content |
     |---|---|
+    | `measure_segment()` | everything §4 and §5 measure on one segment of a video, which §7 runs on other backgrounds |
     | `velocities` | one row per measured segment (§4, §5): the columns are explained in §6 |
     """)
     return
@@ -1207,21 +1183,16 @@ def _(
     BLOCKS,
     MAX_VELOCITY,
     MIN_OVERLAP,
-    ThreadPoolExecutor,
     clean_kymograph,
     find_slope,
     kymograph,
-    mean_removed,
     np,
     segment_cross_check,
-    segments,
-    time,
-    workers,
 ):
-    def measure(index):
-        """Everything §4 and §5 measure on one segment, or None when its kymograph misses too much data."""
-        line = segments[index]
-        K, missing = clean_kymograph(kymograph(mean_removed, line))
+    def measure_segment(video, line, index):
+        """Everything §4 and §5 measure on one segment of a background-subtracted video, or None when its kymograph
+        misses too much data."""
+        K, missing = clean_kymograph(kymograph(video, line))
         if missing > 0.1:
             return None
         reach = min(MAX_VELOCITY, (len(line) - MIN_OVERLAP) / 2)
@@ -1231,7 +1202,7 @@ def _(
         mirror = float(np.interp(-velocity, grid, np.nan_to_num(scores)))
         edges = np.linspace(0, len(K), BLOCKS + 1).astype(int)
         blocks = np.array([find_slope(K[a:b], reach)[0] for a, b in zip(edges[:-1], edges[1:])])
-        along, across = segment_cross_check(mean_removed, line, MAX_VELOCITY + 1)
+        along, across = segment_cross_check(video, line, MAX_VELOCITY + 1)
         middle = len(line) // 2
         tangent = line[min(middle + 3, len(line) - 1)] - line[max(middle - 3, 0)]
         tangent = tangent / np.linalg.norm(tangent) * np.sign(velocity)
@@ -1245,10 +1216,15 @@ def _(
             "kymograph": K, "grid": grid, "scores": scores,
         }
 
+    return (measure_segment,)
 
+
+@app.cell
+def _(ThreadPoolExecutor, high_passed, measure_segment, segments, time, workers):
     _start = time.perf_counter()
     with ThreadPoolExecutor(workers) as _pool:
-        measurements = [_m for _m in _pool.map(measure, range(len(segments))) if _m is not None]
+        measurements = [_m for _m in _pool.map(lambda _i: measure_segment(high_passed, segments[_i], _i), range(len(segments)))
+                        if _m is not None]
     print(f"Measured {len(measurements)} of {len(segments)} segments in {time.perf_counter() - _start:.0f} s "
           f"({len(segments) - len(measurements)} miss more than 10% of their kymograph)")
     return (measurements,)
@@ -1273,8 +1249,9 @@ def _(mo):
 
 
 @app.cell
-def _(UM_PER_PX, fps, measurements, mo, np):
+def _(np):
     def status(row):
+        """The class of §6 of one segment's measurement."""
         if abs(row["v"]) > row["reach"] - 0.5:
             return "out of reach"
         if row["peak"] < 0.1 or row["peak"] - row["mirror"] < 0.05:
@@ -1286,7 +1263,11 @@ def _(UM_PER_PX, fps, measurements, mo, np):
             return "confirmed"
         return "consistent"
 
+    return (status,)
 
+
+@app.cell
+def _(UM_PER_PX, fps, measurements, mo, status):
     velocities = []
     for _row in measurements:
         _entry = {
@@ -1339,8 +1320,8 @@ def _(INK_MUTED, SERIES, measurements, np, output_folder, plt, show_figure, velo
             _bottom.axvline(_v, color=SERIES[1], lw=0.8)
             _bottom.set_xlabel("v (px/frame)")
             _bottom.set_ylabel("C(v)" if _column == 0 else "")
-        _figure.suptitle("kymographs of the mean-subtracted video with the fitted slope (orange), and the slope search "
-                         "below each", fontsize=10, color=INK_MUTED)
+        _figure.suptitle("kymographs of the background-subtracted video (high_passed) with the fitted slope (orange), "
+                         "and the slope search below each", fontsize=10, color=INK_MUTED)
         _figure.tight_layout()
         show_figure(_figure, "kymographs")
     else:
@@ -1527,20 +1508,329 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## 7 · Save the results, and the runtime
+    ## 7 · Which background
+
+    §2 to §6 remove a rolling mean. Here it is scored against the whole-fixation mean alone and against four other rolling backgrounds, on this burst, with everything else the same: the same `SPATIAL_BLUR` blur, each pixel's mean over the whole fixation removed first, the same window of `DRIFT_WINDOW` frames for every rolling background, and then the perfusion map and thresholds of §2 (`perfusion_regions()`), the centrelines of §3 and the measurement and classes of §4 to §6 (`measure_segment()`, `status()`), each on its own background-subtracted video.
+
+    | Background $B$ | What it is |
+    |---|---|
+    | whole-fixation mean | each pixel's mean over the whole fixation, nothing else: the subtraction that first showed the flow, here as the reference |
+    | rolling mean (used) | each pixel's centred running mean over the window: `high_passed`, the default |
+    | rolling median | the centred running median: an aggregate that darkens a pixel for a few frames of the window hardly moves it |
+    | rolling bright-side percentile | the centred running `BRIGHT_PERCENTILE`th percentile. Red cells absorb, so they darken a pixel; the brightest values of a window are plasma or tissue, the background follows them, and the cells stand out below it |
+    | exponential moving average | causal, with the weight $2/(W+1)$ of a span of $W$ = `DRIFT_WINDOW` frames, which gives it the mean delay of the running mean |
+    | sliding-window SVD | the clutter filter of Doppler imaging (ultrasound, and laser Doppler holography of the conjunctiva): the window's frames as a matrix of frames by pixels, minus their projection on its `SVD_RANK` strongest temporal modes. The first is the window's static picture; the next are the changes most pixels share, such as residual motion and focus |
+
+    **Each background in two forms.** *Divided*: the normalised residual $R = I/B - 1$, which the literature recommends because it makes the residual a relative change, so one threshold serves bright and dark parts of the field. In this notebook's log units the subtraction already is the division, $\ln I - \ln B = \ln(I/B)$, which is $R$ to within $R^2/2$ (the cell prints how close on this burst), so the divided form is the log residual itself, and the divided rolling mean is exactly §2 to §6. *Subtracted*: $I - B$ in intensity units (the stabilized frames with only the flicker removed), whose perfusion map is levelled for shot noise the other way (`levelling = -0.5` in `perfusion_regions()`).
+
+    **The four scores.** On every form of every background:
+
+    | Score | Better | Definition |
+    |---|---|---|
+    | fine-vessel centreline | higher | skeleton pixels of the perfused regions where the region is at most `NARROW_WIDTH` px wide (twice the distance to its edge, less 1 px) |
+    | fine segments | higher | segments of at least `MIN_SEGMENT` px whose median width is at most `NARROW_WIDTH` |
+    | false detections | lower | the share of the static background pixels inside the perfused regions |
+    | confirmed velocities | higher | segments whose velocity is confirmed in the sense of §6 |
+
+    Each form is ranked on each score (1 is best, ties share a rank), and the table is sorted by the mean of its four ranks. A candidate **wins clearly** when, against the default (the divided rolling mean), it does at least 5% better on three of the four scores and no more than 5% worse on any (the relative change of each score; a smaller share of static pixels perfused is better). The counts come from one fixation of one burst, so a few segments either way are within chance. The width comes from the perfused region, which the blur of the map widens, so it ranks vessels by size rather than measuring their lumen. The static pixels are the foundation's quiet pixels (§11 of `foundation.py`), judged after it removes a running mean over 9 frames, so they are pixels without fast change; slow drift on them is what a whole-fixation mean leaves and a rolling one removes.
+
+    Below the table, the perfusion map of every form on one colour scale, and a short video of the six divided residuals of the zoomed part of §1 on one gray scale. `COMPARE_BACKGROUNDS = False` skips the section.
+    """)
+    return
+
+
+@app.cell
+def _(
+    BRIGHT_PERCENTILE,
+    COMPARE_BACKGROUNDS,
+    MIN_SEGMENT,
+    NARROW_WIDTH,
+    SVD_RANK,
+    ThreadPoolExecutor,
+    analysed,
+    blurred_mean,
+    centrelines,
+    cv2,
+    high_passed,
+    mean_removed,
+    measure_segment,
+    measurements,
+    np,
+    perfused,
+    perfusion_regions,
+    perfusion_unit,
+    perfusion_z,
+    rankdata,
+    remove_moving_average,
+    remove_rolling_percentile,
+    remove_sliding_svd,
+    segments,
+    skeletonize,
+    static_reference,
+    status,
+    time,
+    to_gray,
+    workers,
+    zoom,
+):
+    def _fine(mask, lines):
+        """The skeleton of a mask, its fine-vessel pixels, and the number of fine segments among `lines`."""
+        width = 2 * cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5) - 1
+        skeleton = skeletonize(mask)
+        fine = skeleton & (width <= NARROW_WIDTH)
+        fine_lines = sum(np.median(width[np.round(_l[:, 0]).astype(int), np.round(_l[:, 1]).astype(int)]) <= NARROW_WIDTH
+                         for _l in lines)
+        return skeleton, fine, int(fine_lines)
+
+
+    def _in_intensity(residual, out=None, chunk=64):
+        """I - B in intensity units from the log residual r = ln I - ln B, as I (1 - exp(-r)), by blocks of rows;
+        into `out`, which may be `residual` itself."""
+        out = np.empty_like(residual) if out is None else out
+        for row in range(0, residual.shape[1], chunk):
+            log_intensity = mean_removed[:, row:row + chunk] + blurred_mean[row:row + chunk]
+            out[:, row:row + chunk] = np.exp(log_intensity) * -np.expm1(-residual[:, row:row + chunk])
+        return out
+
+
+    DEFAULT_BACKGROUND = "rolling mean (used), divided"
+    _backgrounds = [
+        ("rolling mean (used)", lambda: high_passed),
+        ("whole-fixation mean", lambda: mean_removed),
+        ("rolling median", lambda: remove_rolling_percentile(mean_removed, 50)),
+        (f"rolling {BRIGHT_PERCENTILE}th percentile", lambda: remove_rolling_percentile(mean_removed, BRIGHT_PERCENTILE)),
+        ("exponential moving average", lambda: remove_moving_average(mean_removed)),
+        (f"sliding SVD, rank {SVD_RANK}", lambda: remove_sliding_svd(mean_removed, blurred_mean)),
+    ]
+    background_scores, background_maps, background_clips = {}, {}, {}
+    ratio_error = np.nan
+    if COMPARE_BACKGROUNDS:
+        _sample = high_passed[::4][:, analysed]
+        _sample = _sample[np.isfinite(_sample)]
+        # how far the log residual ln(I/B) is from the normalised residual R = I/B - 1, on the default background
+        ratio_error = float(np.median(np.abs(_sample - np.expm1(_sample))) / np.median(np.abs(np.expm1(_sample))))
+        _clip_limit = float(np.nanpercentile(np.abs(high_passed[:, zoom[0], zoom[1]]), 99.5))
+        del _sample
+        for _name, _make in _backgrounds:
+            _start = time.perf_counter()
+            _residual = _make()
+            background_clips[_name] = to_gray(_residual[:, zoom[0], zoom[1]], -_clip_limit, _clip_limit)
+            for _form, _levelling in (("divided", 0.5), ("subtracted", -0.5)):
+                _key = f"{_name}, {_form}"
+                if _key == DEFAULT_BACKGROUND:   # §2 to §6 measured this one already
+                    _z, _regions, _unit, _lines, _rows = perfusion_z, perfused, perfusion_unit, segments, measurements
+                else:
+                    # a residual made here is turned into intensity units in place, to hold one stack less
+                    _shared = _residual is high_passed or _residual is mean_removed
+                    _video = _residual if _form == "divided" else _in_intensity(_residual, None if _shared else _residual)
+                    _z, _regions, _unit = perfusion_regions(_video, _levelling)
+                    _lines = centrelines(_regions, MIN_SEGMENT)
+                    with ThreadPoolExecutor(workers) as _pool:
+                        _rows = [_m for _m in _pool.map(lambda _i: measure_segment(_video, _lines[_i], _i), range(len(_lines)))
+                                 if _m is not None]
+                    del _video
+                _classes = [status(_m) for _m in _rows]
+                _skeleton, _fine_pixels, _fine_lines = _fine(_regions, _lines)
+                background_scores[_key] = {
+                    "map unit": float(_unit),
+                    "perfused share": float(_regions[analysed].mean()),
+                    "centreline (px)": int(_skeleton.sum()),
+                    "segments": len(_lines),
+                    "consistent": sum(_c in ("confirmed", "consistent") for _c in _classes),
+                    "fine-vessel centreline (px)": int(_fine_pixels.sum()),
+                    "fine segments": _fine_lines,
+                    "static pixels perfused": float(_regions[static_reference].mean()),
+                    "confirmed": sum(_c == "confirmed" for _c in _classes),
+                }
+                background_maps[_key] = (_z, _regions)
+                del _rows
+            del _residual
+            print(f"{_name}: {time.perf_counter() - _start:.0f} s")
+
+    # the four scores, the sign that makes a smaller value better
+    SCORES = {"fine-vessel centreline (px)": -1, "fine segments": -1, "static pixels perfused": 1, "confirmed": -1}
+    _names = list(background_scores)
+    for _score, _sign in SCORES.items():
+        for _name, _rank in zip(_names, rankdata([_sign * background_scores[_n][_score] for _n in _names])):
+            background_scores[_name][f"rank: {_score}"] = float(_rank)
+    for _name in _names:
+        background_scores[_name]["mean rank"] = float(np.mean([background_scores[_name][f"rank: {_s}"] for _s in SCORES]))
+    background_ranking = sorted(_names, key=lambda _n: background_scores[_n]["mean rank"])
+    return (
+        DEFAULT_BACKGROUND,
+        SCORES,
+        background_clips,
+        background_maps,
+        background_ranking,
+        background_scores,
+        ratio_error,
+    )
+
+
+@app.cell
+def _(
+    COMPARE_BACKGROUNDS,
+    DEFAULT_BACKGROUND,
+    SCORES,
+    background_ranking,
+    background_scores,
+    mo,
+    np,
+    ratio_error,
+):
+    def _cell(column, value):
+        if column in ("perfused share", "static pixels perfused"):
+            return f"{value:.2%}"
+        if column == "map unit":
+            return f"{value:.3f}"
+        if column == "mean rank":
+            return f"{value:.1f}"
+        return f"{value}"
+
+
+    def _gain(name, score):
+        """How much better `name` does than the default on a score, as a share of the default's value."""
+        mine, default = background_scores[name][score], background_scores[DEFAULT_BACKGROUND][score]
+        change = -SCORES[score] * (mine - default)
+        if default == 0:
+            return float(np.sign(change)) * np.inf if change else 0.0
+        return change / abs(default)
+
+
+    def _wins_clearly(name):
+        gains = [_gain(name, _s) for _s in SCORES]
+        return sum(_g >= 0.05 for _g in gains) >= 3 and min(gains) >= -0.05
+
+
+    def _describe(name):
+        """Each score's change against the default, as a share of the default's value."""
+        default = background_scores[DEFAULT_BACKGROUND]
+        return ", ".join(f"{_s.split(' (')[0]} {(background_scores[name][_s] - default[_s]) / default[_s]:+.0%}"
+                         if default[_s] else f"{_s.split(' (')[0]} {background_scores[name][_s]} against 0" for _s in SCORES)
+
+
+    if not COMPARE_BACKGROUNDS:
+        _shown = mo.md("The comparison is skipped (`COMPARE_BACKGROUNDS = False`).")
+    else:
+        _columns = [_c for _c in background_scores[DEFAULT_BACKGROUND] if not _c.startswith("rank: ")]
+        _table = ["| rank | background, form | " + " | ".join(_columns) + " |", "|---" * (len(_columns) + 2) + "|"]
+        for _place, _name in enumerate(background_ranking, start=1):
+            _bold = "**" if _name == DEFAULT_BACKGROUND else ""
+            _table.append(f"| {_place} | {_bold}{_name}{_bold} | " + " | ".join(_cell(_c, background_scores[_name][_c]) for _c in _columns) + " |")
+        _default = background_scores[DEFAULT_BACKGROUND]
+        _first = background_ranking[0]
+        _sentences = [f"Ranked by the mean of the four ranks, **{_first}** comes first ({background_scores[_first]['mean rank']:.1f}); "
+                      f"the default, {DEFAULT_BACKGROUND}, ranks {background_ranking.index(DEFAULT_BACKGROUND) + 1} of "
+                      f"{len(background_ranking)} ({_default['mean rank']:.1f})."]
+        _winners = [_n for _n in background_ranking if _n != DEFAULT_BACKGROUND and _wins_clearly(_n)]
+        if _winners:
+            _sentences.append(
+                ("One candidate wins" if len(_winners) == 1 else f"{len(_winners)} candidates win") + " clearly on this burst: "
+                + "; ".join(f"{_n} ({_describe(_n)} against the default)" for _n in _winners)
+                + " (fewer static pixels perfused is better)"
+                + ". The notebook keeps the rolling mean as its default all the same; whether to switch is left open, and "
+                "switching is a change of `high_passed` in §2.")
+        else:
+            _runner = next((_n for _n in background_ranking if _n != DEFAULT_BACKGROUND), None)
+            _sentences.append("No candidate wins clearly, so the rolling mean stays the default."
+                              + (f" The best of the others, {_runner}: {_describe(_runner)} against the default." if _runner else ""))
+        _whole = background_scores.get("whole-fixation mean, divided")
+        if _whole:
+            _sentences.append(
+                f"Against the whole-fixation mean alone, the rolling mean finds {_default['fine-vessel centreline (px)']} px "
+                f"of fine-vessel centreline and {_default['fine segments']} fine segments against "
+                f"{_whole['fine-vessel centreline (px)']} px and {_whole['fine segments']}, with "
+                f"{_default['static pixels perfused']:.2%} of the static pixels perfused against "
+                f"{_whole['static pixels perfused']:.2%}; the unit of the whole-fixation mean's map, the spread on the static "
+                f"pixels, is {_whole['map unit'] / _default['map unit']:.2f} times the rolling mean's, which is the drift it "
+                "keeps raising every threshold.")
+        _pairs = [(_n.rsplit(", ", 1)[0]) for _n in background_ranking if _n.endswith(", divided")]
+        _divided_ahead = sum(background_scores[f"{_b}, divided"]["mean rank"] < background_scores[f"{_b}, subtracted"]["mean rank"]
+                             for _b in _pairs)
+        _sentences.append(
+            f"Divided ranks above subtracted for {_divided_ahead} of the {len(_pairs)} backgrounds. The log residual is the "
+            f"normalised residual to within {ratio_error:.2%} of its size (median over the analysed pixels), so the divided "
+            "form is $R = I/B - 1$ in all but name.")
+        _shown = mo.md("\n".join(_table) + "\n\n**On this burst.** " + " ".join(_sentences))
+    _shown
+    return
+
+
+@app.cell
+def _(
+    COMPARE_BACKGROUNDS,
+    INK_MUTED,
+    background_clips,
+    background_maps,
+    background_scores,
+    cv2,
+    fps,
+    np,
+    output_folder,
+    plt,
+    preview,
+    save_video,
+    show_figure,
+):
+    if COMPARE_BACKGROUNDS:
+        _names = list(background_clips)
+        _figure, _axes = plt.subplots(2, len(_names), figsize=(3.3 * len(_names), 5.6), squeeze=False)
+        _magma = plt.cm.magma.with_extremes(bad="black")
+        for _column, _name in enumerate(_names):
+            for _row, _form in enumerate(("divided", "subtracted")):
+                _key = f"{_name}, {_form}"
+                _z, _regions = background_maps[_key]
+                _axis = _axes[_row, _column]
+                _axis.imshow(_z, cmap=_magma, vmin=0, vmax=30, interpolation="antialiased")
+                _axis.contour(_regions, [0.5], colors="#5fd3f3", linewidths=0.3)
+                _scores = background_scores[_key]
+                _axis.set_title(f"{_key}\nfine {_scores['fine-vessel centreline (px)']} px, static "
+                                f"{_scores['static pixels perfused']:.2%}, confirmed {_scores['confirmed']}", fontsize=7)
+                _axis.axis("off")
+        _figure.suptitle("perfusion maps from 0 to 30 robust SDs of the static pixels (the unit of each map); blue: the "
+                         "perfused regions", fontsize=9, color=INK_MUTED)
+        _figure.tight_layout()
+        show_figure(_figure, "backgrounds_perfusion", dpi=130)
+
+        _tiles = []
+        for _name in _names:
+            _clip = background_clips[_name].copy()
+            for _frame in _clip:
+                cv2.putText(_frame, _name, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, 255, 1, cv2.LINE_AA)
+            _tiles.append(_clip)
+        while len(_tiles) % 3:
+            _tiles.append(np.zeros_like(_tiles[0]))
+        _video = np.concatenate([np.concatenate(_tiles[_i:_i + 3], axis=2) for _i in range(0, len(_tiles), 3)], axis=1)
+        backgrounds_video_path = save_video(_video, output_folder / "backgrounds.webm", fps)
+        print(f"Saved {backgrounds_video_path} ({backgrounds_video_path.stat().st_size / 1e6:.1f} MB); the divided residuals "
+              "of the zoomed part of §1, one gray scale symmetric about 0 (the 99.5th percentile of the rolling mean's magnitude)")
+        _shown = preview(_video, fps, 800)
+    else:
+        for _stale in ("backgrounds_perfusion.png", "backgrounds.webm"):
+            (output_folder / _stale).unlink(missing_ok=True)
+        _shown = None
+    _shown
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 8 · Save the results, and the runtime
 
     Everything goes to `flow_outputs/<burst folder>/` in the working directory (git ignores `notebooks/flow_outputs/`):
 
     | File | Content |
     |---|---|
-    | `recorded_vs_mean_subtracted.webm` | the side-by-side video of §1 |
+    | `recorded_vs_background_subtracted.webm` | the side-by-side video of §1 |
     | `frame_comparison.png`, `separation_by_frames.png` | §1 |
-    | `temporal_spectrum.png`, `perfusion_map.png`, `centrelines.png`, `fine_vessels.png` | §2, §2, §3, §3 |
+    | `temporal_spectrum.png`, `perfusion_map.png`, `centrelines.png` | §2, §2, §3 |
     | `kymographs.png`, `velocity_agreement.png`, `velocity_map.png`, `speed_limits.png` | §6 |
     | `velocities.csv` | the table of §6; not written, and one left by an earlier run removed, when no segment is measured |
     | `flow_maps.npz` | `perfusion_z`, `perfused`, `analysed`, the centrelines (`segment_points`, rows of `(segment, row, column)`), `fps`, `fixation`, `burst`, `pattern_length` (px, the median over the consistent segments of §6; `NaN` when there is none) |
     | `contrast.csv` | the contrast table of §1 |
-    | `fine_vessels.csv` | the comparison of §3: fine vessels found with the whole-fixation mean and with a rolling mean |
+    | `backgrounds.csv` | the ranked table of §7, one row per background and form; not written, and one left by an earlier run removed, when `COMPARE_BACKGROUNDS` is `False` |
+    | `backgrounds_perfusion.png`, `backgrounds.webm` | §7: the perfusion map of every background and form, and the divided residuals side by side |
     """)
     return
 
@@ -1548,9 +1838,10 @@ def _(mo):
 @app.cell
 def _(
     analysed,
+    background_ranking,
+    background_scores,
     contrast_table,
     csv,
-    fine_vessel_comparison,
     foundation_seconds,
     fps,
     notebook_start,
@@ -1580,12 +1871,17 @@ def _(
         _writer.writerow(["version", *_columns])
         for _name, _values in contrast_table.items():
             _writer.writerow([_name, *(f"{_values[_c]:.6g}" for _c in _columns)])
-    with open(output_folder / "fine_vessels.csv", "w", newline="", encoding="utf-8") as _file:
-        _writer = csv.writer(_file)
-        _columns = list(next(iter(fine_vessel_comparison.values())))
-        _writer.writerow(["background removed", *_columns])
-        for _name, _values in fine_vessel_comparison.items():
-            _writer.writerow([_name, *(_values[_c] for _c in _columns)])
+    for _stale in ("fine_vessels.csv", "fine_vessels.png", "recorded_vs_mean_subtracted.webm"):   # an earlier version's names
+        (output_folder / _stale).unlink(missing_ok=True)
+    if background_scores:
+        with open(output_folder / "backgrounds.csv", "w", newline="", encoding="utf-8") as _file:
+            _writer = csv.writer(_file)
+            _columns = list(background_scores[background_ranking[0]])
+            _writer.writerow(["rank", "background, form", *_columns])
+            for _place, _name in enumerate(background_ranking, start=1):
+                _writer.writerow([_place, _name, *(background_scores[_name][_c] for _c in _columns)])
+    else:
+        (output_folder / "backgrounds.csv").unlink(missing_ok=True)
     _points = np.concatenate([np.column_stack([np.full(len(_s), _i), _s]) for _i, _s in enumerate(segments)]) \
         if segments else np.zeros((0, 3))
     np.savez_compressed(output_folder / "flow_maps.npz", perfusion_z=perfusion_z, perfused=perfused, analysed=analysed,
