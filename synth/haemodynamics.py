@@ -191,6 +191,10 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
         offset = network.boundary_offset.get(node, 0.0)
         p_boundary[node] = (boundary_pressure(role, d, physiology) + offset) * MMHG
     arterial_nodes = {k for k, r in network.boundary.items() if r == "arterial"}
+    # dangling branches (ending in a node that is neither a junction nor a boundary) carry no flow; the linear
+    # solve leaves them a residue of numerical noise, enough for the haematocrit split to fill them with cells that
+    # never move, so their flow is set to exactly zero
+    dangling = _dangling(network, incident)
     hd = np.full(E, physiology.inflow_discharge_haematocrit)
     mu_plasma = physiology.plasma_viscosity_mpas * 1e-3
     iterations = 0
@@ -200,6 +204,7 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
         g = np.pi * diameter ** 4 / (128.0 * mu_plasma * mu_rel * length)      # µm^3 / (Pa s)
         pressure = _solve(network, g, p_boundary)
         q = g * np.array([pressure[e.u] - pressure[e.v] for e in edges])        # µm^3 / s
+        q[dangling] = 0.0
         new_hd = _propagate_haematocrit(network, q, diameter, pressure, physiology.inflow_discharge_haematocrit,
                                         incident, hd)
         change = float(np.max(np.abs(new_hd - hd))) if E else 0.0
@@ -215,10 +220,12 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
     g = np.pi * diameter ** 4 / (128.0 * mu_plasma * mu_rel * length)
     pressure = _solve(network, g, p_boundary)
     q = g * np.array([pressure[e.u] - pressure[e.v] for e in edges])
+    q[dangling] = 0.0
     hd = _propagate_haematocrit(network, q, diameter, pressure, physiology.inflow_discharge_haematocrit, incident, hd)
     # the arterial and the remaining part of the flow, for the pulse (viscosities frozen)
     p_art = _solve(network, g, {k: (v if k in arterial_nodes else 0.0) for k, v in p_boundary.items()})
     q_art = g * np.array([p_art[e.u] - p_art[e.v] for e in edges])
+    q_art[dangling] = 0.0
     ht = tube_haematocrit(diameter, hd)
     area = np.pi * diameter ** 2 / 4
     velocity = q / area * 1e-3                                   # µm/s -> mm/s
@@ -226,6 +233,26 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
     shear = 8 * np.abs(velocity * 1e3) / diameter
     return Flow(pressure / MMHG, q * 1e-3, q_art * 1e-3, (q - q_art) * 1e-3, hd, ht, mu_rel, velocity, rbc_velocity,
                 shear, length, diameter, iterations, physiology)
+
+
+def _dangling(network, incident):
+    """Edges of the branches that dangle from the network: stripping, again and again, every edge that ends in a
+    node of degree one that is not a boundary node."""
+    degree = np.array([len(m) for m in incident])
+    alive = np.ones(len(network.edges), bool)
+    stack = [n for n in range(len(incident)) if degree[n] == 1 and n not in network.boundary]
+    while stack:
+        n = stack.pop()
+        for i in incident[n]:
+            if not alive[i]:
+                continue
+            alive[i] = False
+            e = network.edges[i]
+            for m in (e.u, e.v):
+                degree[m] -= 1
+                if degree[m] == 1 and m not in network.boundary:
+                    stack.append(m)
+    return ~alive
 
 
 def _propagate_haematocrit(network, q, diameter, pressure, hd_inflow, incident, previous):

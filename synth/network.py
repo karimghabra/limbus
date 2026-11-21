@@ -1155,6 +1155,18 @@ def generate_fine(scene: Scene, domain, roots, seed) -> tuple:
     n_anastomoses = rng.poisson(scene.anatomy.anastomoses_per_mm2 * (x1 - x0) * (y1 - y0) * 1e-6)
     _anastomoses(builder, rng, scene, domain, "arteriole", n_anastomoses // 2)
     _anastomoses(builder, rng, scene, domain, "venule", n_anastomoses - n_anastomoses // 2)
+    # communicating roots: the oblique vessel from the tree's root down to the episcleral vessel it rises from; its
+    # lower end is the root the eye joins to that vessel
+    for r in roots:
+        if "bottom" not in r or r.get("conjunctival_node") is None:
+            continue
+        node_top = r["conjunctival_node"]
+        node_bottom = builder.node(np.asarray(r["bottom"], float))
+        kind = "communicating vein" if r["venous"] else "communicating artery"
+        diameter = float(np.clip(r.get("diameter", 15.0), *scene.anatomy.communicating_diameter))
+        builder.edge(node_top, node_bottom, _oblique_path(rng, builder.nodes[node_top], builder.nodes[node_bottom]),
+                     diameter, kind, "communicating", builder.vessel(kind))
+        r["conjunctival_node"] = node_bottom
     _roughen(builder.edges, np.random.default_rng([int(seed) % (2 ** 32), 2]), scene)
     root_nodes = [r.get("conjunctival_node") for r in roots]
     network = Network(np.asarray(builder.nodes) if builder.nodes else np.zeros((0, 3)), builder.edges, {}, domain,
