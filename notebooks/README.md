@@ -61,13 +61,15 @@ order, as a Jupyter notebook.
 ## Flow: where blood moves, and how fast
 
 `flow.py` runs `foundation.py` inside it (`app.embed()`, with the preprocessing's figures and previews left out)
-and works on one fixation's stabilized density frames. It needs no vessel annotation:
+and works on one fixation's stabilized density frames. It needs no vessel annotation. The only background it
+removes, from §2 on, is each pixel's temporal mean over the whole fixation, after a 1.5 px blur of every frame
+(`SPATIAL_BLUR`); rolling means appear only as labelled comparisons in §1 and §3:
 
 | § | |
 |---|---|
-| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median, and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
-| 2 | The perfusion map: the temporal variance of the video high-passed in time (`DRIFT_WINDOW`), levelled for shot noise and thresholded into perfused regions |
-| 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments |
+| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median (a comparison, not used), and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
+| 2 | The perfusion map: the temporal variance of the mean-subtracted video, levelled for shot noise and thresholded into perfused regions |
+| 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments; and the fine vessels found with the whole-fixation mean against a rolling mean over `DRIFT_WINDOW` frames (a comparison, not used) |
 | 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties |
 | 5 | A cross-check by ensemble 2D cross-correlation of the frames around each segment |
 | 6 | The velocity map, the per-segment table, and what the frame rate and exposure allow |
