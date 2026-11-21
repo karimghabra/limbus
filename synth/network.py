@@ -860,7 +860,12 @@ def _paired_venules(builder, rng, scene, domain):
     if not mesh_nodes:
         return 0
     mesh_tree = cKDTree(np.asarray([builder.nodes[k][:2] for k in mesh_nodes]))
-    venule_nodes = sorted({k for e in builder.edges if e.kind == "venule" for k in (e.u, e.v)})
+    venule_width = {}                            # the widest venule at every venular node
+    for e in builder.edges:
+        if e.kind == "venule":
+            for k in (e.u, e.v):
+                venule_width[k] = max(venule_width.get(k, 0.0), e.diameter)
+    venule_nodes = sorted(venule_width)
     venule_tree = cKDTree(np.asarray([builder.nodes[k][:2] for k in venule_nodes])) if venule_nodes else None
     made = 0
     taken_xy, taken_r = [], []                  # companions drawn so far: no two may share lumen space
@@ -895,6 +900,15 @@ def _paired_venules(builder, rng, scene, domain):
         companion[:, 2] += rng.uniform(5.0, 15.0)
         keep = s <= s[-1] * rng.uniform(0.7, 0.95)           # it stops short of the arteriole's terminal end
         keep &= np.array([_inside(p, domain) for p in companion])
+        # on the inside of a bend tighter than the offset, an offset copy folds back on itself into a loop, which
+        # would stack the companion over itself as a dark knot: drop where it runs backwards or comes closer to
+        # its arteriole than the planned offset
+        step = np.diff(companion[:, :2], axis=0)
+        forward = np.r_[(step * tangent[:-1]).sum(axis=1) > 0.5 * np.linalg.norm(step, axis=1), True]
+        near_art, _ = cKDTree(points[:, :2]).query(companion[:, :2])
+        folded = ~forward | (near_art < 0.8 * offset)
+        folded = np.convolve(folded.astype(float), np.ones(11), mode="same") > 0
+        keep &= ~folded
         # stay clear of the companions drawn already and of every other arteriole: keep the longest run of the
         # companion whose lumen touches neither
         others = [np.vstack(v) for k, v in arteriole_points.items() if k != vessel]
@@ -934,23 +948,56 @@ def _paired_venules(builder, rng, scene, domain):
             index = builder.edge(nodes[k + 1], nodes[k], piece[::-1].copy(), diameter, "venule", "conjunctival", vessel_id)
             builder.edges[index].paired_with = vessel
         for node in nodes[1:]:
-            dists, nears = mesh_tree.query(builder.nodes[node][:2], k=1)
+            # the nearest mesh node within 300 µm that the draining capillary reaches at no more than about 34° to
+            # the surface: a capillary diving straight down to the deeper companion is seen end-on, as a dark dot
+            dists, nears = mesh_tree.query(builder.nodes[node][:2], k=min(12, len(mesh_nodes)))
             for dist, near in zip(np.atleast_1d(dists), np.atleast_1d(nears)):
-                if dist >= 300.0:
+                if dist >= 300.0 or not np.isfinite(dist):
+                    break
+                dz = abs(builder.nodes[mesh_nodes[int(near)]][2] - builder.nodes[node][2])
+                if dist < 1.5 * dz:
                     continue
                 target = mesh_nodes[int(near)]
                 pts = _segment(builder.nodes[target], builder.nodes[node], rng, *a.wiggle["capillary"])
                 builder.edge(target, node, pts, rng.uniform(*a.capillary_diameter), "capillary", "conjunctival",
                              builder.vessel("capillary"))
-        # the outlet: the domain border if the arteriole entered from it, else the nearest venule
+                break
+        # the outlet: the domain border if the arteriole entered from it, else the nearest venule able to take its
+        # blood (at least 70 % of its calibre, within 400 µm); failing that, a communicating vein down to the
+        # nearest episcleral vein, the way conjunctival veins drain [Meyer1988] (docs §2.4): a companion emptying
+        # into a much narrower venule would be a dead end in which its cells pile up
         outlet = nodes[0]
         x0, x1, y0, y1 = domain
         p = builder.nodes[outlet]
-        if min(p[0] - x0, x1 - p[0], p[1] - y0, y1 - p[1]) < 80.0 or venule_tree is None:
+        target = None
+        if min(p[0] - x0, x1 - p[0], p[1] - y0, y1 - p[1]) >= 80.0 and venule_tree is not None:
+            dists, nears = venule_tree.query(p[:2], k=min(30, len(venule_nodes)), distance_upper_bound=400.0)
+            for dist, near in zip(np.atleast_1d(dists), np.atleast_1d(nears)):
+                if np.isfinite(dist) and venule_width[venule_nodes[int(near)]] >= 0.7 * float(d_ven[0]):
+                    target = venule_nodes[int(near)]
+                    break
+        if target is None and min(p[0] - x0, x1 - p[0], p[1] - y0, y1 - p[1]) >= 80.0:
+            best = None
+            for i, e in enumerate(builder.edges):
+                if e.kind == "episcleral vein" and len(e.points) > 8:
+                    d = np.linalg.norm(e.points[4:-4, :2] - p[:2], axis=1)
+                    j = int(np.argmin(d))
+                    # within the cited angles of communicating vessels to the surface (docs §2.4)
+                    dz = abs(e.points[j + 4, 2] - p[2])
+                    lo, hi = np.radians(a.communicating_angle_deg[0]), np.radians(80.0)
+                    if dz / np.tan(hi) <= d[j] <= dz / np.tan(lo) and (best is None or d[j] < best[0]):
+                        best = (d[j], i, j + 4)
+            if best is not None:
+                bottom = builder.split(best[1], best[2])
+                path = _oblique_path(rng, builder.nodes[outlet], builder.nodes[bottom])
+                diameter = float(np.clip(d_ven[0], *a.communicating_diameter))
+                builder.edge(outlet, bottom, path, diameter, "communicating vein", "communicating",
+                             builder.vessel("communicating vein"))
+                made += 1
+                continue
+        if target is None:
             builder.boundary[outlet] = "venous"
         else:
-            dist, near = venule_tree.query(p[:2])
-            target = venule_nodes[int(near)]
             pts = _segment(builder.nodes[outlet], builder.nodes[target], rng, *a.wiggle["venule"])
             builder.edge(outlet, target, pts, float(d_ven[0]), "venule", "conjunctival", vessel_id)
         made += 1

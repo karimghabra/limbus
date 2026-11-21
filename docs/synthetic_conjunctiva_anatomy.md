@@ -214,17 +214,23 @@ skeleton length (away from junctions) has a parallel vessel 13–115 µm away, w
 
 In the generator every arteriole whose calibre reaches 25 µm (`pair_min_diameter`) gets a companion venule
 (`pair_fraction` = 1, fitted to the measured paired share): an offset copy of the arteriole's course on one side,
-at an edge-to-edge gap drawn from 3–15 µm [NelloreHarris2002] that varies slowly along it, 5–15 µm deeper, and
-1.3–1.5 times the arteriole's local calibre, the lower part of the cited 1.3–1.8 [Yusufu2025], and no wider than
-50 µm (wider companions, which drain only their arteriole's own territory, carried so little flow that their
+at an edge-to-edge gap drawn from 20–60 µm that varies slowly along it (fitted to the pair spacing measured on the
+recordings, 85 µm centre to centre; the mesentery's definition of a pair, within 15 µm [NelloreHarris2002], drew
+the two touching, as crisp doubled tracks the recordings do not show), 5–15 µm deeper, and 1.3–1.5 times the
+arteriole's local calibre, the lower part of the cited 1.3–1.8 [Yusufu2025], and no wider than 40 µm (wider
+companions, which drain only their arteriole's own territory, carried so little flow that their
 cells stagnated into visible clumps), so it is widest at the arteriole's proximal end, where it
 leaves. It stops short of the arteriole's terminal end, drains the capillary mesh through a capillary every
-150–250 µm, and leaves at the domain border, or into the nearest venule, at the arteriole's proximal end; its
-blood therefore runs back beside the arteriole that brought it. A companion keeps only its longest stretch whose
-lumen stays clear of every other arteriole and of the companions drawn before it, so two vessels never share lumen
-space where an arteriole branches. The ground truth records which arteriole each
-companion accompanies (`paired_with_vessel`). In addition, a fifth of the venular growth attractors lie 25–70 µm beside
-the arterioles (assumed), so the rest of the venular tree also tends to follow the arterioles.
+100–160 µm (from a mesh node reached at no more than about 34° to the surface, since a capillary diving straight
+down to it would be seen end-on as a dark dot), and leaves at the arteriole's proximal end: at the domain border,
+into the nearest venule at least 70 % of its calibre, or else through a communicating vein (within the angles of
+§2.4) down to the nearest episcleral vein, the way conjunctival veins drain [Meyer1988]; its blood therefore runs
+back beside the arteriole that brought it. A companion keeps only its longest stretch whose lumen stays clear of
+every other arteriole and of the companions drawn before it, and that neither runs backwards nor comes closer to
+its arteriole than planned (on the inside of a bend tighter than the offset, an offset copy folds into a loop), so
+two vessels never share lumen space. The ground truth records which arteriole each
+companion accompanies (`paired_with_vessel`). In addition, a fifth of the venular growth attractors lie 50–110 µm beside
+the arterioles (about the measured pair spacing), so the rest of the venular tree also tends to follow the arterioles.
 
 ## 5. Density, mesh and tortuosity
 
@@ -417,7 +423,7 @@ The renderer models two consequences of scattering, each with one fitted length:
 - Light from deeper is blurred by the tissue above: σ_scatter = 16 µm × (z / 500 µm)^1.5 (the power of the
   forward-scattering regime; `scatter_blur_um_at_500`, fitted to the measured sharpness), added in quadrature to
   the camera's point spread (σ = 0.9 px, below the ≤ 1.2 px bound measured on the real bursts) and to the defocus
-  (σ = 0.045 × |z − z_focus|, with the focal plane at 250 µm, between the conjunctival and episcleral plexuses:
+  (σ = 0.06 × |z − z_focus|, with the focal plane at 250 µm, between the conjunctival and episcleral plexuses:
   fitted to the edge steepness of the fine vessels, 8–25 µm, which are softer in the recordings than a focus on
   the conjunctiva gives).
 
@@ -620,13 +626,13 @@ tortuosity, the diameter distribution and vessel density, contrast by calibre, s
 | perforator count, angle and calibre; ACA perforation distance and calibre | not found (a 2–5 mm band from the limbus is a bound from muscle-insertion distances, not a measurement) | 0.25 perforators per mm², 30–70°, calibre of the deep vessels |
 | conjunctival–episcleral communicating vessels per mm² | not counted in any source [Akagi2018] | 1.2 per mm², fitted so that a typical field holds a few |
 | angle of communicating vessels | oblique course reported, no angle measured [Asanad2021, Li2011] | 20–60° to the surface |
-| arteriole–venule pairing frequency in the conjunctiva | not found | every arteriole of 25 µm or more accompanied, fitted to the measured paired share and by eye (companions of smaller arterioles drew crisp double tracks the fine net of the recordings does not show); gap from the mesentery definition [NelloreHarris2002] |
+| arteriole–venule pairing frequency in the conjunctiva | not found | every arteriole of 25 µm or more accompanied, fitted to the measured paired share and by eye (companions of smaller arterioles drew crisp double tracks the fine net of the recordings does not show); gap fitted to the measured pair spacing (the mesentery definition, within 15 µm [NelloreHarris2002], drew them touching) |
 | episcleral vessel count per mm of limbus | not found | 3.0 per mm, fitted to the measured diameter distribution |
 | episcleral and ACA velocities and pressures | not found | radial pressure gradient fitted to keep large-vessel speeds within the measured range |
 | conjunctival tortuosity in healthy eyes | not found (only diabetic sets) | meander, jitter and kinks fitted to the measured tortuosity, curvature and jitter |
 | illumination spectrum | not recorded | spectral weights fitted to the measured contrast by calibre |
 | visible-wavelength optics of human conjunctiva and sclera | not found | veil length and scattering blur fitted to measured contrast and sharpness |
-| depth of focus and focal wander | not recorded | defocus 0.045 µm/µm, focus 250 µm, wander ±25 µm |
+| depth of focus and focal wander | not recorded | defocus 0.06 µm/µm, focus 250 µm, wander ±25 µm |
 | fractal dimension and bifurcation angles | published for slit lamp and retina | not imposed; measured on the images |
 | geometric drawing details | no anatomical counterpart | episcleral and deep curvature (0.0003 and 0.0004 rad/µm, correlation 600 µm), side-branch angles (30-70°), depth undulation of centrelines (5-10 µm), mesh lattice jitter (0.3 of the spacing) and stretch (1.0-1.3), anastomosis lengths (60-350 µm), conjunctival depth by calibre (`network._conjunctival_depth`), the renderer's nine depth slabs and three sub-exposures, glint sizes (1.2-3 px); all set by eye against the recordings and the measured targets |
 
@@ -659,7 +665,7 @@ this document.
 | radial_bias | 0.25 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
 | arterial_trees_per_mm2, venous_trees_per_mm2 | 0.5, 0.55 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
 | av_pair_offset, av_pair_fraction | 25–70 µm, 0.2 | assumed, §4.1 and §9 |
-| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 3–15 µm, 1.3–1.5, 50 µm | fitted; fitted; [NelloreHarris2002]; within [Yusufu2025]; fitted, §4.1 |
+| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 20–60 µm, 1.3–1.5, 40 µm | fitted; fitted; fitted to the measured pair spacing; within [Yusufu2025]; fitted, §4.1 |
 | fine_jitter, bend_wiggle, kinks, width_variation, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 5 µm / 70 µm; off; CV 0.28 / 150 µm; 15–60 %; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
 | anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
 | episcleral_vessels_per_mm | 3.0 | fitted to the measured diameters, §5 |
@@ -685,7 +691,7 @@ this document.
 | double_pass | 2 | §7.1 |
 | scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 16 µm | fitted to contrast and edge steepness, §7.2 |
 | psf_sigma_px | 0.9 | measured bound ≤ 1.2 px, §7.2 |
-| defocus_um_per_um, focus_depth_um, focus_wander_um | 0.045, 250 µm, 25 µm | fitted to the fine vessels' edge steepness; assumed; §7.2 and §7.6 |
+| defocus_um_per_um, focus_depth_um, focus_wander_um | 0.06, 250 µm, 25 µm | fitted to the fine vessels' edge steepness; assumed; §7.2 and §7.6 |
 | illumination_p5_p95, background_dn | fitted to measured 0.73, 2650 DN | measured, §7.3 and §7.5 |
 | flicker_hz, flicker_amplitude, flicker_white | 8.77 Hz, 1.11 %, 0.12 % | measured (amplitude converted to linear light); white fitted, §7.3 |
 | texture_band_sd, texture_amplitudes | measured bands; fitted amplitudes | measured, §7.3 |

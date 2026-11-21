@@ -49,7 +49,7 @@ class Anatomy:
     radial_bias: float = 0.15                        # conjunctival vessels run radially from the limbus [Akagi2018]
     arterial_trees_per_mm2: float = 0.4              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
     venous_trees_per_mm2: float = 0.4 
-    av_pair_offset: tuple = (25.0, 70.0)             # lateral distance of a paired venule from its arteriole (assumed)
+    av_pair_offset: tuple = (50.0, 110.0)            # lateral distance of an accompanying venule from its arteriole (about the measured pair spacing, 85 µm, docs §4)
     av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
     episcleral_curvature: float = 0.0008             # rad/µm SD of their slow bend, correlation 800 µm: long straight runs
@@ -79,8 +79,8 @@ class Anatomy:
     # companion venules beside arterioles (docs §4)
     pair_fraction: float = 1.0                       # share of the larger arterioles that have one (fitted to the measured paired share, docs §4)
     pair_min_diameter: float = 25.0                  # µm: only arterioles reaching this calibre are accompanied
-    pair_gap_um: tuple = (3.0, 15.0)                 # edge-to-edge gap: paired within 15 µm [NelloreHarris2002]
-    pair_max_venule_diameter: float = 50.0           # a companion drains its arteriole's territory only (fitted: wider ones stagnate)
+    pair_gap_um: tuple = (20.0, 60.0)                # edge-to-edge gap, fitted to the measured pair spacing (85 µm centre to centre); the mesentery's within 15 µm [NelloreHarris2002] drew them touching
+    pair_max_venule_diameter: float = 40.0           # a companion drains its arteriole's territory only (fitted: wider ones stagnate)
     pair_calibre_ratio: tuple = (1.3, 1.5)           # artery:vein calibre 0.653 ± 0.068 [Yusufu2025], ± 2 SD
     # growth (space colonisation [Runions2007]) step, reach and kill distance, µm, and attractor density
     growth_step: float = 18.0
@@ -135,7 +135,7 @@ class Optics:
     eye_radius_um: float = 12500.0                   # anterior sclera 13.1 ± 0.8 mm [Choi2014], 11.2 ± 0.3 mm [Jesus2017]
     camera_tilt_deg: tuple = (0.0, 0.0)              # tilt of the camera axis from the normal, about the y and x axes
     psf_sigma_px: float = 0.9
-    defocus_um_per_um: float = 0.045                # blur sigma per µm of distance from the focal plane
+    defocus_um_per_um: float = 0.06                 # blur sigma per µm of distance from the focal plane
     focus_depth_um: float = 250.0
     focus_wander_um: float = 25.0
     illumination_p5_p95: float = 0.64
