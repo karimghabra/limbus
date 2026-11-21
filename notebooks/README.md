@@ -19,7 +19,7 @@ Sections 0–17, one per step, each opening with what the step does, its setting
 | 14–16 | the smear of the temporal burst, its background, the two vessel pictures combined | |
 | 17 | **the result**, saved to `preprocessed/<burst folder>.npz` | 10 arrays |
 
-§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory: per fixation the still picture (`densities`, filled where there is no data, so mask it with `usable_pixels`), the cleaned smear, the two combined and the usable, background and quiet masks, with the maps between the fixations; the notebook's §17 text lists the keys.
+§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory: per fixation the still picture (`densities`, filled where there is no data, so mask it with `usable_pixels`), the cleaned smear, the two combined (`combined_sums`, which needs `usable_pixels` as well as its `NaN`) and the usable, background and quiet masks, with the maps between the fixations; the notebook's §17 text lists the keys.
 
 ### Where it comes from
 

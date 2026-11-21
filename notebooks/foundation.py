@@ -2764,7 +2764,7 @@ def _(mo):
     | `cleaned_smears` | same · `float32` | the fluctuation over time with its background removed (§14, §15) |
     | `combined_sums` | same · `float32` | the still picture and the cleaned smear together, in multiples of the background noise (§16) |
 
-    `NaN` marks no data in `cleaned_smears` and `combined_sums`. `densities` has no `NaN`: a pixel without data is filled from the nearest usable one, so mask it with `usable_pixels`. To read the result elsewhere:
+    `NaN` marks where the smear has no value, in `cleaned_smears` and `combined_sums`. `densities` has no `NaN`: a pixel without data is filled from the nearest usable one, so mask it with `usable_pixels`. `combined_sums` contains that filled density wherever the smear has a value, so its data area is `np.isfinite(combined_sums) & usable_pixels`. To read the result elsewhere:
 
     ```python
     with np.load("preprocessed/burst_2026-09-16_15-50-52.npz") as saved:
