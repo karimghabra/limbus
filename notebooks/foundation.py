@@ -78,12 +78,13 @@ def _(mo):
     | `PREVIEW_FORMAT` | `"webp"` | `"webp"` (small), `"gif"` (plays everywhere, ~15× larger) or `"mp4"` (needs ffmpeg) |
     | `PREVIEW_WIDTH` | `480` | pixels across a preview |
     | `PREVIEW_MAX_MB` | `2.5` | the largest file a preview may be; a larger one is rendered again, narrower, until it fits |
+    | `PREVIEW_MAX_FRAMES` | `150` | a longer stack is previewed by every second, third, … frame, at the recording's speed |
     | `PREVIEW_DIR` | `previews` | where the previews are cached, in the working directory |
     | `workers` | half the cores | threads for the per-frame work |
 
     Everything the notebook writes (`previews/`, `vessel_pictures/`, `preprocessed/`) goes to the working directory it was started in.
 
-    `create_animation` changes what you see, never the data. It stretches the stack's full range to 8 bits, shrinks the frames to `width` pixels across, and caches the file in `previews/` under a hash of the frames, so each stack is rendered only once. A preview is embedded in the notebook's output, and marimo refuses an output much over 10 MB, so a preview whose file is larger than `PREVIEW_MAX_MB` is rendered again at the width that should bring it under that size; noisy stacks, such as §13's side-by-side comparison, need this. Previews are animated WebP, about 15× smaller than the same frames as a GIF, which keeps this notebook light. If your viewer won't play them, set `PREVIEW_FORMAT = "gif"`.
+    `create_animation` changes what you see, never the data. It stretches the stack's full range to 8 bits, shrinks the frames to `width` pixels across, and caches the file in `previews/` under a hash of the frames, so each stack is rendered only once. A preview is embedded in the notebook's output, and marimo refuses an output much over 10 MB, so a stack longer than `PREVIEW_MAX_FRAMES` is previewed by every second (third, …) frame, and a preview whose file is larger than `PREVIEW_MAX_MB` is rendered again at the width that should bring it under that size; noisy stacks, such as §13's side-by-side comparison, need this. Previews are animated WebP, about 15× smaller than the same frames as a GIF, which keeps this notebook light. If your viewer won't play them, set `PREVIEW_FORMAT = "gif"`.
     """)
     return
 
@@ -115,6 +116,7 @@ def _():
     PREVIEW_FORMAT = "webp"         # "webp" (small), "gif" (plays everywhere, ~15x larger) or "mp4" (needs ffmpeg)
     PREVIEW_WIDTH = 480             # pixels; previews are rendered this wide
     PREVIEW_MAX_MB = 2.5            # a preview file larger than this is rendered again, narrower: it is embedded in the output
+    PREVIEW_MAX_FRAMES = 150        # a longer stack is previewed by every second, third, ... frame
     PREVIEW_DIR = Path("previews")  # where the previews are cached, under a hash of their content
     workers = max(1, (os.cpu_count() or 2) // 2)  # threads for the per-frame work: half the cores
 
@@ -144,6 +146,11 @@ def _():
         ext = "." + PREVIEW_FORMAT.lower()
         if ext not in {".webp", ".gif", ".mp4"}:
             raise ValueError("PREVIEW_FORMAT must be 'webp', 'gif' or 'mp4'")
+        if len(frames) > PREVIEW_MAX_FRAMES:
+            # every stride-th frame, played at the same speed as the recording
+            stride = -(-len(frames) // PREVIEW_MAX_FRAMES)
+            frames, fps = frames[::stride], fps / stride
+            print(f"Showing one frame in {stride}: at most PREVIEW_MAX_FRAMES = {PREVIEW_MAX_FRAMES} frames")
 
         def render(width):
             """Render the preview `width` pixels wide (once; it is cached) and return its path."""
