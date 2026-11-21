@@ -63,11 +63,11 @@ order, as a Jupyter notebook.
 `flow.py` runs `foundation.py` inside it (`app.embed()`, with the preprocessing's figures and previews left out)
 and works on one fixation's stabilized density frames. It needs no vessel annotation. The only background it
 removes, from §2 on, is each pixel's temporal mean over the whole fixation, after a 1.5 px blur of every frame
-(`SPATIAL_BLUR`); rolling means appear only as labelled comparisons in §1 and §3:
+(`SPATIAL_BLUR`); a rolling mean appears only in §3, as one labelled comparison on the fine vessels:
 
 | § | |
 |---|---|
-| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median (a comparison, not used), and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
+| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
 | 2 | The perfusion map: the temporal variance of the mean-subtracted video, levelled for shot noise and thresholded into perfused regions |
 | 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments; and the fine vessels found with the whole-fixation mean against a rolling mean over `DRIFT_WINDOW` frames (a comparison, not used) |
 | 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties |
