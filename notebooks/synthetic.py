@@ -572,7 +572,8 @@ def _(OUTPUT_DIR, mo, plt, scene, show_figure, time):
     _axis.imshow(_media.od_to_gray(_media.optical_density(_frame[None].astype("float32"))[0]), cmap="gray",
                  extent=_extent)
     for _name, (_x, _y) in _outlines.items():
-        _axis.plot(_x, _y, "--", lw=1, color="orange" if "lid" in _name else "cyan", label=_name)
+        if "lid" in _name:            # the limbus is left undrawn: its vascular rings lie just outside it
+            _axis.plot(_x, _y, "--", lw=1, color="orange", label=_name)
     _axis.set(xlabel="temporal (mm)", ylabel="superior (mm)", title="the whole anterior eye, coarse level, from in front")
     _axis.legend(loc="lower right")
     show_figure(_figure, "eye_overview")
