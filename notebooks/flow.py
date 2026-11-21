@@ -27,7 +27,7 @@ def _(mo):
     | 4 | **How fast**: a kymograph along every centreline, and the red-cell velocity from the slope of its streaks | `velocities` |
     | 5 | A cross-check of the velocities by 2D cross-correlation of the frames | `velocities["v_xcorr"]` |
     | 6 | The velocity map, the per-segment table, and what the frame rate allows | |
-    | 7 | **Which background**: the rolling mean against the whole-fixation mean and four other rolling backgrounds, each subtracted and divided, scored on the fine vessels, false detections and confirmed velocities | the ranked table |
+    | 7 | **Which background**: the rolling mean against the whole-fixation mean and four other rolling backgrounds, scored on the fine vessels, false detections and confirmed velocities | the ranked table |
     | 8 | Save the videos, figures and tables to `flow_outputs/<burst>/`, and the runtime | |
 
     **The background.** From §2 to §6 (the perfusion map, the kymographs, the cross-correlation and the velocities) every frame is blurred by `SPATIAL_BLUR` (1.5 px), and each pixel's mean over the whole fixation is removed and then its rolling mean over `DRIFT_WINDOW` frames: what changes more slowly than the window is taken for drift, not flow. §7 measures what that choice costs and gains against the whole-fixation mean alone and against four other rolling backgrounds over the same window.
@@ -54,7 +54,7 @@ def _(mo):
     | `SPATIAL_BLUR` | `1.5` px | Gaussian blur of every frame before the perfusion map, the kymographs and the cross-correlation |
     | `NARROW_WIDTH` | `7` px | §7: a centreline pixel belongs to a fine vessel when its perfused region is at most this wide there |
     | `BRIGHT_PERCENTILE`, `SVD_RANK` | `85`, `2` | §7: the percentile of the rolling bright-side background, and the components that the sliding-window SVD removes |
-    | `COMPARE_BACKGROUNDS` | `True` | run the comparison of §7 (about three and a half minutes more on the crop burst); `False` skips it |
+    | `COMPARE_BACKGROUNDS` | `True` | run the comparison of §7 (roughly two minutes more on the crop burst); `False` skips it |
     | `PERFUSION_LEVELS` | `(4, 8)` | hysteresis thresholds on the perfusion map, in robust standard deviations of the static pixels |
     | `MIN_REGION`, `MAX_HOLE` | `150`, `300` px | perfused regions smaller than this are dropped, holes smaller than this filled |
     | `MIN_SEGMENT` | `30` px | shorter centreline segments are not measured |
@@ -441,6 +441,7 @@ def _(
         Its first mode is the static picture of the window, so rank 1 is close to a rolling mean; the next modes are the
         changes that most pixels share."""
         frames = len(video)
+        window = min(window, frames)
         has_data = np.isfinite(video)
         flat = (np.where(has_data, video, 0) + np.nan_to_num(mean_image)[None]).reshape(frames, -1)
         gram = (flat @ flat.T).astype(np.float64)
@@ -812,13 +813,12 @@ def _(
     _intensity = np.exp(np.nanmean(log_frames, axis=0))
 
 
-    def perfusion_regions(video, levelling=0.5):
-        """Steps 3 and 4 for a background-subtracted (frames, rows, columns) video: the perfusion map, the perfused
-        regions, and the robust SD of the perfusion level on the static pixels, the unit of the map. The spread is
-        multiplied by the mean intensity to the power `levelling`: 0.5 for a relative video (log units, or divided by
-        its background), whose shot noise goes as one over the square root of the intensity; -0.5 for a video in
-        intensity units, whose shot noise goes as the square root."""
-        spread = np.sqrt(np.nanmean(video ** 2, axis=0)) * _intensity ** levelling
+    def perfusion_regions(video):
+        """Steps 3 and 4 for a background-subtracted (frames, rows, columns) video in log units: the perfusion map,
+        the perfused regions, and the robust SD of the perfusion level on the static pixels, the unit of the map. The
+        spread is multiplied by the square root of the mean intensity, because the shot noise of a relative video goes
+        as one over it."""
+        spread = np.sqrt(np.nanmean(video ** 2, axis=0)) * np.sqrt(_intensity)
         level = spread / np.nanmedian(spread[static_reference])
         unit = robust_sd(level[static_reference])
         z = np.where(analysed, (level - 1) / unit, np.nan).astype(np.float32)
@@ -1521,9 +1521,9 @@ def _(mo):
     | exponential moving average | causal, with the weight $2/(W+1)$ of a span of $W$ = `DRIFT_WINDOW` frames, which gives it the mean delay of the running mean |
     | sliding-window SVD | the clutter filter of Doppler imaging (ultrasound, and laser Doppler holography of the conjunctiva): the window's frames as a matrix of frames by pixels, minus their projection on its `SVD_RANK` strongest temporal modes. The first is the window's static picture; the next are the changes most pixels share, such as residual motion and focus |
 
-    **Each background in two forms.** *Divided*: the normalised residual $R = I/B - 1$, which the literature recommends because it makes the residual a relative change, so one threshold serves bright and dark parts of the field. In this notebook's log units the subtraction already is the division, $\ln I - \ln B = \ln(I/B)$, which is $R$ to within $R^2/2$ (the cell prints how close on this burst), so the divided form is the log residual itself, and the divided rolling mean is exactly §2 to §6. *Subtracted*: $I - B$ in intensity units (the stabilized frames with only the flicker removed), whose perfusion map is levelled for shot noise the other way (`levelling = -0.5` in `perfusion_regions()`).
+    **Every background is divided.** The literature recommends the normalised residual $R = I/B - 1$, because it makes the residual a relative change, so one threshold serves bright and dark parts of the field. In this notebook's log units the subtraction already is the division, $\ln I - \ln B = \ln(I/B)$, which is $R$ to within $R^2/2$ (the cell prints how close on this burst), so every residual here is the divided form, and the rolling mean's is exactly §2 to §6.
 
-    **The four scores.** On every form of every background:
+    **The four scores.** On every background:
 
     | Score | Better | Definition |
     |---|---|---|
@@ -1532,9 +1532,9 @@ def _(mo):
     | false detections | lower | the share of the static background pixels inside the perfused regions |
     | confirmed velocities | higher | segments whose velocity is confirmed in the sense of §6 |
 
-    Each form is ranked on each score (1 is best, ties share a rank), and the table is sorted by the mean of its four ranks. A candidate **wins clearly** when, against the default (the divided rolling mean), it does at least 5% better on three of the four scores and no more than 5% worse on any (the relative change of each score; a smaller share of static pixels perfused is better). The counts come from one fixation of one burst, so a few segments either way are within chance. The width comes from the perfused region, which the blur of the map widens, so it ranks vessels by size rather than measuring their lumen. The static pixels are the foundation's quiet pixels (§11 of `foundation.py`), judged after it removes a running mean over 9 frames, so they are pixels without fast change; slow drift on them is what a whole-fixation mean leaves and a rolling one removes.
+    Each background is ranked on each score (1 is best, ties share a rank), and the table is sorted by the mean of its four ranks. A candidate **wins clearly** when, against the default (the rolling mean), it does at least 5% better on three of the four scores and no more than 5% worse on any (the relative change of each score; a smaller share of static pixels perfused is better). The counts come from one fixation of one burst, so a few segments either way are within chance. The width comes from the perfused region, which the blur of the map widens, so it ranks vessels by size rather than measuring their lumen. The static pixels are the foundation's quiet pixels (§11 of `foundation.py`), judged after it removes a running mean over 9 frames, so they are pixels without fast change; slow drift on them is what a whole-fixation mean leaves and a rolling one removes.
 
-    Below the table, the perfusion map of every form on one colour scale, and a short video of the six divided residuals of the zoomed part of §1 on one gray scale. `COMPARE_BACKGROUNDS = False` skips the section.
+    Below the table, the perfusion map of every background on one colour scale, and a short video of the six residuals of the zoomed part of §1 on one gray scale. `COMPARE_BACKGROUNDS = False` skips the section.
     """)
     return
 
@@ -1583,17 +1583,7 @@ def _(
         return skeleton, fine, int(fine_lines)
 
 
-    def _in_intensity(residual, out=None, chunk=64):
-        """I - B in intensity units from the log residual r = ln I - ln B, as I (1 - exp(-r)), by blocks of rows;
-        into `out`, which may be `residual` itself."""
-        out = np.empty_like(residual) if out is None else out
-        for row in range(0, residual.shape[1], chunk):
-            log_intensity = mean_removed[:, row:row + chunk] + blurred_mean[row:row + chunk]
-            out[:, row:row + chunk] = np.exp(log_intensity) * -np.expm1(-residual[:, row:row + chunk])
-        return out
-
-
-    DEFAULT_BACKGROUND = "rolling mean (used), divided"
+    DEFAULT_BACKGROUND = "rolling mean (used)"
     _backgrounds = [
         ("rolling mean (used)", lambda: high_passed),
         ("whole-fixation mean", lambda: mean_removed),
@@ -1615,35 +1605,29 @@ def _(
             _start = time.perf_counter()
             _residual = _make()
             background_clips[_name] = to_gray(_residual[:, zoom[0], zoom[1]], -_clip_limit, _clip_limit)
-            for _form, _levelling in (("divided", 0.5), ("subtracted", -0.5)):
-                _key = f"{_name}, {_form}"
-                if _key == DEFAULT_BACKGROUND:   # §2 to §6 measured this one already
-                    _z, _regions, _unit, _lines, _rows = perfusion_z, perfused, perfusion_unit, segments, measurements
-                else:
-                    # a residual made here is turned into intensity units in place, to hold one stack less
-                    _shared = _residual is high_passed or _residual is mean_removed
-                    _video = _residual if _form == "divided" else _in_intensity(_residual, None if _shared else _residual)
-                    _z, _regions, _unit = perfusion_regions(_video, _levelling)
-                    _lines = centrelines(_regions, MIN_SEGMENT)
-                    with ThreadPoolExecutor(workers) as _pool:
-                        _rows = [_m for _m in _pool.map(lambda _i: measure_segment(_video, _lines[_i], _i), range(len(_lines)))
-                                 if _m is not None]
-                    del _video
-                _classes = [status(_m) for _m in _rows]
-                _skeleton, _fine_pixels, _fine_lines = _fine(_regions, _lines)
-                background_scores[_key] = {
-                    "map unit": float(_unit),
-                    "perfused share": float(_regions[analysed].mean()),
-                    "centreline (px)": int(_skeleton.sum()),
-                    "segments": len(_lines),
-                    "consistent": sum(_c in ("confirmed", "consistent") for _c in _classes),
-                    "fine-vessel centreline (px)": int(_fine_pixels.sum()),
-                    "fine segments": _fine_lines,
-                    "static pixels perfused": float(_regions[static_reference].mean()),
-                    "confirmed": sum(_c == "confirmed" for _c in _classes),
-                }
-                background_maps[_key] = (_z, _regions)
-                del _rows
+            if _name == DEFAULT_BACKGROUND:   # §2 to §6 measured this one already
+                _z, _regions, _unit, _lines, _rows = perfusion_z, perfused, perfusion_unit, segments, measurements
+            else:
+                _z, _regions, _unit = perfusion_regions(_residual)
+                _lines = centrelines(_regions, MIN_SEGMENT)
+                with ThreadPoolExecutor(workers) as _pool:
+                    _rows = [_m for _m in _pool.map(lambda _i: measure_segment(_residual, _lines[_i], _i), range(len(_lines)))
+                             if _m is not None]
+            _classes = [status(_m) for _m in _rows]
+            _skeleton, _fine_pixels, _fine_lines = _fine(_regions, _lines)
+            background_scores[_name] = {
+                "map unit": float(_unit),
+                "perfused share": float(_regions[analysed].mean()),
+                "centreline (px)": int(_skeleton.sum()),
+                "segments": len(_lines),
+                "consistent": sum(_c in ("confirmed", "consistent") for _c in _classes),
+                "fine-vessel centreline (px)": int(_fine_pixels.sum()),
+                "fine segments": _fine_lines,
+                "static pixels perfused": float(_regions[static_reference].mean()),
+                "confirmed": sum(_c == "confirmed" for _c in _classes),
+            }
+            background_maps[_name] = (_z, _regions)
+            del _rows
             del _residual
             print(f"{_name}: {time.perf_counter() - _start:.0f} s")
 
@@ -1713,7 +1697,7 @@ def _(
         _shown = mo.md("The comparison is skipped (`COMPARE_BACKGROUNDS = False`).")
     else:
         _columns = [_c for _c in background_scores[DEFAULT_BACKGROUND] if not _c.startswith("rank: ")]
-        _table = ["| rank | background, form | " + " | ".join(_columns) + " |", "|---" * (len(_columns) + 2) + "|"]
+        _table = ["| rank | background | " + " | ".join(_columns) + " |", "|---" * (len(_columns) + 2) + "|"]
         for _place, _name in enumerate(background_ranking, start=1):
             _bold = "**" if _name == DEFAULT_BACKGROUND else ""
             _table.append(f"| {_place} | {_bold}{_name}{_bold} | " + " | ".join(_cell(_c, background_scores[_name][_c]) for _c in _columns) + " |")
@@ -1734,7 +1718,7 @@ def _(
             _runner = next((_n for _n in background_ranking if _n != DEFAULT_BACKGROUND), None)
             _sentences.append("No candidate wins clearly, so the rolling mean stays the default."
                               + (f" The best of the others, {_runner}: {_describe(_runner)} against the default." if _runner else ""))
-        _whole = background_scores.get("whole-fixation mean, divided")
+        _whole = background_scores.get("whole-fixation mean")
         if _whole:
             _sentences.append(
                 f"Against the whole-fixation mean alone, the rolling mean finds {_default['fine-vessel centreline (px)']} px "
@@ -1744,13 +1728,9 @@ def _(
                 f"{_whole['static pixels perfused']:.2%}; the unit of the whole-fixation mean's map, the spread on the static "
                 f"pixels, is {_whole['map unit'] / _default['map unit']:.2f} times the rolling mean's, which is the drift it "
                 "keeps raising every threshold.")
-        _pairs = [(_n.rsplit(", ", 1)[0]) for _n in background_ranking if _n.endswith(", divided")]
-        _divided_ahead = sum(background_scores[f"{_b}, divided"]["mean rank"] < background_scores[f"{_b}, subtracted"]["mean rank"]
-                             for _b in _pairs)
         _sentences.append(
-            f"Divided ranks above subtracted for {_divided_ahead} of the {len(_pairs)} backgrounds. The log residual is the "
-            f"normalised residual to within {ratio_error:.2%} of its size (median over the analysed pixels), so the divided "
-            "form is $R = I/B - 1$ in all but name.")
+            f"The log residual is the normalised residual to within {ratio_error:.2%} of its size (median over the analysed "
+            "pixels), so every background here is $R = I/B - 1$ in all but name.")
         _shown = mo.md("\n".join(_table) + "\n\n**On this burst.** " + " ".join(_sentences))
     _shown
     return
@@ -1774,19 +1754,16 @@ def _(
 ):
     if COMPARE_BACKGROUNDS:
         _names = list(background_clips)
-        _figure, _axes = plt.subplots(2, len(_names), figsize=(3.3 * len(_names), 5.6), squeeze=False)
+        _figure, _axes = plt.subplots(1, len(_names), figsize=(3.3 * len(_names), 3.0), squeeze=False)
         _magma = plt.cm.magma.with_extremes(bad="black")
-        for _column, _name in enumerate(_names):
-            for _row, _form in enumerate(("divided", "subtracted")):
-                _key = f"{_name}, {_form}"
-                _z, _regions = background_maps[_key]
-                _axis = _axes[_row, _column]
-                _axis.imshow(_z, cmap=_magma, vmin=0, vmax=30, interpolation="antialiased")
-                _axis.contour(_regions, [0.5], colors="#5fd3f3", linewidths=0.3)
-                _scores = background_scores[_key]
-                _axis.set_title(f"{_key}\nfine {_scores['fine-vessel centreline (px)']} px, static "
-                                f"{_scores['static pixels perfused']:.2%}, confirmed {_scores['confirmed']}", fontsize=7)
-                _axis.axis("off")
+        for _axis, _name in zip(_axes[0], _names):
+            _z, _regions = background_maps[_name]
+            _axis.imshow(_z, cmap=_magma, vmin=0, vmax=30, interpolation="antialiased")
+            _axis.contour(_regions, [0.5], colors="#5fd3f3", linewidths=0.3)
+            _scores = background_scores[_name]
+            _axis.set_title(f"{_name}\nfine {_scores['fine-vessel centreline (px)']} px, static "
+                            f"{_scores['static pixels perfused']:.2%}, confirmed {_scores['confirmed']}", fontsize=7)
+            _axis.axis("off")
         _figure.suptitle("perfusion maps from 0 to 30 robust SDs of the static pixels (the unit of each map); blue: the "
                          "perfused regions", fontsize=9, color=INK_MUTED)
         _figure.tight_layout()
@@ -1802,7 +1779,7 @@ def _(
             _tiles.append(np.zeros_like(_tiles[0]))
         _video = np.concatenate([np.concatenate(_tiles[_i:_i + 3], axis=2) for _i in range(0, len(_tiles), 3)], axis=1)
         backgrounds_video_path = save_video(_video, output_folder / "backgrounds.webm", fps)
-        print(f"Saved {backgrounds_video_path} ({backgrounds_video_path.stat().st_size / 1e6:.1f} MB); the divided residuals "
+        print(f"Saved {backgrounds_video_path} ({backgrounds_video_path.stat().st_size / 1e6:.1f} MB); the residuals "
               "of the zoomed part of §1, one gray scale symmetric about 0 (the 99.5th percentile of the rolling mean's magnitude)")
         _shown = preview(_video, fps, 800)
     else:
@@ -1829,8 +1806,8 @@ def _(mo):
     | `velocities.csv` | the table of §6; not written, and one left by an earlier run removed, when no segment is measured |
     | `flow_maps.npz` | `perfusion_z`, `perfused`, `analysed`, the centrelines (`segment_points`, rows of `(segment, row, column)`), `fps`, `fixation`, `burst`, `pattern_length` (px, the median over the consistent segments of §6; `NaN` when there is none) |
     | `contrast.csv` | the contrast table of §1 |
-    | `backgrounds.csv` | the ranked table of §7, one row per background and form; not written, and one left by an earlier run removed, when `COMPARE_BACKGROUNDS` is `False` |
-    | `backgrounds_perfusion.png`, `backgrounds.webm` | §7: the perfusion map of every background and form, and the divided residuals side by side |
+    | `backgrounds.csv` | the ranked table of §7, one row per background; not written, and one left by an earlier run removed, when `COMPARE_BACKGROUNDS` is `False` |
+    | `backgrounds_perfusion.png`, `backgrounds.webm` | §7: the perfusion map of every background, and the residuals side by side |
     """)
     return
 
@@ -1871,13 +1848,11 @@ def _(
         _writer.writerow(["version", *_columns])
         for _name, _values in contrast_table.items():
             _writer.writerow([_name, *(f"{_values[_c]:.6g}" for _c in _columns)])
-    for _stale in ("fine_vessels.csv", "fine_vessels.png", "recorded_vs_mean_subtracted.webm"):   # an earlier version's names
-        (output_folder / _stale).unlink(missing_ok=True)
     if background_scores:
         with open(output_folder / "backgrounds.csv", "w", newline="", encoding="utf-8") as _file:
             _writer = csv.writer(_file)
             _columns = list(background_scores[background_ranking[0]])
-            _writer.writerow(["rank", "background, form", *_columns])
+            _writer.writerow(["rank", "background", *_columns])
             for _place, _name in enumerate(background_ranking, start=1):
                 _writer.writerow([_place, _name, *(background_scores[_name][_c] for _c in _columns)])
     else:

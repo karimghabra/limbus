@@ -73,7 +73,7 @@ its rolling mean over `DRIFT_WINDOW` frames; §7 scores that choice against othe
 | 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties |
 | 5 | A cross-check by ensemble 2D cross-correlation of the frames around each segment |
 | 6 | The velocity map, the per-segment table, and what the frame rate and exposure allow |
-| 7 | Which background: the rolling mean against the whole-fixation mean, a rolling median, a rolling bright-side percentile, an exponential moving average and a sliding-window SVD clutter filter, each divided (the normalised residual) and subtracted, ranked on fine-vessel centreline, fine segments, false detections on static pixels and confirmed velocities (`COMPARE_BACKGROUNDS = False` skips it) |
+| 7 | Which background: the rolling mean against the whole-fixation mean, a rolling median, a rolling bright-side percentile, an exponential moving average and a sliding-window SVD clutter filter, each as the normalised (divided) residual, ranked on fine-vessel centreline, fine segments, false detections on static pixels and confirmed velocities (`COMPARE_BACKGROUNDS = False` skips it) |
 | 8 | Videos, figures and tables saved to `flow_outputs/<burst folder>/` in the working directory |
 
 Velocities are in px/frame and px/s; set `UM_PER_PX` (5.86 µm divided by the optical magnification) for mm/s.
@@ -112,9 +112,13 @@ Measured on the lab PC with 6 threads, burst `2026-09-16_15-50-52` (140 frames o
 - `foundation.py` on the whole frame runs in about 2½ minutes.
 - On a 720 × 1152 crop of the same burst (all 140 frames), `foundation.py` runs in 42 seconds at a peak
   of 2.7 GB and saves a 17 MB result.
-- `flow.py` on the crop, preprocessing included, runs in about 1¾ minutes at a peak of 4.5 GB (the
-  preprocessing about 30 s of it, without its figures). Its own memory is mostly two `float32` copies of the
-  fixation's frames, 0.8 GB on the crop; on the whole frame they take about 3.4 GB on top of the preprocessing.
+- `flow.py` on the crop, preprocessing included and without §7 (`COMPARE_BACKGROUNDS = False`), runs in about
+  1¾ minutes at a peak of 4.5 GB (the preprocessing about 30 s of it, without its figures). Its own memory is
+  mostly two `float32` copies of the fixation's frames, 0.8 GB on the crop; on the whole frame they take about
+  3.4 GB on top of the preprocessing.
+- §7, on by default, adds roughly two minutes on the crop and raises the peak to about 5.3 GB: each candidate
+  background is a third copy of the frames, and the sliding SVD briefly holds two more, so about 3.4 GB more
+  than the two copies on the whole frame.
 - The archive's sections 17–25 need much more: on the crop the archive, preprocessing included, runs
   in 2¼ minutes at a peak of 4.6 GB; on the whole frame it needs roughly 8–11 GB.
 
