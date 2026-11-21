@@ -45,18 +45,18 @@ class Anatomy:
     # density and mesh (docs §5)
     capillary_mesh_spacing: float = 285.0            # µm between mesh cell centres (fitted to ~8 mm/mm2 of capillary, docs §5)
     capillary_edge_drop: float = 0.18                # share of mesh ridges absent (open polygons)
-    radial_bias: float = 0.3                         # conjunctival vessels run radially from the limbus [Akagi2018]
-    arterial_trees_per_mm2: float = 0.45             # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
-    venous_trees_per_mm2: float = 0.4 
+    radial_bias: float = 0.15                        # conjunctival vessels run radially from the limbus [Akagi2018]
+    arterial_trees_per_mm2: float = 0.5              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
+    venous_trees_per_mm2: float = 0.5 
     av_pair_offset: tuple = (25.0, 70.0)             # lateral distance of a paired venule from its arteriole (assumed)
     av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
-    episcleral_curvature: float = 0.0004             # rad/µm SD of their slow bend, correlation 800 µm: long straight runs
-    episcleral_heading_spread: float = 0.6           # rad about the radial direction: parallel radial trunks [Akagi2018, Kemenes2025]
-    episcleral_vessels_per_mm: float = 3.0           # episcleral vessels per mm along the limbus (fitted to the measured diameters, docs §5)
+    episcleral_curvature: float = 0.0008             # rad/µm SD of their slow bend, correlation 800 µm: long straight runs
+    episcleral_heading_spread: float = 0.8           # rad about the radial direction: parallel radial trunks [Akagi2018, Kemenes2025]
+    episcleral_vessels_per_mm: float = 2.2           # episcleral vessels per mm along the limbus (fitted to the measured diameters, docs §5)
     episcleral_avas_per_mm2: float = 0.75            # arteriovenous anastomoses, 0.5-1 per mm2 [Selbach2005]
     ava_diameter: tuple = (5.0, 8.0)                 # their smooth-muscle arteriolar segment [RohenFunk1994], at rest tone (assumed)
-    deep_vessels_per_mm: float = 1.0
+    deep_vessels_per_mm: float = 0.6
     communicating_per_mm2: float = 1.2               # conjunctival-episcleral connections (fitted, docs §2.4)
     communicating_angle_deg: tuple = (20.0, 60.0)    # oblique, no measured angle exists (docs §2.4) [Asanad2021, Li2011]
     perforator_per_mm2: float = 0.25                 # deep-to-episcleral perforations in the field (docs §2.4)
@@ -64,15 +64,17 @@ class Anatomy:
     # tortuosity: lateral wiggle of the centreline, (amplitude µm, correlation length µm), per kind (fitted to the
     # measured tortuosity, docs §5)
     wiggle: dict = field(default_factory=lambda: {
-        "arteriole": (1.0, 120.0), "venule": (1.5, 120.0), "capillary": (0.6, 40.0),
+        "arteriole": (36.0, 220.0), "venule": (40.0, 220.0), "capillary": (4.0, 110.0),
         "episcleral": (8.0, 220.0), "deep": (8.0, 260.0), "communicating": (2.0, 40.0),
     })
     # multi-scale irregularity on top of the meander (fitted to the measured curvature, jitter and width variation,
     # docs §5): fine jitter (amplitude µm, correlation µm), kinks (per mm, amplitude µm, width µm), and the
     # variation of the calibre along a vessel (coefficient of variation, correlation µm)
+    bend_wiggle: tuple = (5.0, 70.0)                 # gentle bends of 100-300 µm on vessels above capillary size (fitted to the curvature spectrum)
     fine_jitter: tuple = (0.3, 6.0)
-    kinks: tuple = (0.7, 2.0, 8.0)
-    width_variation: tuple = (0.16, 25.0)            # CV 0.1-0.4 [Kiani1993], ~0.19 conjunctiva [Shahidi2010]
+    kinks: tuple = (0.0, 2.0, 8.0)
+    taper: tuple = (0.15, 0.6)                       # smooth change of calibre along a segment, relative (fitted to the measured taper)
+    width_variation: tuple = (0.28, 150.0)           # CV 0.1-0.4 [Kiani1993], ~0.19 conjunctiva [Shahidi2010]
     # companion venules beside arterioles (docs §4)
     pair_fraction: float = 1.0                       # share of the larger arterioles that have one (fitted to the measured paired share, docs §4)
     pair_min_diameter: float = 12.0                  # µm: only arterioles reaching this calibre are accompanied
@@ -82,11 +84,13 @@ class Anatomy:
     # growth (space colonisation [Runions2007]) step, reach and kill distance, µm, and attractor density
     growth_step: float = 18.0
     growth_influence: float = 400.0
-    growth_kill: float = 180.0                       # sets the spacing of branches (fitted, docs §5)
+    growth_kill: float = 210.0                       # sets the spacing of branches (fitted, docs §5)
     venous_kill_ratio: float = 1.0                   # venules are more numerous than arterioles [Khansari2017]
     attractors_per_mm2: float = 120.0
     growth_persistence: float = 0.8
-    path_straightening: float = 0.5                  # share of a grown path's deviation from its chord kept (fitted by eye and to the measured straightness)
+    branch_spacing_um: float = 220.0                 # least distance between branch points of a tree (fitted to segment lengths, docs §5)
+    max_terminal_branch_um: float = 450.0            # unbranched terminal branches are cut to this (fitted by eye, docs §5)
+    path_straightening: float = 0.4                  # share of a grown path's deviation from its chord kept (fitted by eye and to the measured straightness)
 
 
 @dataclass
@@ -124,7 +128,7 @@ class Optics:
                        (0.22, 5.1), (0.258, 1.4), (0.258, 0.7))
     double_pass: float = 2.0
     scatter_veil_length_um: float = 650.0            # depth at which 1 - 1/e of the detected light has turned back
-    scatter_blur_um_at_500: float = 12.0             # Gaussian sigma of the image of a point 500 µm deep
+    scatter_blur_um_at_500: float = 16.0             # Gaussian sigma of the image of a point 500 µm deep
     # the camera's pose on the eye: the field's centre is where the camera axis meets the globe; the globe is a
     # sphere of the anterior scleral radius (docs §1.4), and the camera axis may tilt from the surface normal there
     eye_radius_um: float = 12500.0                   # anterior sclera 13.1 ± 0.8 mm [Choi2014], 11.2 ± 0.3 mm [Jesus2017]

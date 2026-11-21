@@ -122,7 +122,8 @@ These structures bound the field rather than appear in it, but they set its plum
   occur only in the limbal arcades [Selbach2005].
 
 The generator models the bulbar field behind the palisade zone (`limbus_distance_mm` = 3 mm by default), so it
-draws no palisade loops or marginal arcade; a field at the limbus itself would need them added.
+draws no palisade loops or marginal arcade; the whole eye (section 11) adds the limbal arcade, the palisade hairpins
+and the limbal venous ring at its coarse level.
 
 ### 2.4 Vessels between the layers
 
@@ -189,12 +190,16 @@ The generator uses γ = 2.6 for arterioles and 2.7 for venules (`murray_exponent
 cited 2.59–3.14 and 1.95–3.14. Trees are grown by space colonisation [Runions2007]: a tip grows on towards the
 attractors nearest to it, and a node may sprout one side branch, whose first step leaves at 20–70° to the parent's
 continuation (an acute junction, the child carrying on roughly in the parent's direction; the larger daughter makes
-the smaller angle with the parent [Zamir1978]) and which then bends towards its attractors as it grows. Each path
-between branch points is then straightened towards its chord, keeping half of its deviation
-(`path_straightening` = 0.5, fitted by eye and to the measured straightness): growth bends a branch round in an arc,
-whereas the recorded vessels run in nearly straight lines with gentle bends between their branch points, parallel
-radial trunks with Y-shaped forks [Akagi2018, Kemenes2025, Li2011]. The branching angles that result are measured on
-the images (section 8).
+the smaller angle with the parent [Zamir1978]) and which then bends towards its attractors as it grows. No side
+branch leaves within 220 µm of another branch point of the same tree (`branch_spacing_um`), and every unbranched
+terminal branch is cut to 450 µm from its branch point (`max_terminal_branch_um`; the capillary mesh serves the
+rest): left alone, colonisation sends a trunk through a field of attractors sprouting a comb of parallel unbranched
+side branches 50–100 µm apart, which the recordings do not show; both values are fitted by eye and to the measured
+length density. Each path between branch points is then straightened towards its chord, keeping 40 % of its
+deviation (`path_straightening`), because growth bends a branch round in a circular arc, and the meander of
+section 5 is added instead: the recorded vessels bend gently and continuously along their length, in a hierarchy of
+branching trees rather than straight rods [Akagi2018, Kemenes2025, Li2011]. The branching angles that result are
+measured on the images (section 8).
 
 ### 4.1 Arterioles and venules side by side
 
@@ -247,27 +252,31 @@ In the generator:
   capillary junctions), `capillary_mesh_spacing` = 285 µm between cell centres with 18 % of the ridges absent,
   fitted so that the capillary length density lands near the 8 mm/mm² derived from [Kvernebo2022] (the anatomy
   check accepts 4.4–12 mm/mm², the cited mean ± 2 SD).
-- The trees' density is set by the colonisation's kill distance (`growth_kill` = 180 µm) and attractor density
+- The trees' density is set by the colonisation's kill distance (`growth_kill` = 210 µm) and attractor density
   (120 per mm²), fitted so that the capillary red-cell velocity and the arteriolar flow come out at the cited
   values (section 6.5): the number of terminal arterioles per capillary decides how long the capillary paths
   are, and hence how fast blood crosses them.
-- `arterial_trees_per_mm2` = 0.5 and `venous_trees_per_mm2` = 0.55 roots per mm² follow the arteriole-to-venule
+- `arterial_trees_per_mm2` = 0.5 and `venous_trees_per_mm2` = 0.5 roots per mm² follow the arteriole-to-venule
   ratio of section 3; their absolute number (fitted) sets how large each tree grows, and so the calibre of its
   largest vessels, which the anatomy check holds within the cited ranges.
-- Episcleral vessels: `episcleral_vessels_per_mm` = 3.0 vessels per mm along the limbus (fitted to the measured
-  diameter distribution, section 8; the literature gives no count), running radially (parallel radial trunks [Akagi2018, Kemenes2025]) with a heading spread of 0.6 rad
-  (`episcleral_heading_spread`) and a slow bend of 0.0004 rad/µm (`episcleral_curvature`, correlation 800 µm): long,
-  nearly straight runs.
+- Episcleral vessels: `episcleral_vessels_per_mm` = 2.2 vessels per mm along the limbus (fitted to the measured
+  length density and diameter distribution, section 8; the literature gives no count), running radially [Akagi2018,
+  Kemenes2025] with a heading spread of 0.8 rad (`episcleral_heading_spread`) and a random curvature of SD
+  0.0008 rad/µm (`episcleral_curvature`, correlation 250 µm) pulled back towards the initial heading over about
+  1.2 mm: long runs that bend gently and continuously. Side branches (0.6 per mm) leave at 20–45°, and past each one
+  the vessel narrows by Murray's law (never below its cited calibre range), so it tapers along its course. Deep
+  vessels: 0.6 per mm (`deep_vessels_per_mm`).
 - Tortuosity is multi-scale: the colonisation paths and a smooth lateral wiggle give each vessel its meander
-  (`Anatomy.wiggle`, amplitude and correlation length per vessel kind); on top of it every segment gets a slight
-  lateral jitter (`fine_jitter`, 0.3 µm over 6 µm) and rare kinks (`kinks`, 0.7 per mm, ±2 µm over 8 µm), tapered
-  to nothing at the junctions; capillaries get no kinks and half the jitter, so the mesh stays a polygon of nearly
-  straight segments between its nodes. The settings are fitted so that the straightness, tortuosity and curvature
+  (`Anatomy.wiggle`: arterioles 36 µm and venules 40 µm over 220 µm, capillaries a 4 µm bow over 110 µm); on top
+  of it vessels above capillary size get gentle bends of 100–300 µm (`bend_wiggle`, 5 µm over 70 µm) and a slight
+  lateral jitter (`fine_jitter`, 0.3 µm over 6 µm), tapered to nothing at the junctions; kinks (`kinks`) are off,
+  and capillaries get neither jitter nor bends, so the mesh is a soft polygon of slightly bowed sides. The settings are fitted so that the straightness, tortuosity and curvature
   distributions, the curvature spectrum and the centreline jitter measured on the real bursts are reproduced
   through the same estimator, and by eye against the real frames (section 8).
-- Each segment's calibre varies smoothly along it (`width_variation`: coefficient of variation 0.16, correlation
-  25 µm), inside the cited 0.1–0.4 [Kiani1993] and close to the conjunctival 0.19 [Shahidi2010], fitted to the width
-  variation measured on the real bursts. The red cells follow it: they sit within the local lumen and speed up as
+- Each segment's calibre varies smoothly along it (`width_variation`: coefficient of variation 0.28, correlation
+  150 µm) on a linear taper of 15–60 % end to end (`taper`), fitted so that the width variation and taper measured
+  through the estimator (which smooths the width) match the real bursts; the measured variation, 0.14, is inside
+  the cited 0.1–0.4 [Kiani1993] and close to the conjunctival 0.19 [Shahidi2010]. The red cells follow it: they sit within the local lumen and speed up as
   the square of its narrowing, so the flux is the same all along (the flow model uses the nominal diameter).
 
 ## 6. Haemodynamics
@@ -509,9 +518,12 @@ fornices; the two territories meet at a watershed [MeyerWatson1987] that a revie
 limbus (lid branches supply the conjunctiva from 4 mm on [Sun2022]). In the model, anterior arteries rise from the
 circle every 1.8 mm (scaled by the quadrant's density) and posterior arteries enter from the fornix every 2.5 mm,
 and both grow by space colonisation [Runions2007] over the conjunctival band at trunk scale (branches down to
-20–28 µm), so they meet and interleave around the watershed rather than at a fixed line. Each anterior artery also
+20–28 µm, at least 0.6 mm between branch points, unbranched terminal branches cut to 1.5 mm, a pull along the
+meridian so that they converge radially on the limbus [Akagi2018]), so they meet and interleave around the
+watershed rather than at a fixed line. Their paths get the meander, bends and calibre profile of section 5. Each anterior artery also
 sends a short branch forward to the limbal arcade, which drains through palisade hairpins 1.5–2.1 mm long
-[Kemenes2025, Haagdorens2017] into a limbal venous ring.
+[Kemenes2025, Haagdorens2017] into a limbal venous ring (35 µm); the forward branches' ends are joined around the
+limbus into the arterial arcade (18–28 µm) [VanBuskirk1989, Kemenes2025], so both rings run round the cornea.
 
 ### 11.5 The venous drainage
 
@@ -519,8 +531,9 @@ Episcleral veins drain away from the limbus [Meyer1988] to the muscular and vort
 eye [Kutoglu2005]; 8.0 ± 2.1 ampullae on widefield angiography [Verma2020]); conjunctival veins drain to the
 palpebral veins. Aqueous enters episcleral veins at the limbus through aqueous veins; no human count was found, and
 nasal outflow dominated in live aqueous angiography [Huang2017] but not consistently in enucleated eyes
-[Saraswathy2016]. The model: episcleral veins (1.2 per mm of limbus, 50–100 µm) leave the limbal venous ring and
-run away from the limbus past the insertions in long, gently bending runs with side branches; conjunctival venular
+[Saraswathy2016]. The model: episcleral veins (0.6 per mm of limbus, 50–100 µm) leave the limbal venous ring and
+run away from the limbus past the insertions in long, gently bending runs (a random curvature of SD 0.0004 rad/µm
+pulled back towards the meridian, so none spirals round the globe) with side branches leaving at 25–50°; conjunctival venular
 trees, half of whose growth follows the arteries so that veins accompany them, drain to outlets at the fornix and
 into the limbal ring. Aqueous inflow is not modelled.
 
@@ -642,7 +655,7 @@ this document.
 | arterial_trees_per_mm2, venous_trees_per_mm2 | 0.5, 0.55 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
 | av_pair_offset, av_pair_fraction | 25–70 µm, 0.2 | assumed, §4.1 and §9 |
 | pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 12 µm, 3–15 µm, 1.3–1.5, 40 µm | fitted; fitted; [NelloreHarris2002]; within [Yusufu2025]; fitted, §4.1 |
-| fine_jitter, kinks, width_variation, episcleral_curvature, episcleral_heading_spread, path_straightening | 0.3 µm / 6 µm; 0.7 per mm, 2 µm, 8 µm; CV 0.16 / 25 µm; 0.0004 rad/µm; 0.6 rad; 0.5 | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
+| fine_jitter, bend_wiggle, kinks, width_variation, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 5 µm / 70 µm; off; CV 0.28 / 150 µm; 15–60 %; 0.0008 rad/µm; 0.8 rad; 0.4; 220 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
 | anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
 | episcleral_vessels_per_mm | 3.0 | fitted to the measured diameters, §5 |
 | episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
@@ -650,7 +663,7 @@ this document.
 | communicating_per_mm2, communicating_angle_deg | 1.2, 20–60° | fitted / assumed, §2.4 and §9 |
 | perforator_per_mm2, perforator_angle_deg | 0.25, 30–70° | assumed, §2.4 and §9 |
 | wiggle | per kind | fitted to the measured tortuosity, §5 |
-| growth_step, growth_influence, growth_kill, attractors_per_mm2, growth_persistence, venous_kill_ratio | 18 µm, 400 µm, 180 µm, 120 /mm², 0.75, 1.0 | fitted to capillary velocity and arteriolar flow, §5 and §6.5 |
+| growth_step, growth_influence, growth_kill, attractors_per_mm2, growth_persistence, venous_kill_ratio | 18 µm, 400 µm, 210 µm, 120 /mm², 0.8, 1.0 | fitted to capillary velocity and arteriolar flow, §5 and §6.5 |
 | systemic_haematocrit, inflow_discharge_haematocrit | 0.45, 0.40 | [SecombPries2013, Pries1990], §6.3 |
 | plasma_viscosity_mpas | 1.25 | [Pries1992], §6.1 |
 | rbc_volume_um3, rbc_diameter_um, rbc_thickness_um | 90, 7.8, 2.2 | [Bosschaart2014, Fedosov2010], §6.4 |
@@ -665,7 +678,7 @@ this document.
 | clump_length_um, clump_amplitude | 25 µm, 0.25 | [Fedosov2010, Kim2007]; fitted to the measured flicker, §6.4 |
 | spectrum | nine bands | absorption [Bosschaart2014]; weights fitted to measured contrast, §7.1 |
 | double_pass | 2 | §7.1 |
-| scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 18 µm | fitted to contrast and edge steepness, §7.2 |
+| scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 16 µm | fitted to contrast and edge steepness, §7.2 |
 | psf_sigma_px | 0.9 | measured bound ≤ 1.2 px, §7.2 |
 | defocus_um_per_um, focus_depth_um, focus_wander_um | 0.035, 160 µm, 25 µm | assumed, §7.2 and §7.6 |
 | illumination_p5_p95, background_dn | fitted to measured 0.73, 2650 DN | measured, §7.3 and §7.5 |
