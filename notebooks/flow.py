@@ -1462,7 +1462,8 @@ def _(mo):
     | File | Content |
     |---|---|
     | `recorded_vs_mean_subtracted.webm` | the side-by-side video of §1 |
-    | `perfusion_map.png`, `centrelines.png` | §2, §3 |
+    | `frame_comparison.png`, `separation_by_frames.png` | §1 |
+    | `temporal_spectrum.png`, `perfusion_map.png`, `centrelines.png` | §2, §2, §3 |
     | `kymographs.png`, `velocity_agreement.png`, `velocity_map.png`, `speed_limits.png` | §6 |
     | `velocities.csv` | the table of §6 |
     | `flow_maps.npz` | `perfusion_z`, `perfused`, `analysed`, the centrelines (`segment_points`, rows of `(segment, row, column)`), `fps`, `fixation`, `burst`, `pattern_length` (px, the median over the consistent segments of §6; `NaN` when there is none) |
