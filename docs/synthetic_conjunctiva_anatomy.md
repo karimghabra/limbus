@@ -16,7 +16,7 @@ Every number carries one of four tags:
 | fitted | a generator setting with no direct anatomical counterpart, tuned so that a cited or measured quantity comes out right; the quantity it is fitted to is named |
 | assumed | a modelling choice with no source; each one is listed in section 9 |
 
-Contents: 1 imaging geometry · 2 layers in depth · 3 calibres · 4 branching · 5 density and tortuosity ·
+Contents: 1 imaging geometry and the globe · 2 layers in depth · 3 calibres · 4 branching · 5 density and tortuosity ·
 6 haemodynamics · 7 optics and the camera · 8 targets measured on the real bursts · 9 assumptions and gaps ·
 10 parameter table · references.
 
@@ -50,6 +50,18 @@ of the eye; if the optics were refocused or re-zoomed in between, s differs. Two
 Hu2018]; and the finest vessels the camera resolves, about 3 px FWHM (section 8), are 10 µm, the size of
 post-capillary venules and precapillary arterioles [Koutsiaris2010, Moka2020]. A calibration target imaged with
 each recording session would remove the doubt.
+
+### 1.4 The globe
+
+The conjunctiva covers a curved surface. The anterior scleral radius is 13.12 ± 0.80 mm by AS-OCT 2 mm beyond the
+limbus (13.33 ± 1.12 mm nasally, 12.32 ± 0.77 mm temporally; n = 24) [Choi2014], and 11.2 ± 0.3 mm by fitting a
+sphere to 3D profilometry (n = 23 emmetropes) [Jesus2017]; the globe is not quite spherical [Atchison2005,
+vanVught2021]. The renderer takes a sphere of `eye_radius_um` = 12.5 mm. The generator's surface coordinates (x, y)
+are arc lengths from the centre of the camera's field and z is depth along the radius; the camera looks along the
+surface normal at the field's centre, optionally tilted (`camera_tilt_deg`). A point at arc distance r and depth z
+lies at polar angle θ = r / R and is seen at (R − z) sin θ from the axis, at a depth (R − z)(1 − cos θ) + z cos θ
+below the tangent plane (`camera.Renderer._globe`). Over a 2.5 × 1.7 mm field the surface falls 90 µm below the
+tangent plane at the corners, which the defocus model carries (§7.2); the lateral compression is under 1 %.
 
 ## 2. Layers in depth (3D)
 
@@ -175,8 +187,14 @@ cited minimum.
 
 The generator uses γ = 2.6 for arterioles and 2.7 for venules (`murray_exponent_arterial`, `_venous`), inside the
 cited 2.59–3.14 and 1.95–3.14. Trees are grown by space colonisation [Runions2007]: a tip grows on towards the
-attractors nearest to it, and a node may sprout one side branch at 20–100° to its continuation. The branching
-angles are not imposed; they emerge from the growth and are measured on the images (section 8).
+attractors nearest to it, and a node may sprout one side branch, whose first step leaves at 20–70° to the parent's
+continuation (an acute junction, the child carrying on roughly in the parent's direction; the larger daughter makes
+the smaller angle with the parent [Zamir1978]) and which then bends towards its attractors as it grows. Each path
+between branch points is then straightened towards its chord, keeping half of its deviation
+(`path_straightening` = 0.5, fitted by eye and to the measured straightness): growth bends a branch round in an arc,
+whereas the recorded vessels run in nearly straight lines with gentle bends between their branch points, parallel
+radial trunks with Y-shaped forks [Akagi2018, Kemenes2025, Li2011]. The branching angles that result are measured on
+the images (section 8).
 
 ### 4.1 Arterioles and venules side by side
 
@@ -192,11 +210,14 @@ skeleton length (away from junctions) has a parallel vessel 13–115 µm away, w
 In the generator every arteriole whose calibre reaches 12 µm (`pair_min_diameter`) gets a companion venule
 (`pair_fraction` = 1, fitted to the measured paired share): an offset copy of the arteriole's course on one side,
 at an edge-to-edge gap drawn from 3–15 µm [NelloreHarris2002] that varies slowly along it, 5–15 µm deeper, and
-1.3–1.8 times the arteriole's local calibre [Yusufu2025] (but no wider than 70 µm, inside the largest conjunctival
-venules of 75 µm [Khansari2017]), so it is widest at the arteriole's proximal end, where it
+1.3–1.5 times the arteriole's local calibre, the lower part of the cited 1.3–1.8 [Yusufu2025], and no wider than
+40 µm (wider companions, which drain only their arteriole's own territory, carried so little flow that their
+cells stagnated into visible clumps), so it is widest at the arteriole's proximal end, where it
 leaves. It stops short of the arteriole's terminal end, drains the capillary mesh through a capillary every
 150–250 µm, and leaves at the domain border, or into the nearest venule, at the arteriole's proximal end; its
-blood therefore runs back beside the arteriole that brought it. The ground truth records which arteriole each
+blood therefore runs back beside the arteriole that brought it. A companion keeps only its longest stretch whose
+lumen stays clear of every other arteriole and of the companions drawn before it, so two vessels never share lumen
+space where an arteriole branches. The ground truth records which arteriole each
 companion accompanies (`paired_with_vessel`). In addition, a fifth of the venular growth attractors lie 25–70 µm beside
 the arterioles (assumed), so the rest of the venular tree also tends to follow the arterioles.
 
@@ -223,7 +244,7 @@ the arterioles (assumed), so the rest of the venular tree also tends to follow t
 In the generator:
 
 - The capillary mesh is the Voronoi tessellation of a jittered hexagonal lattice (vertices of degree three, like
-  capillary junctions), `capillary_mesh_spacing` = 215 µm between cell centres with 18 % of the ridges absent,
+  capillary junctions), `capillary_mesh_spacing` = 285 µm between cell centres with 18 % of the ridges absent,
   fitted so that the capillary length density lands near the 8 mm/mm² derived from [Kvernebo2022] (the anatomy
   check accepts 4.4–12 mm/mm², the cited mean ± 2 SD).
 - The trees' density is set by the colonisation's kill distance (`growth_kill` = 180 µm) and attractor density
@@ -234,14 +255,16 @@ In the generator:
   ratio of section 3; their absolute number (fitted) sets how large each tree grows, and so the calibre of its
   largest vessels, which the anatomy check holds within the cited ranges.
 - Episcleral vessels: `episcleral_vessels_per_mm` = 3.0 vessels per mm along the limbus (fitted to the measured
-  diameter distribution, section 8; the literature gives no count), running radially with a heading spread of
-  0.9 rad and a meander of 0.0008 rad/µm (`episcleral_curvature`, correlation 250 µm; fitted to the measured
-  curvature).
+  diameter distribution, section 8; the literature gives no count), running radially (parallel radial trunks [Akagi2018, Kemenes2025]) with a heading spread of 0.6 rad
+  (`episcleral_heading_spread`) and a slow bend of 0.0004 rad/µm (`episcleral_curvature`, correlation 800 µm): long,
+  nearly straight runs.
 - Tortuosity is multi-scale: the colonisation paths and a smooth lateral wiggle give each vessel its meander
-  (`Anatomy.wiggle`, amplitude and correlation length per vessel kind); on top of it every segment gets a fine
-  lateral jitter (`fine_jitter`, 0.8 µm over 6 µm) and sparse kinks (`kinks`, 3 per mm, ±3 µm over 6 µm), tapered to
-  nothing at the junctions. All are fitted so that the tortuosity and curvature distributions and the centreline
-  jitter measured on the real bursts are reproduced through the same estimator (section 8).
+  (`Anatomy.wiggle`, amplitude and correlation length per vessel kind); on top of it every segment gets a slight
+  lateral jitter (`fine_jitter`, 0.3 µm over 6 µm) and rare kinks (`kinks`, 0.7 per mm, ±2 µm over 8 µm), tapered
+  to nothing at the junctions; capillaries get no kinks and half the jitter, so the mesh stays a polygon of nearly
+  straight segments between its nodes. The settings are fitted so that the straightness, tortuosity and curvature
+  distributions, the curvature spectrum and the centreline jitter measured on the real bursts are reproduced
+  through the same estimator, and by eye against the real frames (section 8).
 - Each segment's calibre varies smoothly along it (`width_variation`: coefficient of variation 0.16, correlation
   25 µm), inside the cited 0.1–0.4 [Kiani1993] and close to the conjunctival 0.19 [Shahidi2010], fitted to the width
   variation measured on the real bursts. The red cells follow it: they sit within the local lumen and speed up as
@@ -387,7 +410,15 @@ The renderer models two consequences of scattering, each with one fitted length:
 
 The cells are splatted into nine depth slabs (`camera.SLAB_EDGES`), each blurred with its own σ, and the slabs'
 transmissions multiply: a deep vessel shows blurred and faint beneath a sharp superficial one, as in the
-recordings.
+recordings. Because the globe curves away from the camera (§1.4), the distance from the focal plane grows towards
+the field's edges: each slab is blurred at four levels of the surface's sagitta and the results blended pixel by
+pixel, so focus falls off across the field as well as with depth.
+
+At a junction the lumens merge: the last stretch of a narrower vessel lies inside the widest one. A vessel that is
+neither the widest at a junction of three or more nor that vessel's straightest continuation therefore does not
+draw its cells within the widest vessel's radius of the junction; otherwise the cell clouds of all the vessels
+meeting there would add up into a dark blob that no real junction shows. Companion venules likewise keep only the
+longest stretch whose lumen stays clear of other arterioles and companions (§4.1).
 
 ### 7.3 Scleral texture and illumination
 
@@ -468,6 +499,7 @@ this document.
 | parameter | default | basis |
 |---|---|---|
 | um_per_px | 3.26 | measured, §1.3 |
+| eye_radius_um, camera_tilt_deg | 12.5 mm, (0, 0) | [Choi2014, Jesus2017], §1.4 |
 | limbus_distance_mm | 3.0 | assumed: bulbar field behind the palisade zone, §2.3 |
 | epithelium | 45 µm | [Zhang2013, Zhang2011, FengSimpson2008], §2.1 |
 | conjunctival_plexus | 50–230 µm | [Zhang2013, Akagi2018], §2.2 |
@@ -483,13 +515,13 @@ this document.
 | perforating_artery_diameter | 20–50 µm | [Bizheva2011], §2.4 |
 | murray_exponent_arterial | 2.6 | retinal arteries 2.59 [Luo2017]; within [Murray1926a, MayrovitzRoy1983], §4 |
 | murray_exponent_venous | 2.7 | within 1.95–3.14 [Luo2017, Murray1926a], §4 |
-| capillary_mesh_spacing | 215 µm | fitted to capillary length density [Kvernebo2022], §5 |
+| capillary_mesh_spacing | 285 µm | fitted to capillary length density [Kvernebo2022], §5 |
 | capillary_edge_drop | 0.18 | assumed (open polygons), §5 |
 | radial_bias | 0.25 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
 | arterial_trees_per_mm2, venous_trees_per_mm2 | 0.5, 0.55 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
 | av_pair_offset, av_pair_fraction | 25–70 µm, 0.2 | assumed, §4.1 and §9 |
-| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio | 1.0, 12 µm, 3–15 µm, 1.3–1.8 | fitted; fitted; [NelloreHarris2002]; [Yusufu2025], §4.1 |
-| fine_jitter, kinks, width_variation, episcleral_curvature | 0.8 µm / 6 µm; 3 per mm, 3 µm, 6 µm; CV 0.16 / 25 µm; 0.0008 rad/µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
+| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 12 µm, 3–15 µm, 1.3–1.5, 40 µm | fitted; fitted; [NelloreHarris2002]; within [Yusufu2025]; fitted, §4.1 |
+| fine_jitter, kinks, width_variation, episcleral_curvature, episcleral_heading_spread, path_straightening | 0.3 µm / 6 µm; 0.7 per mm, 2 µm, 8 µm; CV 0.16 / 25 µm; 0.0004 rad/µm; 0.6 rad; 0.5 | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
 | anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
 | episcleral_vessels_per_mm | 3.0 | fitted to the measured diameters, §5 |
 | episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
@@ -535,11 +567,13 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Akagi2018] Akagi T, Uji A, Huang AS, et al. Conjunctival and intrascleral vasculatures assessed using anterior segment optical coherence tomography angiography in normal eyes. Am J Ophthalmol 2018;196:1-9. doi:10.1016/j.ajo.2018.08.009.
 - [Arora2017] Arora N, McLaren JW, Hodge DO, Sit AJ. Effect of Body Position on Epsicleral Venous Pressure in Healthy Subjects. Invest Ophthalmol Vis Sci 2017;58:5151-5156. doi:10.1167/iovs.17-22154.
 - [Asanad2021] Asanad S, Park A, Pottenburgh J, et al. Erythrocyte-mediated angiography: quantifying absolute episcleral blood flow in humans. Ophthalmology 2021;128:799-801. doi:10.1016/j.ophtha.2020.09.010.
+- [Atchison2005] Atchison DA, Pritchard N, Schmid KL, et al. Shape of the retinal surface in emmetropia and myopia. Invest Ophthalmol Vis Sci 2005;46:2698-2707. doi:10.1167/iovs.04-1506.
 - [Bizheva2011] Bizheva K, Hutchings N, Sorbara L, Moayed AA, Simpson T. In vivo volumetric imaging of the human corneo-scleral limbus with spectral domain OCT. Biomed Opt Express 2011;2:1794-1802. doi:10.1364/BOE.2.001794.
 - [Bosschaart2014] Bosschaart N, Edelman GJ, Aalders MC, van Leeuwen TG, Faber DJ. A literature review and novel theoretical approach on the optical properties of whole blood. Lasers Med Sci 2014;29:453-79. doi:10.1007/s10103-013-1446-7.
 - [Cherici2012] Cherici C, Kuang X, Poletti M, Rucci M. Precision of sustained fixation in trained and untrained observers. J Vis 2012;12(6):31. doi:10.1167/12.6.31.
 - [Cheung2001] Cheung AT, Ramanujam S, Greer DA, Kumagai LF, Aoki TT. Microvascular abnormalities in the bulbar conjunctiva of patients with type 2 diabetes mellitus. Endocr Pract 2001;7:358-63. doi:10.4158/EP.7.5.358.
 - [CheungCY2011] Cheung CY, Zheng Y, Hsu W, et al. Retinal vascular tortuosity, blood pressure, and cardiovascular risk factors. Ophthalmology 2011;118:812-818. doi:10.1016/j.ophtha.2010.08.045.
+- [Choi2014] Choi HJ, Lee SM, Lee JY, et al. Measurement of anterior scleral curvature using anterior segment OCT. Optom Vis Sci 2014;91:793-802. doi:10.1097/OPX.0000000000000298.
 - [Ding2025] Ding Y, Metha A, Bedggood P. Red Blood Cell Distribution and Volume Changes at Capillary Junctions in the Living Human Retina. Invest Ophthalmol Vis Sci 2025;66(14):65. doi:10.1167/iovs.66.14.65.
 - [Fedosov2010] Fedosov DA, Caswell B, Popel AS, Karniadakis GE. Blood flow and cell-free layer in microvessels. Microcirculation 2010;17:615-28. doi:10.1111/j.1549-8719.2010.00056.x.
 - [Felder2016] Felder AE, Mercurio C, Wanek J, Ansari R, Shahidi M. Automated Real-Time Conjunctival Microvasculature Image Stabilization. IEEE Trans Med Imaging 2016;35:1670-5. doi:10.1109/TMI.2016.2522918.
@@ -554,6 +588,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Howlett2014] Howlett J, Vahdani K, Rossiter J. Bulbar conjunctival and Tenon's layer thickness measurement using optical coherence tomography. J Curr Glaucoma Pract 2014;8:63-66. doi:10.5005/jp-journals-10008-1163.
 - [Hu2018] Hu L, Shi C, Jiang H, et al. Factors affecting microvascular responses in the bulbar conjunctiva in habitual contact lens wearers. Invest Ophthalmol Vis Sci 2018;59:4108-4114. doi:10.1167/iovs.18-24216.
 - [Jacques2013] Jacques SL. Optical properties of biological tissues: a review. Phys Med Biol 2013;58:R37-R61. doi:10.1088/0031-9155/58/11/R37.
+- [Jesus2017] Jesus DA, Kedzia R, Iskander DR. Precise measurement of scleral radius using anterior eye profilometry. Cont Lens Anterior Eye 2017;40:47-52. doi:10.1016/j.clae.2016.11.003.
 - [Jiang2014] Jiang H, Zhong J, DeBuc DC, Tao A, Xu Z, Lam BL, et al. Functional slit lamp biomicroscopy for imaging bulbar conjunctival microvasculature in contact lens wearers. Microvasc Res 2014;92:62-71. doi:10.1016/j.mvr.2014.01.005.
 - [Johnson2009] Johnson MS, Christiansen SP, Rath PP, et al. Anterior ciliary circulation from the horizontal rectus muscles. Strabismus 2009;17:45-48. doi:10.1080/09273970802678180.
 - [KassabFung1995] Kassab GS, Fung YC. The pattern of coronary arteriolar bifurcations and the uniform shear hypothesis. Ann Biomed Eng 1995;23:13-20. doi:10.1007/BF02368296.
@@ -601,6 +636,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Sit2011] Sit AJ, Ekdawi NS, Malihi M, McLaren JW. A novel method for computerized measurement of episcleral venous pressure in humans. Exp Eye Res 2011;92:537-44. doi:10.1016/j.exer.2011.03.018.
 - [Tangelder1986] Tangelder GJ, Slaaf DW, Muijtjens AM, Arts T, oude Egbrink MG, et al. Velocity profiles of blood platelets and red blood cells flowing in arterioles of the rabbit mesentery. Circ Res 1986;59:505-14. doi:10.1161/01.res.59.5.505.
 - [VanBuskirk1989] Van Buskirk EM. The anatomy of the limbus. Eye (Lond) 1989;3(Pt 2):101-108. doi:10.1038/eye.1989.16.
+- [vanVught2021] van Vught L, Shamonin DP, Luyten GPM, Stoel BC, Beenakker JM. MRI-based 3D retinal shape determination. BMJ Open Ophthalmol 2021;6:e000855. doi:10.1136/bmjophth-2021-000855.
 - [Vogel1991] Vogel A, Dlugos C, Nuffer R, Birngruber R. Optical properties of human sclera, and their consequences for transscleral laser applications. Lasers Surg Med 1991;11:331-40. doi:10.1002/lsm.1900110404.
 - [Vurgese2012] Vurgese S, Panda-Jonas S, Jonas JB. Scleral thickness in human eyes. PLoS One 2012;7:e29692. doi:10.1371/journal.pone.0029692.
 - [Wang2016] Wang L, Yuan J, Jiang H, et al. Vessel sampling and blood flow velocity distribution with vessel diameter for characterizing the human bulbar conjunctival microvasculature. Eye Contact Lens 2016;42:135-140. doi:10.1097/ICL.0000000000000146.

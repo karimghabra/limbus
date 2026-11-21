@@ -373,6 +373,7 @@ def morphology_stats(od, mask, valid, um_per_px):
     out.update(pairing_stats(segments, distance, um_per_px))
     out.update(irregularity_stats(segments, distance, od, um_per_px))
     out.update(darkness_stats(od, mask, valid, skeleton, distance, um_per_px))
+    out.update(shape_stats(segments, junctions, junction_segments, distance, um_per_px))
     # branch geometry at three-way junctions
     angles, exponents = [], []
     for centre, members in zip(junctions, junction_segments):
@@ -443,6 +444,95 @@ def segment_curvature(segments, um_per_px, smooth=2.0, min_length=30):
         arc = length[keep][1:][trim:-trim] if len(angle) > 2 * trim + 3 else length[keep][1:]
         out.append(float(turning.sum() / max(arc.sum(), 1e-9) / (um_per_px * 1e-3)))
     return np.array(out)
+
+
+CURVATURE_BANDS_UM = ((20.0, 60.0), (60.0, 180.0), (180.0, 600.0))   # wavelength bands of the curvature spectrum
+
+
+def shape_stats(segments, junctions, junction_segments, distance, um_per_px, min_length=40):
+    """Vessel shape: straightness, the curvature spectrum, orientation and parallelism, and branching angles.
+
+    - straightness: chord over arc length of every segment at least min_length px long (1 is straight);
+      percentiles 10, 25, 50, length-weighted share of segments with straightness >= 0.98;
+    - curvature spectrum: the power of each segment's signed curvature (rad/µm, from its path smoothed over 2 px)
+      in wavelength bands, summed over segments and given as the share of each band (the bands of
+      CURVATURE_BANDS_UM: short kinks, local wiggle, broad bends);
+    - orientation: the length-weighted distribution of the local direction of the skeleton (axial, 0-180°),
+      its order parameter S = |mean exp(2 i theta)| (1: all parallel, 0: isotropic), and the share of length
+      within 20° of the dominant orientation;
+    - branching: at three-way junctions, the angle between the two narrower branches (daughters) and the angle by
+      which the narrowest turns away from the widest one's continuation (0: it carries straight on)."""
+    out = {}
+    straight, weights = [], []
+    power = np.zeros(len(CURVATURE_BANDS_UM))
+    angles, lengths = [], []
+    for points in segments:
+        if len(points) < 4:
+            continue
+        p = points.astype(float)
+        smooth = np.stack([ndi.gaussian_filter1d(p[:, k], 2.0, mode="nearest") for k in (0, 1)], 1)
+        step = np.diff(smooth, axis=0)
+        seg_len = np.hypot(step[:, 0], step[:, 1])
+        direction = np.arctan2(step[:, 0], step[:, 1])
+        angles.append(np.mod(direction, np.pi))
+        lengths.append(seg_len)
+        if len(points) < min_length:
+            continue
+        arc = float(np.hypot(*np.diff(p, axis=0).T).sum())
+        chord = float(np.hypot(*(p[-1] - p[0])))
+        straight.append(chord / max(arc, 1e-9))
+        weights.append(arc)
+        theta = np.unwrap(direction)
+        curvature = np.diff(theta) / np.maximum(seg_len[1:], 1e-6) / um_per_px          # rad/µm
+        curvature = curvature[4:-4]
+        if len(curvature) >= 16:
+            spectrum = np.abs(np.fft.rfft(curvature - curvature.mean())) ** 2
+            wavelength = 1.0 / np.maximum(np.fft.rfftfreq(len(curvature), um_per_px), 1e-12)
+            for k, (lo, hi) in enumerate(CURVATURE_BANDS_UM):
+                power[k] += spectrum[(wavelength >= lo) & (wavelength < hi)].sum()
+    straight, weights = np.array(straight), np.array(weights)
+    for q in (10, 25, 50):
+        out[f"straightness p{q}"] = _pct(straight, q)
+    out["straight segment share (>= 0.98, length-weighted)"] = float(weights[straight >= 0.98].sum() / max(weights.sum(), 1e-9)) if len(straight) else float("nan")
+    total = power.sum()
+    for k, (lo, hi) in enumerate(CURVATURE_BANDS_UM):
+        out[f"curvature power share {lo:g}-{hi:g} um"] = float(power[k] / total) if total > 0 else float("nan")
+    if angles:
+        theta = np.concatenate(angles)
+        w = np.concatenate(lengths)
+        order = np.abs(np.sum(w * np.exp(2j * theta)) / max(w.sum(), 1e-9))
+        dominant = 0.5 * np.angle(np.sum(w * np.exp(2j * theta)))
+        off = np.abs(np.angle(np.exp(2j * (theta - dominant)))) / 2
+        out["orientation order S"] = float(order)
+        out["length within 20 deg of the dominant orientation"] = float(w[off <= np.radians(20)].sum() / w.sum())
+        histogram, _ = np.histogram(np.degrees(theta), bins=18, range=(0, 180), weights=w)
+        out["_orientation_histogram"] = histogram / max(histogram.sum(), 1e-9)
+    daughter, turn = [], []
+    for centre, members in zip(junctions, junction_segments):
+        if len(members) != 3:
+            continue
+        vectors, widths = [], []
+        for segment_index, which in members:
+            pts = segments[segment_index]
+            if len(pts) < 10:
+                break
+            run = pts[:12] if which == 0 else pts[::-1][:12]
+            vector = run[-1] - centre
+            if np.hypot(*vector) == 0:
+                break
+            vectors.append(vector / np.hypot(*vector))
+            widths.append(float(np.median(2 * distance[run[3:12, 0], run[3:12, 1]])))
+        if len(vectors) != 3:
+            continue
+        order_ = np.argsort(widths)[::-1]
+        a, b, c = (vectors[i] for i in order_)                 # widest, middle, narrowest
+        daughter.append(float(np.degrees(np.arccos(np.clip(b @ c, -1, 1)))))
+        continuation = -a                                       # the direction the widest vessel carries on in
+        turn.append(float(np.degrees(np.arccos(np.clip(continuation @ c, -1, 1)))))
+    for q in (25, 50, 75):
+        out[f"daughter angle p{q} (deg)"] = _pct(daughter, q)
+    out["branch turn from the parent's line, median (deg)"] = _pct(turn, 50)
+    return out
 
 
 def darkness_stats(od, mask, valid, skeleton, distance, um_per_px, sizes=(50.0, 130.0)):

@@ -25,7 +25,7 @@ DEFAULT_RANGES = {
     # anatomy, within the cited ranges
     "anatomy.murray_exponent_arterial": (2.59, 3.0),                  # [Luo2017, MayrovitzRoy1983]
     "anatomy.murray_exponent_venous": (2.5, 3.0),                     # within 1.95-3.14 [Luo2017, Murray1926a]
-    "anatomy.capillary_mesh_spacing": (210.0, 260.0),                 # capillary length density 4.4-12 mm/mm2 [Kvernebo2022]
+    "anatomy.capillary_mesh_spacing": (265.0, 310.0),                 # capillary length density 4.4-12 mm/mm2 [Kvernebo2022]
     "anatomy.episcleral_vessels_per_mm": (1.5, 4.0),
     "anatomy.episcleral_avas_per_mm2": (0.5, 1.0),                    # [Selbach2005]
     "anatomy.communicating_per_mm2": (0.6, 2.0),
