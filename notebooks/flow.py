@@ -1192,7 +1192,8 @@ def _(mo):
 
     - **out of reach** when the peak lies within 0.5 px/frame of the segment's reach: the flow may be faster than the segment can show;
     - **weak** when the peak correlation $C$ is below 0.1, or less than 0.05 above $C$ at the opposite velocity (no clear direction);
-    - **consistent** when it is neither, every block of time gives the same direction, and the standard error is at most 0.3 px/frame or 30%;
+    - **inconsistent** when it is neither, but the blocks of time do not all give the peak's direction, or the standard error is above both 0.3 px/frame and 30% (or cannot be given, because a block found no slope);
+    - **consistent** when it is none of these: every block of time gives the same direction, and the standard error is at most 0.3 px/frame or 30%;
     - **confirmed** when it is consistent and the cross-correlation of §5 agrees within 0.5 px/frame or 30%.
 
     The table has one row per measured segment. `v` is the slope search in px/frame (positive from the segment's first point to its last) with its standard error `v_se`, also in px/s and, when `UM_PER_PX` is set, in mm/s; `direction_deg` is the direction of the flow in the picture, counter-clockwise from the +x axis; `peak` is $C$ at the peak and `mirror` $C$ at the opposite velocity, so `peak` well above `mirror` means the direction is clear; `v_xcorr` is the cross-correlation's estimate of §5, and `across_xcorr` its displacement across the vessel.
@@ -1464,7 +1465,7 @@ def _(mo):
     | `perfusion_map.png`, `centrelines.png` | §2, §3 |
     | `kymographs.png`, `velocity_agreement.png`, `velocity_map.png`, `speed_limits.png` | §6 |
     | `velocities.csv` | the table of §6 |
-    | `flow_maps.npz` | `perfusion_z`, `perfused`, `analysed`, the centrelines (`segment_points`, rows of `(segment, row, column)`), `fps`, `fixation`, `burst` |
+    | `flow_maps.npz` | `perfusion_z`, `perfused`, `analysed`, the centrelines (`segment_points`, rows of `(segment, row, column)`), `fps`, `fixation`, `burst`, `pattern_length` (px, the median over the consistent segments of §6; `NaN` when there is none) |
     | `contrast.csv` | the contrast table of §1 |
     """)
     return
