@@ -47,8 +47,8 @@ PYTHON_NUPKG_SHA256 = "0eb85c2dfccccf1b17352de4c397f69194035b7d37149eacc16f1147d
 
 # what goes in app/: these paths, as committed (git ls-files), so local
 # experiments and data under them never reach the installer
-APP_PATHS = ["camera_recorder.py", "analysis", "vesselmap", "assets", "e2e",
-             "VERSION", "README.md"]
+APP_PATHS = ["camera_recorder.py", "foot_pedal.py", "analysis", "vesselmap",
+             "assets", "e2e", "VERSION", "README.md"]
 
 # The Visual C++ runtime, deployed app-locally beside python.exe (which
 # Microsoft allows for these redistributable files): torch, OpenCV and Qt
