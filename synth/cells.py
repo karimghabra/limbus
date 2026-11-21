@@ -41,13 +41,20 @@ class Geometry:
     normal: np.ndarray       # (M, 3)
     binormal: np.ndarray     # (M, 3)
     tangent: np.ndarray      # (M, 3)
+    width: np.ndarray        # (M,) local diameter over the segment's nominal diameter
 
 
 def geometry(network: Network) -> Geometry:
-    starts, counts, lengths, centres, normals, binormals, tangents = [], [], [], [], [], [], []
+    starts, counts, lengths, centres, normals, binormals, tangents, widths = [], [], [], [], [], [], [], []
     offset = 0
     for e in network.edges:
-        points = resample(e.points, SAMPLE_UM)
+        if e.width is not None:
+            points = resample(np.column_stack([e.points, e.width]), SAMPLE_UM)
+            width = points[:, 3]
+            points = points[:, :3]
+        else:
+            points = resample(e.points, SAMPLE_UM)
+            width = np.ones(len(points))
         tangent = np.gradient(points, axis=0)
         tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
         reference = np.where(np.abs(tangent[:, 2:3]) < 0.9, np.array([[0.0, 0.0, 1.0]]), np.array([[1.0, 0.0, 0.0]]))
@@ -61,9 +68,10 @@ def geometry(network: Network) -> Geometry:
         normals.append(normal)
         binormals.append(binormal)
         tangents.append(tangent)
+        widths.append(width)
         offset += len(points)
     return Geometry(np.array(starts), np.array(counts), np.array(lengths), np.vstack(centres), np.vstack(normals),
-                    np.vstack(binormals), np.vstack(tangents))
+                    np.vstack(binormals), np.vstack(tangents), np.concatenate(widths))
 
 
 def cell_free_layer(diameter, physiology: Physiology):
@@ -186,13 +194,18 @@ class Cells:
         scale = np.where(np.abs(q_mean) > 1e-12, q_now / np.where(np.abs(q_mean) > 1e-12, q_mean, 1.0), 0.0)
         return self.flow.rbc_velocity * 1e3 * scale, q_now
 
+    def _sample(self):
+        g = self.geo
+        return g.start[self.edge] + np.clip(np.round(self.s / SAMPLE_UM).astype(int), 0, g.count[self.edge] - 1)
+
     def cell_speed(self, v_edge):
-        """Speed of every cell along its segment (signed, µm/s) from its radial position and the profile."""
+        """Speed of every cell along its segment (signed, µm/s) from its radial position and the profile; where the
+        lumen narrows the blood speeds up as the square of the width, so that the flux is the same along it."""
         e = self.edge
         K = self.p.profile_bluntness
         rho = np.where(self.radius[e] > 0, self.rfrac * self.core[e] / self.radius[e], 0.0)
         shape = (1.0 - rho ** K) / self.profile_mean[e]
-        return v_edge[e] * shape
+        return v_edge[e] * shape / self.geo.width[self._sample()] ** 2
 
     def step(self, dt):
         """Advance every cell by dt seconds (velocities evaluated at the middle of the step)."""
@@ -317,8 +330,8 @@ class Cells:
         """World coordinates (µm) of every cell's centre, (n, 3)."""
         g = self.geo
         e = self.edge
-        index = g.start[e] + np.clip(np.round(self.s / SAMPLE_UM).astype(int), 0, g.count[e] - 1)
-        r = self.rfrac * self.core[e]
+        index = self._sample()
+        r = self.rfrac * self.core[e] * g.width[index]
         offset = (r * np.cos(self.theta))[:, None] * g.normal[index] + (r * np.sin(self.theta))[:, None] * g.binormal[index]
         return g.centre[index] + offset
 

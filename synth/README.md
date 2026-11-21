@@ -21,7 +21,7 @@ specification, with the source of every number, is
 | module | what it does |
 |---|---|
 | `anatomy.py` | every parameter (`Anatomy`, `Physiology`, `Optics`, `Scene`), each with its source |
-| `network.py` | the 3D network: conjunctival arteriolar and venular trees grown by space colonisation, the capillary mesh, anastomoses, the episcleral and deep plexuses, episcleral arteriovenous anastomoses, communicating and perforating vessels |
+| `network.py` | the 3D network: conjunctival arteriolar and venular trees grown by space colonisation, companion venules beside the arterioles, the capillary mesh, anastomoses, the episcleral and deep plexuses, episcleral arteriovenous anastomoses, communicating and perforating vessels; multi-scale tortuosity (meander, jitter, kinks) and calibre varying along every vessel |
 | `haemodynamics.py` | Poiseuille network flow with the in vivo viscosity law, Fåhræus tube haematocrit, phase separation at bifurcations, the cardiac pulse |
 | `cells.py` | discrete red cells: cell-free layer, blunted profile, clumped spacing, exact red-cell routing at junctions |
 | `camera.py` | eye motion, depth-dependent absorption, blur and contrast, scleral texture, illumination flicker, motion blur, the IMX249 sensor and gamma LUT |
@@ -30,7 +30,7 @@ specification, with the source of every number, is
 | `targets.py` | the target statistics of any burst, real or synthetic (motion, flicker, noise, blur, texture, morphology, contrast, red-cell flicker) |
 | `validate.py` | a flow analysis of a synthetic burst against its truth |
 | `randomize.py` | random scenes from a seed and a configuration: anatomy within cited ranges, appearance domain-randomised |
-| `media.py` | side-by-side animated previews |
+| `media.py` | side-by-side animated previews, on one shared optical-density scale |
 
 ## The ground truth
 

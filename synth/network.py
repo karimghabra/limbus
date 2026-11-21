@@ -49,6 +49,12 @@ class Edge:
     kind: str
     layer: str
     vessel: int = -1
+    width: np.ndarray | None = None   # (n,) the local diameter over the nominal one at each point (mean 1)
+    paired_with: int = -1             # for a companion venule: the vessel id of the arteriole it accompanies
+
+    @property
+    def local_diameter(self):
+        return self.diameter * (self.width if self.width is not None else np.ones(len(self.points)))
 
     @property
     def length(self):
@@ -193,7 +199,8 @@ class _Builder:
         e = self.edges[edge_index]
         at_index = int(np.clip(at_index, 1, len(e.points) - 2))
         node = self.node(e.points[at_index])
-        tail = Edge(node, e.v, e.points[at_index:].copy(), e.diameter, e.kind, e.layer, e.vessel)
+        tail = Edge(node, e.v, e.points[at_index:].copy(), e.diameter, e.kind, e.layer, e.vessel,
+                    paired_with=e.paired_with)
         e.points = e.points[:at_index + 1].copy()
         e.v = node
         self.edges.append(tail)
@@ -405,7 +412,7 @@ def _straight_layer(builder, rng, scene, domain, layer, count_per_mm, depth_rang
         # start on the posterior border (y1) or on a side, heading towards the limbus (decreasing y)
         start = np.array([rng.uniform(x0, x1), y1])
         heading = -math.pi / 2 + rng.normal(0, 0.6)
-        curve = _random_curve(rng, start, heading, 3 * (y1 - y0), curvature_sd, 600.0, step=12.0,
+        curve = _random_curve(rng, start, heading, 3 * (y1 - y0), curvature_sd, 250.0, step=12.0,
                               reversion=1 / 900.0, target=heading)
         curve, _ = _clip_to_domain(curve, domain)
         if len(curve) < 3:
@@ -546,7 +553,8 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating):
             for end in (path[0], path[-1]):
                 if end not in node_of:
                     z_of[end] = _conjunctival_depth(rng, d[end] if parent[end] >= 0 else d[path[1]], scene)
-        roots_index = [i for i in range(len(parent)) if parent[i] < 0]
+        # roots whose tree never grew (no attractor came within reach) are left out
+        roots_index = [i for i in range(len(parent)) if parent[i] < 0 and children[i]]
         for index in roots_index:
             source = data["sources"][index] if index < len(data["sources"]) else None
             if source is not None:
@@ -678,6 +686,152 @@ def _anastomoses(builder, rng, scene, domain, kind, count):
     return made
 
 
+def _bumps(rng, s, rate_per_um, amplitude, width):
+    """A sum of Gaussian bumps of random sign at Poisson positions along arclength s: local kinks."""
+    out = np.zeros_like(s)
+    if len(s) < 3 or rate_per_um <= 0:
+        return out
+    n = rng.poisson(rate_per_um * s[-1])
+    for centre in rng.uniform(0, s[-1], n):
+        out += rng.choice([-1.0, 1.0]) * amplitude * rng.uniform(0.5, 1.5) * np.exp(-0.5 * ((s - centre) / width) ** 2)
+    return out
+
+
+def _roughen(network_edges, rng, scene):
+    """Multi-scale irregularity on every segment, after the topology is final: a fine lateral jitter and sparse
+    kinks on top of each vessel's smooth meander, and a smooth random variation of the calibre along its length.
+    Both taper to nothing at the segment ends, so junctions stay where they are."""
+    a = scene.anatomy
+    jitter_amplitude, jitter_length = a.fine_jitter
+    kink_rate, kink_amplitude, kink_width = a.kinks
+    cv, width_length = a.width_variation
+    for e in network_edges:
+        if e.layer == "communicating" or e.kind == "arteriovenous anastomosis":
+            continue
+        pts = resample(e.points, 2.0)
+        n = len(pts)
+        if n < 6:
+            continue
+        seg = np.linalg.norm(np.diff(pts[:, :2], axis=0), axis=1)
+        s = np.r_[0.0, np.cumsum(seg)]
+        taper = np.clip(np.minimum(s, s[-1] - s) / 12.0, 0, 1)
+        tangent = np.gradient(pts[:, :2], axis=0)
+        tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
+        scale = min(1.0, e.diameter / 10.0) if e.kind == "capillary" else 1.0
+        offset = jitter_amplitude * _smooth_noise(rng, n, jitter_length / 2.0)
+        offset += _bumps(rng, s, kink_rate * 1e-3, kink_amplitude, kink_width)
+        pts[:, :2] += (scale * offset * taper)[:, None] * normal
+        e.points = pts
+        e.points[0], e.points[-1] = pts[0], pts[-1]
+        variation = 1.0 + cv * _smooth_noise(rng, n, width_length / 2.0)
+        variation = np.clip(variation, 0.55, 1.45)
+        e.width = variation / variation.mean()
+
+
+def _vessel_chains(builder, kind):
+    """The edges of every named vessel of a kind, in order from its first edge to its last."""
+    by_vessel = {}
+    for i, e in enumerate(builder.edges):
+        if e.kind == kind:
+            by_vessel.setdefault(e.vessel, []).append(i)
+    chains = {}
+    for vessel, members in by_vessel.items():
+        starts = {builder.edges[i].u: i for i in members}
+        ends = {builder.edges[i].v for i in members}
+        first = [i for i in members if builder.edges[i].u not in ends]
+        if len(first) != 1:
+            continue
+        chain = [first[0]]
+        while builder.edges[chain[-1]].v in starts and len(chain) < len(members):
+            chain.append(starts[builder.edges[chain[-1]].v])
+        chains[vessel] = chain
+    return chains
+
+
+def _paired_venules(builder, rng, scene, domain):
+    """Companion venules running beside the larger arterioles (docs §4): an offset copy of the arteriole's course,
+    on one side, at a slowly varying edge-to-edge gap, a little deeper, wider than the arteriole by the cited calibre
+    ratio, draining the capillary mesh along its length and leaving into the venular network or the domain border
+    at the arteriole's proximal end, so that it carries blood back alongside the arteriole that brought it."""
+    a = scene.anatomy
+    mesh_nodes = sorted({k for e in builder.edges if e.kind == "capillary" for k in (e.u, e.v)})
+    if not mesh_nodes:
+        return 0
+    mesh_tree = cKDTree(np.asarray([builder.nodes[k][:2] for k in mesh_nodes]))
+    venule_nodes = sorted({k for e in builder.edges if e.kind == "venule" for k in (e.u, e.v)})
+    venule_tree = cKDTree(np.asarray([builder.nodes[k][:2] for k in venule_nodes])) if venule_nodes else None
+    made = 0
+    for vessel, chain in _vessel_chains(builder, "arteriole").items():
+        edges = [builder.edges[i] for i in chain]
+        if max(e.diameter for e in edges) < a.pair_min_diameter or rng.random() > a.pair_fraction:
+            continue
+        points = np.vstack([e.points if k == 0 else e.points[1:] for k, e in enumerate(edges)])
+        d_art = np.concatenate([np.full(len(e.points) if k == 0 else len(e.points) - 1, e.diameter) for k, e in enumerate(edges)])
+        points = resample(np.column_stack([points, d_art]), 4.0)
+        d_art = points[:, 3]
+        points = points[:, :3]
+        seg = np.linalg.norm(np.diff(points[:, :2], axis=0), axis=1)
+        s = np.r_[0.0, np.cumsum(seg)]
+        if s[-1] < 250.0:
+            continue
+        smooth = np.stack([np.convolve(np.pad(points[:, k], 12, mode="edge"), np.ones(25) / 25, mode="valid") for k in (0, 1)], 1)
+        tangent = np.gradient(smooth, axis=0)
+        tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
+        side = rng.choice([-1.0, 1.0])
+        ratio = rng.uniform(*a.pair_calibre_ratio)
+        d_ven = np.minimum(ratio * d_art, a.pair_max_venule_diameter)
+        gap = np.clip(rng.uniform(*a.pair_gap_um) * (1 + 0.3 * _smooth_noise(rng, len(s), 30.0)), 2.0, None)
+        offset = d_art / 2 + gap + d_ven / 2
+        companion = points.copy()
+        companion[:, :2] += side * offset[:, None] * normal
+        companion[:, 2] += rng.uniform(5.0, 15.0)
+        keep = s <= s[-1] * rng.uniform(0.7, 0.95)           # it stops short of the arteriole's terminal end
+        keep &= np.array([_inside(p, domain) for p in companion])
+        first_out = np.flatnonzero(~keep)
+        stop = int(first_out[0]) if len(first_out) else len(companion)
+        companion, d_ven, s_c = companion[:stop], d_ven[:stop], s[:stop]
+        if len(companion) < 20:
+            continue
+        # nodes every 150-250 µm, each draining a capillary of the mesh
+        cuts = [0]
+        while True:
+            nxt = np.searchsorted(s_c, s_c[cuts[-1]] + rng.uniform(150.0, 250.0))
+            if nxt >= len(s_c) - 3:
+                break
+            cuts.append(int(nxt))
+        cuts.append(len(s_c) - 1)
+        nodes = [builder.node(companion[c]) for c in cuts]
+        vessel_id = builder.vessel("venule")
+        for k in range(len(cuts) - 1):
+            piece = companion[cuts[k]:cuts[k + 1] + 1]
+            diameter = float(np.median(d_ven[cuts[k]:cuts[k + 1] + 1]))
+            # the companion's flow runs from its distal end (high index) back to the arteriole's root (index 0)
+            index = builder.edge(nodes[k + 1], nodes[k], piece[::-1].copy(), diameter, "venule", "conjunctival", vessel_id)
+            builder.edges[index].paired_with = vessel
+        for node in nodes[1:]:
+            dist, near = mesh_tree.query(builder.nodes[node][:2])
+            if dist < 300.0:
+                target = mesh_nodes[int(near)]
+                pts = _segment(builder.nodes[target], builder.nodes[node], rng, *a.wiggle["capillary"])
+                builder.edge(target, node, pts, rng.uniform(*a.capillary_diameter), "capillary", "conjunctival",
+                             builder.vessel("capillary"))
+        # the outlet: the domain border if the arteriole entered from it, else the nearest venule
+        outlet = nodes[0]
+        x0, x1, y0, y1 = domain
+        p = builder.nodes[outlet]
+        if min(p[0] - x0, x1 - p[0], p[1] - y0, y1 - p[1]) < 80.0 or venule_tree is None:
+            builder.boundary[outlet] = "venous"
+        else:
+            dist, near = venule_tree.query(p[:2])
+            target = venule_nodes[int(near)]
+            pts = _segment(builder.nodes[outlet], builder.nodes[target], rng, *a.wiggle["venule"])
+            builder.edge(outlet, target, pts, float(d_ven[0]), "venule", "conjunctival", vessel_id)
+        made += 1
+    return made
+
+
 def generate(scene: Scene) -> Network:
     """Generate the 3D network of one scene."""
     rng = np.random.default_rng(scene.seed)
@@ -692,7 +846,7 @@ def generate(scene: Scene) -> Network:
 
     # 2. and 3. the episcleral and deep plexuses
     _straight_layer(builder, rng, scene, domain, "episcleral", a.episcleral_vessels_per_mm, a.episcleral_plexus,
-                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, 0.0003, 0.6)
+                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, a.episcleral_curvature, 0.9)
     _straight_layer(builder, rng, scene, domain, "deep", a.deep_vessels_per_mm, a.deep_plexus,
                     a.deep_vessel_diameter, a.deep_vessel_diameter, 0.0004, 0.2)
 
@@ -745,6 +899,7 @@ def generate(scene: Scene) -> Network:
     made = _conjunctival_trees(builder, rng, scene, domain, communicating)
     leaves = made["arteriole"]["leaves"] + made["venule"]["leaves"]
     _capillary_mesh(builder, rng, scene, domain, leaves)
+    _paired_venules(builder, rng, scene, domain)
     n_anastomoses = rng.poisson(a.anastomoses_per_mm2 * area_mm2)
     _anastomoses(builder, rng, scene, domain, "arteriole", n_anastomoses // 2)
     _anastomoses(builder, rng, scene, domain, "venule", n_anastomoses - n_anastomoses // 2)
@@ -793,6 +948,7 @@ def generate(scene: Scene) -> Network:
         diameter = rng.uniform(*a.perforating_artery_diameter) * (1.3 if venous else 1.0)
         builder.edge(node_top, node_bottom, path, diameter, kind, "perforating", builder.vessel(kind))
 
+    _roughen(builder.edges, np.random.default_rng([scene.seed, 2]), scene)
     network = Network(np.asarray(builder.nodes), builder.edges, dict(builder.boundary), domain, field_of_view,
                       dict(builder.vessel_kind))
     network = _clean(network)

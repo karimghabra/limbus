@@ -383,11 +383,13 @@ def _(OUTPUT_DIR, media, mo, real, result, scene):
     if real is not None:
         _h, _w = _synthetic.shape[1:]
         _real = real.frames[:, :_h, :_w]
-        _pair = media.side_by_side(_real, _synthetic)
+        _pair = media.side_by_side(_real, _synthetic, od_range=media.OD_RANGE)
     else:
-        _pair = media.to_gray(_synthetic)
+        _pair = media.od_to_gray(media.optical_density(_synthetic))
     _path = media.webp(_pair, OUTPUT_DIR / f"real_and_synthetic_seed{scene.seed}.webp", scene.optics.fps)
-    mo.output.append(mo.md(f"Raw frames as recorded, each half stretched on its own; saved to `{_path}`."))
+    mo.output.append(mo.md(f"Optical density of every frame, both halves on one grey scale "
+                           f"({media.OD_RANGE[0]} white to {media.OD_RANGE[1]} black), so equally dark vessels look "
+                           f"equally dark; saved to `{_path}`."))
     mo.output.append(mo.image(_path.read_bytes()))
     return
 
@@ -422,8 +424,8 @@ def _(mo, np, real, result, scene, targets):
 
 
 @app.cell
-def _(SERIES, plt, real_stats, show_figure, synthetic_stats):
-    _figure, (_a, _b, _c) = plt.subplots(1, 3, figsize=(15, 3.8))
+def _(SERIES, np, plt, real_stats, show_figure, synthetic_stats):
+    _figure, (_a, _b, _c, _d) = plt.subplots(1, 4, figsize=(19, 3.8))
     for _stats, _color, _label in ((real_stats, SERIES[1], "real"), (synthetic_stats, SERIES[0], "synthetic")):
         if _stats is None:
             continue
@@ -432,10 +434,13 @@ def _(SERIES, plt, real_stats, show_figure, synthetic_stats):
         _f, _amp = _stats["_flicker_spectrum"]
         _b.semilogy(_f[1:], _amp[1:] * 100, color=_color, label=_label)
         _c.hist(_stats["_diameters_um"], bins=60, range=(0, 150), histtype="step", density=True, color=_color, label=_label)
+        _vessel_od = np.nan_to_num(_stats["_od"])[_stats["_mask"] & _stats["_valid"]]
+        _d.hist(_vessel_od, bins=70, range=(-0.05, 0.6), histtype="step", density=True, color=_color, label=_label)
     _a.set(xlabel="frequency (Hz)", ylabel="excess power in vessels", title="red-cell flicker: vessel minus background")
     _b.set(xlabel="frequency (Hz)", ylabel="amplitude (% of the mean)", title="frame-mean brightness spectrum")
     _c.set(xlabel="diameter (µm)", ylabel="density (length-weighted)", title="vessel diameters on the skeleton")
-    for _axis in (_a, _b, _c):
+    _d.set(xlabel="optical density", ylabel="density", title="darkness of the vessel pixels")
+    for _axis in (_a, _b, _c, _d):
         _axis.legend(fontsize=8)
     show_figure(_figure, "spectra_and_diameters")
     return

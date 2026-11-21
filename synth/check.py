@@ -45,6 +45,8 @@ RANGES = {
     "capillary linear cell density (median, <= 6 µm)": (23.7, 93.7, "cells/mm", "48 ± 15, range 23.7-93.7 cells/mm in 4.3 ± 0.9 µm retinal capillaries [Neriyanuri2023]; 55.9 ± 19.3 [Ding2025]"),
     "precapillary arteriolar pulsatility index": (0.3, 1.3, "", "PI about 0.8, RI 53 % in 6-12 µm arterioles [Koutsiaris2010]"),
     "episcleral vein flow (median)": (0.0, 0.84, "µl/min", "0.40 ± 0.22 µl/min in 61 µm episcleral veins [Kim2024], mean ± 2 SD"),
+    "companion venule calibre over its arteriole's (median)": (1.27, 1.93, "", "artery:vein calibre 0.653 ± 0.068 [Yusufu2025], mean ± 2 SD"),
+    "calibre variation along segments >= 15 µm (CV, median)": (0.05, 0.4, "", "about 0.1 above 15 µm, up to 0.4 below [Kiani1993]; ~0.19 in conjunctiva [Shahidi2010]"),
     "communicating vessel angle to the surface": (15.0, 75.0, "deg", "oblique course, no measured angle [Asanad2021, Li2011]; docs §2.4"),
 }
 
@@ -163,6 +165,17 @@ def measure(scene, network: Network, flow, cells: Cells | None = None) -> dict:
     shunt = (kind == "arteriovenous anastomosis") | (layer == "communicating")
     m["red-cell velocity in arteriovenous anastomoses and communicating vessels (median)"] = (
         f"{np.median(v[shunt]):.2f} mm/s" if shunt.any() else "-")
+    ratios = []
+    arteriole_d = {}
+    for e in network.edges:
+        if e.kind == "arteriole":
+            arteriole_d.setdefault(e.vessel, []).append(e.diameter)
+    for e in network.edges:
+        if e.paired_with >= 0 and e.paired_with in arteriole_d:
+            ratios.append(e.diameter / np.median(arteriole_d[e.paired_with]))
+    m["companion venule calibre over its arteriole's (median)"] = float(np.median(ratios)) if ratios else float("nan")
+    cvs = [float(np.std(e.width)) for e in network.edges if e.width is not None and e.diameter >= 15.0]
+    m["calibre variation along segments >= 15 µm (CV, median)"] = float(np.median(cvs)) if cvs else float("nan")
     by_size = []
     for lo, hi in ((4, 9), (9, 14), (14, 19), (19, 24)):
         sel = ven & (d >= lo) & (d < hi)
