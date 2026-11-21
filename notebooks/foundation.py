@@ -77,12 +77,13 @@ def _(mo):
     | `SHOW_PREVIEWS` | `True` | `False` skips every animated preview; the check figures are still drawn |
     | `PREVIEW_FORMAT` | `"webp"` | `"webp"` (small), `"gif"` (plays everywhere, ~15× larger) or `"mp4"` (needs ffmpeg) |
     | `PREVIEW_WIDTH` | `480` | pixels across a preview |
+    | `PREVIEW_MAX_MB` | `2.5` | the largest file a preview may be; a larger one is rendered again, narrower, until it fits |
     | `PREVIEW_DIR` | `previews` | where the previews are cached, in the working directory |
     | `workers` | half the cores | threads for the per-frame work |
 
     Everything the notebook writes (`previews/`, `vessel_pictures/`, `preprocessed/`) goes to the working directory it was started in.
 
-    `create_animation` changes what you see, never the data. It stretches the stack's full range to 8 bits, shrinks the frames to `width` pixels across, and caches the file in `previews/` under a hash of the frames, so each stack is rendered only once. Previews are animated WebP, about 15× smaller than the same frames as a GIF, which keeps this notebook light. If your viewer won't play them, set `PREVIEW_FORMAT = "gif"`.
+    `create_animation` changes what you see, never the data. It stretches the stack's full range to 8 bits, shrinks the frames to `width` pixels across, and caches the file in `previews/` under a hash of the frames, so each stack is rendered only once. A preview is embedded in the notebook's output, and marimo refuses an output much over 10 MB, so a preview whose file is larger than `PREVIEW_MAX_MB` is rendered again at the width that should bring it under that size; noisy stacks, such as §13's side-by-side comparison, need this. Previews are animated WebP, about 15× smaller than the same frames as a GIF, which keeps this notebook light. If your viewer won't play them, set `PREVIEW_FORMAT = "gif"`.
     """)
     return
 
@@ -113,6 +114,7 @@ def _():
     SHOW_PREVIEWS = True            # False skips every animated preview; the check figures are still drawn
     PREVIEW_FORMAT = "webp"         # "webp" (small), "gif" (plays everywhere, ~15x larger) or "mp4" (needs ffmpeg)
     PREVIEW_WIDTH = 480             # pixels; previews are rendered this wide
+    PREVIEW_MAX_MB = 2.5            # a preview file larger than this is rendered again, narrower: it is embedded in the output
     PREVIEW_DIR = Path("previews")  # where the previews are cached, under a hash of their content
     workers = max(1, (os.cpu_count() or 2) // 2)  # threads for the per-frame work: half the cores
 
@@ -143,20 +145,22 @@ def _():
         if ext not in {".webp", ".gif", ".mp4"}:
             raise ValueError("PREVIEW_FORMAT must be 'webp', 'gif' or 'mp4'")
 
-        # at most `width` pixels wide, with even dimensions as H.264 requires
-        width = max(2, 2 * round(min(width, frames.shape[2]) / 2))
-        height = max(2, 2 * round(width * frames.shape[1] / frames.shape[2] / 2))
+        def render(width):
+            """Render the preview `width` pixels wide (once; it is cached) and return its path."""
+            # at most `width` pixels wide, with even dimensions as H.264 requires
+            width = max(2, 2 * round(min(width, frames.shape[2]) / 2))
+            height = max(2, 2 * round(width * frames.shape[1] / frames.shape[2] / 2))
 
-        # SHA-1 is only a cache key here; it hashes the stack several times faster than SHA-256
-        digest = hashlib.sha1(usedforsecurity=False)
-        digest.update(memoryview(np.ascontiguousarray(frames)))
-        digest.update(f"{frames.shape}:{frames.dtype}:{fps}:{ext}:{width}x{height}".encode("utf-8"))
-        PREVIEW_DIR.mkdir(exist_ok=True)
-        path = PREVIEW_DIR / f"{name}_{digest.hexdigest()[:16]}{ext}"
+            # SHA-1 is only a cache key here; it hashes the stack several times faster than SHA-256
+            digest = hashlib.sha1(usedforsecurity=False)
+            digest.update(memoryview(np.ascontiguousarray(frames)))
+            digest.update(f"{frames.shape}:{frames.dtype}:{fps}:{ext}:{width}x{height}".encode("utf-8"))
+            PREVIEW_DIR.mkdir(exist_ok=True)
+            path = PREVIEW_DIR / f"{name}_{digest.hexdigest()[:16]}{ext}"
 
-        if path.exists():
-            print(f"Found cached preview: {path}")
-        else:
+            if path.exists():
+                print(f"Found cached preview: {path}")
+                return path
             print(f"Rendering {len(frames)} frames at {fps:.2f} FPS...")
             # frames are scaled to 8 bits over the stack's full range and handed straight to the encoder
             low, high = float(frames.min()), float(frames.max())
@@ -177,12 +181,25 @@ def _():
                 options = {"quality": 80, "method": 4} if ext == ".webp" else {}
                 images[0].save(path, save_all=True, append_images=images[1:], duration=int(1000 / fps), loop=0, **options)
             print(f"Saved preview to {path} ({path.stat().st_size / 1e6:.1f} MB)")
+            return path
+
+        # the file is embedded in the output (as base64, a third larger), so it is kept under PREVIEW_MAX_MB: the
+        # size goes about with the number of pixels, so each retry narrows it by the square root of the excess
+        shown_width = max(2, 2 * round(min(width, frames.shape[2]) / 2))  # a narrowed preview is still shown this wide
+        path = render(width)
+        for _attempt in range(4):
+            size = path.stat().st_size
+            if size <= PREVIEW_MAX_MB * 1e6 or width <= 64:
+                break
+            width = max(64, int(width * (PREVIEW_MAX_MB * 1e6 / size) ** 0.5))
+            print(f"{size / 1e6:.1f} MB is more than PREVIEW_MAX_MB = {PREVIEW_MAX_MB} MB; rendering it again {width} px wide")
+            path = render(width)
 
         if ext == ".mp4":
             display(Video(str(path), embed=embed_html5, width=640))
         elif ext == ".webp":
             encoded = base64.b64encode(path.read_bytes()).decode("ascii")
-            display(HTML(f'<img src="data:image/webp;base64,{encoded}" width="{width}">'))
+            display(HTML(f'<img src="data:image/webp;base64,{encoded}" width="{shown_width}">'))
         else:
             display(IPImage(filename=str(path)))
 
