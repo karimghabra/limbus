@@ -425,7 +425,7 @@ def _clip_to_domain(points, domain):
 
 
 def _straight_layer(builder, rng, scene, domain, layer, count_per_mm, depth_range, artery_diameter, vein_diameter,
-                    curvature_sd, branch_rate_per_mm):
+                    curvature_sd, branch_rate_per_mm, mean_sd=None):
     """Long, mostly radial vessels crossing the domain (episcleral or deep plexus), with side branches."""
     x0, x1, y0, y1 = domain
     width_mm = (x1 - x0) * 1e-3
@@ -434,7 +434,10 @@ def _straight_layer(builder, rng, scene, domain, layer, count_per_mm, depth_rang
     for index in range(count):
         venous = index % 2 == 1 if count > 1 else rng.random() < 0.5
         kind = f"{layer} vein" if venous else f"{layer} artery"
-        diameter = rng.uniform(*(vein_diameter if venous else artery_diameter))
+        if venous and mean_sd is not None:                # about a measured mean, within the cited range
+            diameter = float(np.clip(rng.normal(*mean_sd), *vein_diameter))
+        else:
+            diameter = rng.uniform(*(vein_diameter if venous else artery_diameter))
         # start on the posterior border (y1) or on a side, heading towards the limbus (decreasing y)
         start = np.array([rng.uniform(x0, x1), y1])
         heading = -math.pi / 2 + rng.normal(0, scene.anatomy.episcleral_heading_spread)
@@ -817,11 +820,11 @@ def _roughen(network_edges, rng, scene):
         e.width = width_profile(rng, s, a, step=2.0)
 
 
-def width_profile(rng, s, anatomy, step):
+def width_profile(rng, s, anatomy, step, scale=1.0):
     """Relative calibre along a vessel sampled at arclengths s (µm, about every step µm): a smooth random variation
-    (anatomy.width_variation) on a linear taper (anatomy.taper), with mean 1."""
+    (anatomy.width_variation, its amplitude times scale) on a linear taper (anatomy.taper), with mean 1."""
     cv, width_length = anatomy.width_variation
-    variation = 1.0 + cv * _smooth_noise(rng, len(s), width_length / step)
+    variation = 1.0 + scale * cv * _smooth_noise(rng, len(s), width_length / step)
     variation *= 1.0 + rng.uniform(*anatomy.taper) * rng.choice([-1.0, 1.0]) * (0.5 - s / max(s[-1], 1e-9))
     variation = np.clip(variation, 0.55, 1.45)
     return variation / variation.mean()
@@ -968,7 +971,8 @@ def generate(scene: Scene) -> Network:
 
     # 2. and 3. the episcleral and deep plexuses
     _straight_layer(builder, rng, scene, domain, "episcleral", a.episcleral_vessels_per_mm, a.episcleral_plexus,
-                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, a.episcleral_curvature, 0.6)
+                    a.episcleral_artery_diameter, a.episcleral_vein_diameter, a.episcleral_curvature, 0.6,
+                    mean_sd=a.episcleral_vein_mean_sd)
     _straight_layer(builder, rng, scene, domain, "deep", a.deep_vessels_per_mm, a.deep_plexus,
                     a.deep_vessel_diameter, a.deep_vessel_diameter, a.episcleral_curvature, 0.2)
 

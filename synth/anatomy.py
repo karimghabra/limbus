@@ -33,6 +33,7 @@ class Anatomy:
     postcapillary_venule_diameter: tuple = (10.0, 16.0)  # post-capillary venules 9-14 and 14-24 µm classes [Moka2020, Koutsiaris2015]
     episcleral_artery_diameter: tuple = (40.0, 80.0)     # episcleral vessels 79 ± 9 µm [MacKenzie2016]
     episcleral_vein_diameter: tuple = (50.0, 100.0)      # episcleral veins 50-100 µm, 61 ± 5 µm [Asanad2021, Kim2024]
+    episcleral_vein_mean_sd: tuple = (61.0, 8.0)         # drawn about the measured mean [Kim2024], within the range above
     deep_vessel_diameter: tuple = (20.0, 50.0)           # deep scleral vessels 20-50 µm at ~500 µm [Bizheva2011]
     communicating_diameter: tuple = (10.0, 20.0)         # radial channels 10-20 µm wide [Bizheva2011]
     perforating_artery_diameter: tuple = (20.0, 50.0)    # as the deep vessels they join [Bizheva2011]
@@ -46,8 +47,8 @@ class Anatomy:
     capillary_mesh_spacing: float = 285.0            # µm between mesh cell centres (fitted to ~8 mm/mm2 of capillary, docs §5)
     capillary_edge_drop: float = 0.18                # share of mesh ridges absent (open polygons)
     radial_bias: float = 0.15                        # conjunctival vessels run radially from the limbus [Akagi2018]
-    arterial_trees_per_mm2: float = 0.5              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
-    venous_trees_per_mm2: float = 0.5 
+    arterial_trees_per_mm2: float = 0.4              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
+    venous_trees_per_mm2: float = 0.4 
     av_pair_offset: tuple = (25.0, 70.0)             # lateral distance of a paired venule from its arteriole (assumed)
     av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
@@ -77,9 +78,9 @@ class Anatomy:
     width_variation: tuple = (0.28, 150.0)           # CV 0.1-0.4 [Kiani1993], ~0.19 conjunctiva [Shahidi2010]
     # companion venules beside arterioles (docs §4)
     pair_fraction: float = 1.0                       # share of the larger arterioles that have one (fitted to the measured paired share, docs §4)
-    pair_min_diameter: float = 12.0                  # µm: only arterioles reaching this calibre are accompanied
+    pair_min_diameter: float = 25.0                  # µm: only arterioles reaching this calibre are accompanied
     pair_gap_um: tuple = (3.0, 15.0)                 # edge-to-edge gap: paired within 15 µm [NelloreHarris2002]
-    pair_max_venule_diameter: float = 40.0           # a companion drains its arteriole's territory only (fitted: wider ones stagnate)
+    pair_max_venule_diameter: float = 50.0           # a companion drains its arteriole's territory only (fitted: wider ones stagnate)
     pair_calibre_ratio: tuple = (1.3, 1.5)           # artery:vein calibre 0.653 ± 0.068 [Yusufu2025], ± 2 SD
     # growth (space colonisation [Runions2007]) step, reach and kill distance, µm, and attractor density
     growth_step: float = 18.0
@@ -88,7 +89,7 @@ class Anatomy:
     venous_kill_ratio: float = 1.0                   # venules are more numerous than arterioles [Khansari2017]
     attractors_per_mm2: float = 120.0
     growth_persistence: float = 0.8
-    branch_spacing_um: float = 220.0                 # least distance between branch points of a tree (fitted to segment lengths, docs §5)
+    branch_spacing_um: float = 160.0                 # least distance between branch points of a tree (fitted to segment lengths, docs §5)
     max_terminal_branch_um: float = 450.0            # unbranched terminal branches are cut to this (fitted by eye, docs §5)
     path_straightening: float = 0.4                  # share of a grown path's deviation from its chord kept (fitted by eye and to the measured straightness)
 
@@ -134,8 +135,8 @@ class Optics:
     eye_radius_um: float = 12500.0                   # anterior sclera 13.1 ± 0.8 mm [Choi2014], 11.2 ± 0.3 mm [Jesus2017]
     camera_tilt_deg: tuple = (0.0, 0.0)              # tilt of the camera axis from the normal, about the y and x axes
     psf_sigma_px: float = 0.9
-    defocus_um_per_um: float = 0.025                # blur sigma per µm of distance from the focal plane
-    focus_depth_um: float = 160.0
+    defocus_um_per_um: float = 0.045                # blur sigma per µm of distance from the focal plane
+    focus_depth_um: float = 250.0
     focus_wander_um: float = 25.0
     illumination_p5_p95: float = 0.64
     background_dn: float = 2650.0

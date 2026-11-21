@@ -567,7 +567,8 @@ def darkness_stats(od, mask, valid, skeleton, distance, um_per_px, sizes=(50.0, 
       whose skeleton covers it: the skeleton's local diameter is spread over the vessel's lumen);
     - the optical density of all vessel pixels: median, 90th and 99th percentiles (the darkness histogram);
     - the edge steepness of vessels wider than the first size: the median gradient of optical density across their
-      edges divided by the density at their centre, in 1/µm (about 1 / the width of the edge's ramp)."""
+      edges divided by the density at their centre, in 1/µm (about 1 / the width of the edge's ramp), and the same
+      for the fine vessels of 8-25 µm (how soft the fine net is)."""
     out = {}
     od0 = np.nan_to_num(od)
     diameter_um = np.where(skeleton, 2 * distance * um_per_px, 0).astype(np.float32)
@@ -580,6 +581,8 @@ def darkness_stats(od, mask, valid, skeleton, distance, um_per_px, sizes=(50.0, 
         out[f"vessel area share > {size:g} um"] = float((lumen_d[valid] > size).mean())
         length = (skeleton & valid & (diameter_um > size)).sum() * um_per_px * 1e-3
         out[f"length density > {size:g} um (mm/mm2)"] = float(length / (area_um2 * 1e-6))
+    medium = (skeleton & valid & (diameter_um >= 20.0) & (diameter_um <= sizes[0])).sum() * um_per_px * 1e-3
+    out[f"length density 20-{sizes[0]:g} um (mm/mm2)"] = float(medium / (area_um2 * 1e-6))
     values = od0[mask & valid]
     for q in (50, 90, 99):
         out[f"vessel optical density p{q}"] = _pct(values, q)
@@ -590,6 +593,9 @@ def darkness_stats(od, mask, valid, skeleton, distance, um_per_px, sizes=(50.0, 
     centre_od = smooth[rows, cols]
     ok = edge & (centre_od > 0.02)
     out[f"edge steepness > {sizes[0]:g} um (1/um)"] = _pct(gradient[ok] / centre_od[ok], 50)
+    # and of the fine vessels (apparent diameter 8-25 µm): how soft the fine net is
+    fine_edge = mask & ~ndi.binary_erosion(mask) & valid & (lumen_d >= 8.0) & (lumen_d <= 25.0) & (centre_od > 0.02)
+    out["edge steepness 8-25 um (1/um)"] = _pct(gradient[fine_edge] / centre_od[fine_edge], 50)
     out["_lumen_diameter_um"] = lumen_d
     return out
 
