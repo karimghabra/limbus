@@ -524,7 +524,7 @@ def build_coarse(eye: Eye):
         pts = _plane_vessel(g, rng, a.limbal_vein_mm * 1000.0, c, s_end, conj, epi, a.episcleral_heading_spread,
                             a.episcleral_curvature)
         pts[0] = b.nodes[lv[lv_k]]
-        d = rng.uniform(*a.episcleral_vein_diameter)
+        d = float(np.clip(rng.normal(*eye.scene.anatomy.episcleral_vein_mean_sd), *a.episcleral_vein_diameter))
         i, _, end = edge(pts, d, "episcleral vein", "episcleral", u=lv[lv_k])
         b.boundary[end] = "venous"
         pressure[end] = a.venous_outlet_pressure
@@ -599,7 +599,9 @@ def build_coarse(eye: Eye):
         if e.kind in ("conjunctival artery", "conjunctival vein", "episcleral vein", "episcleral artery",
                       "ciliary artery", "limbal vein") and len(e.points) >= 4:
             seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
-            e.width = width_profile(rng, np.r_[0.0, np.cumsum(seg)], A, step=max(float(np.median(seg)), 1.0))
+            # half the patch level's variation: trunks vary less in proportion than small vessels [Kiani1993]
+            e.width = width_profile(rng, np.r_[0.0, np.cumsum(seg)], A, step=max(float(np.median(seg)), 1.0),
+                                    scale=0.5)
     net = Network(np.asarray(b.nodes), b.edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = {k: v for k, v in pressure.items()}
     return net, trunks
