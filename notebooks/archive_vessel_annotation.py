@@ -53,7 +53,7 @@ def _():
 
 @app.cell
 async def _(foundation):
-    # runs sections 0-16 of foundation.py, with their figures and previews
+    # runs foundation.py: sections 0-16 with their figures and previews, and its §17, which saves the result
     preprocessing = await foundation.embed()
     preprocessing.output
     return (preprocessing,)

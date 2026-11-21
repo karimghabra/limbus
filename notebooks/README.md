@@ -89,7 +89,7 @@ Measured on the lab PC with 6 threads, burst `2026-09-16_15-50-52` (140 frames o
 
 - `foundation.py` on the whole frame runs in about 2½ minutes.
 - On a 720 × 1152 crop of the same burst (all 140 frames), `foundation.py` runs in 42 seconds at a peak
-  of 2.7 GB and saves a 42 MB result.
+  of 2.7 GB and saves a 17 MB result.
 - The archive's sections 17–25 need much more: on the crop the archive, preprocessing included, runs
   in 2¼ minutes at a peak of 4.6 GB; on the whole frame it needs roughly 8–11 GB.
 
