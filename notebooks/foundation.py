@@ -2752,33 +2752,24 @@ def _(mo):
     mo.md(r"""
     ## 17 · Save the result
 
-    Everything vessel annotation needs from this notebook goes into one file, `preprocessed/<burst folder>.npz` in the working directory, so that an annotation notebook can start from it without running this one. The per-fixation pictures are stacked along a first axis of length *fixations*; each lies in its own fixation's reference frame, and `to_anchor[n]` maps the anchor's frame onto fixation `n`'s.
+    What vessel annotation needs from this notebook goes into one file, `preprocessed/<burst folder>.npz` in the working directory, so that an annotation notebook can start from it without running this one. The per-fixation pictures are stacked along a first axis of length *fixations*; each lies in its own fixation's reference frame, and `to_anchor[n]` maps the anchor's frame onto fixation `n`'s.
 
     | Key | Shape · type | Content |
     |---|---|---|
     | `burst`, `fps`, `anchor` | scalars | the burst's folder, its frame rate, the anchor fixation's number |
-    | `gated_indices`, `frame_times` | `(kept,)` | each kept frame's number in the recording, and its time in seconds (§2) |
-    | `fixation_starts`, `fixation_lengths`, `references` | `(fixations,)` · `int` | where each fixation's frames start among the kept frames, how many there are, its reference frame (§4, §5) |
-    | `shifts` | `(kept, 2)` | `(dy, dx)` of every kept frame from its fixation's reference frame (§5) |
-    | `to_anchor`, `models` | `(fixations, 3, 3)`, `(fixations,)` | the map from the anchor's `(x, y)` to each fixation's, and which model it is (§6) |
-    | `sensor_map` | `(rows, columns)` | the response of every sensor pixel (§7) |
-    | `mean_frames` | `(fixations, rows, columns)` · `float32` | each fixation's mean frame in DN (§9) |
-    | `log_backgrounds` | same | the fitted background $B$, in log units (§12) |
-    | `densities` | same | **the still picture**: the optical density of the mean frame, $B - \ln(\text{mean})$, vessels bright on 0 (§12) |
-    | `mean_densities` | same | the mean over time of every frame's density (§12) |
+    | `to_anchor` | `(fixations, 3, 3)` | the map from the anchor's `(x, y)` to each fixation's (§6) |
+    | `densities` | `(fixations, rows, columns)` · `float32` | **the still picture**: the optical density of the mean frame, $B - \ln(\text{mean})$, vessels bright on 0 (§12) |
     | `usable_pixels`, `background_pixels` | same · `bool` | the pixels with data, and those the background was fitted on (§12) |
-    | `quiet_pixels`, `changing_pixels` | same · `bool` | what does not change over time, and what does (§11) |
-    | `smears`, `cleaned_smears` | same · `float32` | the fluctuation over time, and the same with its background removed (§14, §15) |
+    | `quiet_pixels` | same · `bool` | what does not change over time (§11) |
+    | `cleaned_smears` | same · `float32` | the fluctuation over time with its background removed (§14, §15) |
     | `combined_sums` | same · `float32` | the still picture and the cleaned smear together, in multiples of the background noise (§16) |
-    | `fluctuation_ratio` | `(rows, columns)` | the fluctuation over the noise floor, in the anchor's frame (§11) |
 
-    `NaN` marks no data. With `SAVE_DENSITY_FRAMES = True` the cell also saves every fixation's density frames, `final_density_fixations[n]`, as `preprocessed/<burst folder>_density_<n>.npy`: about 9 MB a frame at full size, so off by default. To read the result elsewhere:
+    `NaN` marks no data in `cleaned_smears` and `combined_sums`. `densities` has no `NaN`: a pixel without data is filled from the nearest usable one, so mask it with `usable_pixels`. To read the result elsewhere:
 
     ```python
     with np.load("preprocessed/burst_2026-09-16_15-50-52.npz") as saved:
         anchor = int(saved["anchor"])
-        still_picture = saved["densities"][anchor]
-    density_frames = np.load("preprocessed/burst_2026-09-16_15-50-52_density_0.npy", mmap_mode="r")
+        still_picture = np.where(saved["usable_pixels"][anchor], saved["densities"][anchor], np.nan)
     ```
     """)
     return
@@ -2789,26 +2780,16 @@ def _(
     Path,
     anchor,
     anchor_to_reference,
-    burst_smears,
-    changing_pixels,
     cleaned_smears,
     combined_sums,
     final_background_fits,
-    final_density_fixations,
-    final_density_means,
-    fixation_means,
     fixations,
-    fluctuation_ratio,
     fps,
-    frame_times,
-    gated_indices,
     np,
     quiet_pixels,
-    sensor_map,
     target_folder,
 ):
     SAVE_DIR = Path("preprocessed")  # in the working directory
-    SAVE_DENSITY_FRAMES = False      # True also saves every fixation's density frames, one .npy file per fixation
 
     def _stacked(pictures, dtype=np.float32):
         return np.stack([np.asarray(picture, dtype=dtype) for picture in pictures])
@@ -2817,41 +2798,22 @@ def _(
         "burst": str(target_folder),
         "fps": float(fps),
         "anchor": anchor,
-        "gated_indices": gated_indices,
-        "frame_times": frame_times,
-        "fixation_starts": np.array([_fixation["frames"][0] for _fixation in fixations]),
-        "fixation_lengths": np.array([len(_fixation["frames"]) for _fixation in fixations]),
-        "references": np.array([_fixation["reference"] for _fixation in fixations]),
-        "shifts": np.concatenate([_fixation["shifts"] for _fixation in fixations]),
         "to_anchor": np.stack([anchor_to_reference(_fixation) for _fixation in fixations]),
-        "models": np.array([_fixation["model"] for _fixation in fixations]),
-        "sensor_map": sensor_map,
-        "mean_frames": _stacked(fixation_means),
-        "log_backgrounds": _stacked(_fit["B"] for _fit in final_background_fits),
         "densities": _stacked(_fit["OD"] for _fit in final_background_fits),
-        "mean_densities": _stacked(final_density_means),
         "usable_pixels": _stacked((_fit["ok"] for _fit in final_background_fits), bool),
         "background_pixels": _stacked((_fit["bg"] for _fit in final_background_fits), bool),
         "quiet_pixels": _stacked(quiet_pixels, bool),
-        "changing_pixels": _stacked(changing_pixels, bool),
-        "smears": _stacked(burst_smears),
         "cleaned_smears": _stacked(cleaned_smears),
         "combined_sums": _stacked(combined_sums),
-        "fluctuation_ratio": fluctuation_ratio,
     }
 
     SAVE_DIR.mkdir(exist_ok=True)
-    saved_path = SAVE_DIR / f"{target_folder.name}.npz"
+    _saved_path = SAVE_DIR / f"{target_folder.name}.npz"
     _partial = SAVE_DIR / f"{target_folder.name}.partial.npz"  # renamed once complete, so a broken save is never read
     np.savez_compressed(_partial, **_result)
-    _partial.replace(saved_path)
-    print(f"Saved {len(_result)} arrays to {saved_path.resolve()} ({saved_path.stat().st_size / 1e6:.0f} MB)")
-    if SAVE_DENSITY_FRAMES:
-        for _number, _density in enumerate(final_density_fixations):
-            _path = SAVE_DIR / f"{target_folder.name}_density_{_number}.npy"
-            np.save(_path, _density)
-            print(f"Saved fixation {_number}'s density frames {_density.shape} to {_path.resolve()}")
-    return (saved_path,)
+    _partial.replace(_saved_path)
+    print(f"Saved {len(_result)} arrays to {_saved_path.resolve()} ({_saved_path.stat().st_size / 1e6:.0f} MB)")
+    return
 
 
 @app.cell(hide_code=True)

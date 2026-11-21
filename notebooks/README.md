@@ -17,25 +17,9 @@ Sections 0–17, one per step, each opening with what the step does, its setting
 | 0–9 | setup, loading, frame gating, motion, fixations, alignment, dust and glare, stabilization, mean frames | |
 | 10–13 | **the background**: fit and optical density, quiet pixels, the refit on the quiet pixels, the shading from frame to frame | the newer version, see below |
 | 14–16 | the smear of the temporal burst, its background, the two vessel pictures combined | |
-| 17 | **the result**, saved to `preprocessed/<burst folder>.npz` | see below |
+| 17 | **the result**, saved to `preprocessed/<burst folder>.npz` | 10 arrays |
 
-### The result, for the next notebook
-
-§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory:
-per fixation, the mean frame, the fitted background, the still picture (the optical density of the
-mean frame, vessels bright on 0), the mean density, the smear and the cleaned smear, the two combined,
-and the masks (usable, background, quiet and changing pixels); and the burst's frame numbers, times,
-fixations, shifts and the maps between the fixations. The notebook's §17 text lists every key. Setting
-`SAVE_DENSITY_FRAMES = True` there also saves each fixation's density frames as a `.npy` file, which
-`np.load(..., mmap_mode="r")` reads without loading it all.
-
-```python
-import numpy as np
-
-with np.load("preprocessed/burst_2026-09-16_15-50-52.npz") as saved:
-    anchor = int(saved["anchor"])
-    still_picture = saved["densities"][anchor]   # (rows, columns), NaN where there is no data
-```
+§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory: per fixation the still picture (`densities`, filled where there is no data, so mask it with `usable_pixels`), the cleaned smear, the two combined and the usable, background and quiet masks, with the maps between the fixations; the notebook's §17 text lists the keys.
 
 ### Where it comes from
 
@@ -80,8 +64,8 @@ that led into them: the orientation field, the hyperspline, tracing, the field a
 junctions, continuations, refinement, coarse to fine, flow, and the vessel graph. A different vessel
 annotation algorithm is planned, so they are kept for reference rather than developed.
 
-Its first cells run `foundation.py` inside it (`app.embed()`) and pass on the 20 names that sections
-17–25 read; nothing else was added. *Run all* in the archive therefore runs the preprocessing first. In
+Its first cells run `foundation.py` inside it (`app.embed()`) and pass on the 10 names that sections
+17–25 read from it; nothing else was added. *Run all* in the archive therefore runs the preprocessing first. In
 its marimo form, §23's own `blur_valid` (a blur over the pixels with data, unlike §11's) is called
 `fine_blur_valid`, and §24's haze after the joint levels is `joint_haze`.
 

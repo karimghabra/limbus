@@ -20,7 +20,7 @@ def _(mo):
 
     Sections 17–25 are those of the foundation notebook before it was split, unchanged, with their own section numbers: the orientation field (17), the hyperspline (18), tracing (19), the whole field as one system with its junctions (20), continuations (21), refinement (22), coarse to fine (23), flow (24) and the vessel graph (25). Before them come the notes that led into them, also unchanged. Where their texts say §0–§16, they mean the sections of `foundation.py`, whose numbers have not changed.
 
-    **Running it.** The first cells below run `foundation.py` inside this notebook (`app.embed()`) and pass on the 20 names that sections 17–25 read from it; nothing else is added. So *Run all* here runs the preprocessing first, on the burst it finds (or `LIMBUS_BURST`), and then sections 17–25. Running this notebook and the foundation at once on the live server takes the memory of two runs.
+    **Running it.** The first cells below run `foundation.py` inside this notebook (`app.embed()`) and pass on the 10 names that sections 17–25 read from it; nothing else is added. Every other name of the preprocessing, such as `cleaned_smears`, `combined_sums`, `fixations`, `anchor` or `temporal_frame`, is reached as `preprocessing.defs["cleaned_smears"]` and so on. So *Run all* here runs the preprocessing first, on the burst it finds (or `LIMBUS_BURST`), and then sections 17–25. Running this notebook and the foundation at once on the live server takes the memory of two runs.
     """)
     return
 
