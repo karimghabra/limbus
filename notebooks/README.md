@@ -65,10 +65,10 @@ and works on one fixation's stabilized density frames. It needs no vessel annota
 
 | § | |
 |---|---|
-| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median, and the temporal standard-deviation map. It raises the contrast of the moving signal against the static clutter, not the signal-to-noise ratio of a pixel; the real gains come from pooling pixels and frames |
+| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median, and the temporal standard-deviation map. It removes the static clutter the moving signal competes with and leaves the signal-to-noise ratio of a pixel where it was; signal-to-noise gains come from pooling pixels and frames |
 | 2 | The perfusion map: the temporal variance of the video high-passed in time (`DRIFT_WINDOW`), levelled for shot noise and thresholded into perfused regions |
 | 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments |
-| 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties and a structure-tensor estimate |
+| 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties |
 | 5 | A cross-check by ensemble 2D cross-correlation of the frames around each segment |
 | 6 | The velocity map, the per-segment table, and what the frame rate and exposure allow |
 | 7 | Videos, figures and tables saved to `flow_outputs/<burst folder>/` in the working directory |

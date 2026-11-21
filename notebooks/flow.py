@@ -31,7 +31,7 @@ def _(mo):
 
     Nothing here uses a vessel annotation: the vessels are found from what moves. Lengths are in pixels and times in frames unless `UM_PER_PX` is set (§0); a velocity in px/frame times the frame rate is px/s.
 
-    **Conventions.** The frames are those of one fixation (the anchor, unless `FIXATION` says otherwise), in its own reference frame, as `foundation.py` leaves them. `NaN` is no data. A velocity is positive when the blood runs from a centreline's first point to its last. *Moving pixels* and *static pixels* are the foundation's own judgement from §11 (`changing_pixels`, and `quiet_pixels` that are also background): they are used only as reference regions to measure contrast against, never to find or measure flow.
+    **Conventions.** The frames are those of one fixation (the anchor, unless `FIXATION` says otherwise), in its own reference frame, as `foundation.py` leaves them. `NaN` is no data. A velocity is positive when the blood runs from a centreline's first point to its last. *Moving pixels* and *static pixels* are the foundation's own judgement from §11 (`changing_pixels`, and `quiet_pixels` that are also background): they are the reference regions that contrast is measured against, and the static pixels also set the level and the noise scale of the perfusion map (§2), so its thresholds are in units of their spread. The moving pixels are never used to find or measure flow.
     """)
     return
 
@@ -74,7 +74,7 @@ def _():
     import matplotlib.pyplot as plt
     import numpy as np
     from PIL import Image
-    from scipy.ndimage import convolve, find_objects, gaussian_filter, gaussian_filter1d, label, median_filter, uniform_filter1d
+    from scipy.ndimage import convolve, find_objects, gaussian_filter1d, label, median_filter, uniform_filter1d
     from skimage.filters import apply_hysteresis_threshold
     from skimage.morphology import skeletonize
 
@@ -92,7 +92,6 @@ def _():
     MAX_HOLE = 300                # px
     MIN_SEGMENT = 30              # px
     MAX_VELOCITY = 20.0           # px/frame searched
-    VELOCITY_STEP = 0.1           # px/frame
     MAX_LAG = 8                   # frames
     MIN_OVERLAP = 12              # px
     BLOCKS = 4
@@ -123,7 +122,6 @@ def _():
         cv2,
         find_objects,
         foundation,
-        gaussian_filter,
         gaussian_filter1d,
         io,
         label,
@@ -312,7 +310,7 @@ def _(mo):
 
     The temporal mean of a pixel over $N$ frames is $S + \bar m + \bar n$, so subtracting it leaves $m_t - \bar m + n_t - \bar n$: the static part is gone exactly, the moving part loses only its own average (nothing, for flow that keeps moving), and the noise is the same noise, with its variance multiplied by $1 - 1/N$.
 
-    **So the subtraction cannot raise the signal-to-noise ratio of a pixel in a frame**: the fluctuation over time, signal and noise, is untouched by subtracting a constant per pixel. What it changes is what the moving part has to compete with on the screen. Before, the moving part sits on top of $S$, whose spatial structure (vessel edges, uneven light) is ten to a hundred times larger, and a display stretched to the frame's range gives the moving part a gray level or two. After, the display range is set by the noise and the moving part themselves, and the moving part fills it. That is a **contrast gain against clutter**, not a signal-to-noise gain.
+    **So the subtraction cannot raise the signal-to-noise ratio of a pixel in a frame**: the fluctuation over time, signal and noise, is untouched by subtracting a constant per pixel. What it changes is what the moving part has to compete with on the screen. Before, the moving part sits on top of $S$, whose spatial structure (vessel edges, uneven light) is typically far larger, and a display stretched to the frame's range leaves the moving part only a few gray levels (the table below gives both for this burst). After, the display range is set by the noise and the moving part themselves, and the moving part fills it. That is a **contrast gain against clutter**, not a signal-to-noise gain.
 
     The true signal-to-noise gains come from averaging: over neighbouring pixels (a blur the size of a red-cell aggregate), over many frames (the temporal variance map below, and §2), and from removing what is noise-like but not noise, such as the frame-to-frame flicker and slow drift. A rolling mean or median over `DRIFT_WINDOW` frames instead of the mean over the whole burst also follows slow drift (tear film, focus, residual motion), at the cost of the part of the flow that changes more slowly than the window.
 
@@ -439,12 +437,49 @@ def _(DRIFT_WINDOW, contrast_markdown, contrast_table, mo):
     _blurred = contrast_table["log − temporal mean, blurred 1.5 px"]
     _rolling_blurred = contrast_table[f"log − rolling mean ({DRIFT_WINDOW}), blurred 1.5 px"]
     _dn_before, _dn_after = contrast_table["stabilized frame (DN)"], contrast_table["DN − temporal mean"]
+    _median = contrast_table[f"log − rolling median ({DRIFT_WINDOW})"]
+    _median_blurred = contrast_table[f"log − rolling median ({DRIFT_WINDOW}), blurred 1.5 px"]
+
+    _level = "below" if _after["SNR"] < 1 else "not below"
+    if _dn_after["SNR"] < _after["SNR"]:
+        _dn_note = (f"its SNR ({_dn_after['SNR']:.2f}) is lower than in the log frames ({_after['SNR']:.2f}), which fits the "
+                    "flicker of the automatic exposure that the DN frames still carry: a fluctuation of the whole frame "
+                    "that the density removes, and removing it is a genuine noise reduction")
+    else:
+        _dn_note = (f"its SNR ({_dn_after['SNR']:.2f}) is not lower than in the log frames ({_after['SNR']:.2f}), so removing "
+                    "the flicker of the automatic exposure, as the density does, gains no measurable noise reduction here")
+    if _before["fine clutter"] > _before["moving signal"]:
+        _fine_note = (f"Even the fine clutter alone, the vessel edges at the scale of the moving pattern "
+                      f"({_before['fine clutter']:.3f}), is larger than the moving signal ({_before['moving signal']:.3f}).")
+    else:
+        _fine_note = (f"The fine clutter alone, the vessel edges at the scale of the moving pattern "
+                      f"({_before['fine clutter']:.3f}), is not larger than the moving signal "
+                      f"({_before['moving signal']:.3f}): it is the coarse clutter that hides the flow.")
+
+    _rolling_loses = _rolling["SNR"] < _after["SNR"]
+    _rolling_wins_pooled = _rolling_blurred["SNR"] > _blurred["SNR"]
+    if _rolling_loses:
+        _pixel_note = (f"At one pixel it lowers the SNR ({_rolling['SNR']:.2f} against {_after['SNR']:.2f}): the flow lost "
+                       "costs more than the drift removed gains, as happens when the pixel noise dominates the static "
+                       "tissue's fluctuation.")
+    else:
+        _pixel_note = (f"At one pixel it does not lower the SNR ({_rolling['SNR']:.2f} against {_after['SNR']:.2f}): the "
+                       "drift removed is worth at least the flow lost.")
+    if _rolling_wins_pooled:
+        _pooled_note = (f"Pooled over 1.5 px it raises the SNR ({_rolling_blurred['SNR']:.2f} against {_blurred['SNR']:.2f}): "
+                        "the pixel noise averages down, the drift, which is smooth in space, does not, and removing it wins.")
+    else:
+        _pooled_note = (f"Pooled over 1.5 px it does not raise the SNR either ({_rolling_blurred['SNR']:.2f} against "
+                        f"{_blurred['SNR']:.2f}): the drift it removes is worth no more than the flow it loses.")
+    _single_choice = "the plain temporal mean is as good" if _rolling_loses else "the rolling mean is at least as good"
+    _pooled_choice = ("the rolling background is better" if _rolling_wins_pooled
+                      else "the rolling background is no better on this burst")
     mo.md(rf"""
     {contrast_markdown}
 
-    **The verdict on this burst.** Subtracting the temporal mean leaves the signal-to-noise ratio of a pixel in a frame where it was ({_before["SNR"]:.2f} before, {_after["SNR"]:.2f} after: the moving signal is *below* the noise in one pixel of one frame). It raises the contrast of the moving signal against everything else on the screen from {_before["CNR"]:.2f} to {_after["CNR"]:.2f}, {_after["CNR"] / _before["CNR"]:.0f} times, because the clutter it competes with drops from {_before["clutter"]:.3f} to {_after["clutter"]:.1g} in log units; shown stretched to its range, the moving signal goes from {_before["gray levels"]:.0f} to {_after["gray levels"]:.0f} gray levels. In the recorded units (DN), the same: CNR {_dn_before["CNR"]:.2f} → {_dn_after["CNR"]:.2f}, {_dn_before["gray levels"]:.0f} → {_dn_after["gray levels"]:.0f} gray levels; its SNR ({_dn_after["SNR"]:.2f}) is lower than in density because the DN frames still carry the flicker of the automatic exposure, a fluctuation of the whole frame that the density removes, and that is a genuine noise reduction. **It is a contrast gain from removing static clutter, not a signal-to-noise gain.** Even the fine clutter alone, the vessel edges at the scale of the moving pattern ({_before["fine clutter"]:.3f}), is larger than the moving signal ({_before["moving signal"]:.3f}).
+    **The verdict on this burst.** Subtracting the temporal mean leaves the signal-to-noise ratio of a pixel in a frame where it was ({_before["SNR"]:.2f} before, {_after["SNR"]:.2f} after: the moving signal is *{_level}* the noise in one pixel of one frame). It takes the contrast of the moving signal against everything else on the screen from {_before["CNR"]:.2f} to {_after["CNR"]:.2f}, {_after["CNR"] / _before["CNR"]:.3g} times, because the clutter it competes with goes from {_before["clutter"]:.3f} to {_after["clutter"]:.1g} in log units; shown stretched to its range, the moving signal goes from {_before["gray levels"]:.0f} to {_after["gray levels"]:.0f} gray levels. In the recorded units (DN): CNR {_dn_before["CNR"]:.2f} → {_dn_after["CNR"]:.2f}, {_dn_before["gray levels"]:.0f} → {_dn_after["gray levels"]:.0f} gray levels; {_dn_note}. **Whatever is gained here is a contrast gain from removing static clutter, not a signal-to-noise gain.** {_fine_note}
 
-    What the eye then does is the real signal-to-noise gain: it pools neighbouring pixels and successive frames. A 1.5 px blur alone raises the SNR to {_blurred["SNR"]:.2f}; the variance over all the frames (below, and §2) raises the separation of flow from static tissue much further. The rolling mean over {DRIFT_WINDOW} frames takes out the slow drift, and with it the part of the flow that changes more slowly than the window. At one pixel the pixel noise dominates the static tissue's fluctuation, so losing flow costs more than losing drift gains (SNR {_rolling["SNR"]:.2f} against {_after["SNR"]:.2f}); pooled over 1.5 px the pixel noise averages down, the drift, which is smooth in space, does not, and removing it wins (SNR {_rolling_blurred["SNR"]:.2f} against {_blurred["SNR"]:.2f}). The rolling median behaves like the rolling mean. So for watching single frames the plain temporal mean is as good; for maps made from many frames and pooled in space (§2) the rolling background is better.
+    What the eye then does is where a signal-to-noise gain can come from: it pools neighbouring pixels and successive frames. A 1.5 px blur alone takes the SNR from {_after["SNR"]:.2f} to {_blurred["SNR"]:.2f}; the variance over all the frames (below, and §2) pools the frames as well. The rolling mean over {DRIFT_WINDOW} frames takes out the slow drift, and with it the part of the flow that changes more slowly than the window. {_pixel_note} {_pooled_note} The rolling median gives an SNR of {_median["SNR"]:.2f} at one pixel and {_median_blurred["SNR"]:.2f} pooled. So for watching single frames {_single_choice}; for maps made from many frames and pooled in space (§2) {_pooled_choice}.
     """)
     return
 
@@ -452,7 +487,7 @@ def _(DRIFT_WINDOW, contrast_markdown, contrast_table, mo):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **Motion-contrast maps.** One picture from all the frames: each pixel's temporal standard deviation, of the video (blurred by 1.5 px) minus its temporal mean and of the same video minus the rolling mean, multiplied by the square root of the mean brightness so that shot noise, which is larger where the image is darker, gives one level everywhere. Each is divided by its median on the static pixels and given as how many robust standard deviations of the static pixels a pixel stands above that level. The separation grows with the number of frames averaged, about as $\sqrt{N}$; this is the signal-to-noise gain that the eye gets from watching the video. Below, one frame of each version of the video next to the two maps, on a zoomed part of the field.
+    **Motion-contrast maps.** One picture from all the frames: each pixel's temporal standard deviation, of the video (blurred by 1.5 px) minus its temporal mean and of the same video minus the rolling mean, multiplied by the square root of the mean brightness so that shot noise, which is larger where the image is darker, gives one level everywhere. Each is divided by its median on the static pixels and given as how many robust standard deviations of the static pixels a pixel stands above that level. The second figure plots the separation against the number of frames averaged, next to $\sqrt{N}$, the growth that averaging independent frames gives; this is the kind of signal-to-noise gain that the eye gets from watching the video. Below, one frame of each version of the video next to the two maps, on a zoomed part of the field.
     """)
     return
 
@@ -495,10 +530,13 @@ def _(
         for _name, _dev in (("minus temporal mean", _mean_removed), (f"minus rolling mean ({DRIFT_WINDOW})", _rolling_removed))
     }
 
-    # a 256 x 256 px window around the most moving pixels, for the frame comparison
-    _left = int(np.clip(np.argmax(np.convolve(moving_reference.sum(axis=0), np.ones(256), "same")) - 128, 0, density.shape[2] - 256))
-    _top = int(np.clip(np.argmax(np.convolve(moving_reference.sum(axis=1), np.ones(256), "same")) - 128, 0, density.shape[1] - 256))
-    zoom = (slice(_top, _top + 256), slice(_left, _left + 256))
+    # a window of up to 256 x 256 px around the most moving pixels, for the frame comparison
+    _height, _width = min(256, density.shape[1]), min(256, density.shape[2])
+    _left = int(np.clip(np.argmax(np.convolve(moving_reference.sum(axis=0), np.ones(_width), "same")) - _width // 2,
+                        0, density.shape[2] - _width))
+    _top = int(np.clip(np.argmax(np.convolve(moving_reference.sum(axis=1), np.ones(_height), "same")) - _height // 2,
+                       0, density.shape[1] - _height))
+    zoom = (slice(_top, _top + _height), slice(_left, _left + _width))
     _t = frame_count // 2
     _window = log_frames[:, zoom[0], zoom[1]]
     _complete = fill_with_mean(_window)
@@ -544,7 +582,7 @@ def _(
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    **The video.** The fixation's frames side by side, at half size: left the log frame (the stabilized burst with the flicker removed), middle minus each pixel's temporal mean, right minus the rolling mean over `DRIFT_WINDOW` frames. Each panel is stretched from its own 0.5th to 99.5th percentile over the whole video, so every panel uses the full gray scale. It is saved at that size as WebM (VP8, which browsers play) to `flow_outputs/<burst>/`; the preview here is an animated WebP of at most 150 frames, narrowed until it is under 2.5 MB so that marimo can show it.
+    **The video.** The fixation's frames side by side, at half size: left the log frame (the stabilized burst with the flicker removed), middle minus each pixel's temporal mean, right minus the rolling mean over `DRIFT_WINDOW` frames. Each panel is stretched from its own 0.5th to 99.5th percentile over the whole video, so every panel uses the full gray scale; pixels without data in a frame are black. It is saved at that size as WebM (VP8, which browsers play) to `flow_outputs/<burst>/`; the preview here is an animated WebP of at most 150 frames, narrowed until it is under 2.5 MB so that marimo can show it.
     """)
     return
 
@@ -554,7 +592,6 @@ def _(
     Image,
     base64,
     cv2,
-    fill_with_mean,
     fps,
     io,
     log_frames,
@@ -603,10 +640,8 @@ def _(
         return (np.clip((np.nan_to_num(video, nan=low) - low) / (high - low), 0, 1) * 255).astype(np.uint8)
 
 
-    _half = np.stack([cv2.resize(np.nan_to_num(_frame, nan=np.nanmedian(_frame)), None, fx=0.5, fy=0.5,
-                                 interpolation=cv2.INTER_AREA) for _frame in log_frames])
-    _half = fill_with_mean(_half)
-    _panels = [to_gray(_half), to_gray(_half - _half.mean(axis=0)), to_gray(remove_rolling_mean(_half))]
+    _half = np.stack([cv2.resize(_frame, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_AREA) for _frame in log_frames])
+    _panels = [to_gray(_half), to_gray(_half - np.nanmean(_half, axis=0)), to_gray(remove_rolling_mean(_half))]
     _labels = ("recorded (log, flicker removed)", "minus temporal mean", "minus rolling mean")
     for _panel, _label in zip(_panels, _labels):
         for _frame in _panel:
@@ -625,10 +660,10 @@ def _(mo):
     mo.md(r"""
     ## 2 · Where flow is: the perfusion map
 
-    The perfusion map is the motion-contrast map of §1 made at full resolution, with the choices that §1 and the spectrum below argue for:
+    The perfusion map is the motion-contrast map of §1 made at full resolution, with these choices, which §1 and the spectrum below test on this burst:
 
     1. Every frame of the log video is blurred by `SPATIAL_BLUR` pixels (over the pixels with data), which pools a red-cell aggregate's pixels.
-    2. Each pixel's temporal mean is subtracted (`mean_removed`, the video of §1) and then its rolling mean over `DRIFT_WINDOW` frames (`high_passed`): a high-pass in time. The spectrum shows why: in the moving pixels the blood adds power at every frequency up to the Nyquist frequency, but below about 1 Hz the static tissue drifts too, and the drift differs from place to place, which makes a map of the plain variance patchy.
+    2. Each pixel's temporal mean is subtracted (`mean_removed`, the video of §1) and then its rolling mean over `DRIFT_WINDOW` frames (`high_passed`): a high-pass in time. The reason is drift: blood adds power in the moving pixels across the temporal frequencies, but at the lowest ones the static tissue drifts too, and the drift differs from place to place, which makes a map of the plain variance patchy. The spectrum below shows both for this burst.
     3. The temporal standard deviation of `high_passed`, times the square root of the mean brightness (shot noise), divided by its median over the static pixels, is the **perfusion level**; minus 1, in robust standard deviations of the static pixels, it is the **perfusion map** `perfusion_z`.
     4. Blurred by 1.5 px, it is thresholded by hysteresis at `PERFUSION_LEVELS` (pixels above the higher level, and those above the lower one connected to them), small regions dropped and small holes filled: the **perfused regions** `perfused`.
 
@@ -709,7 +744,7 @@ def _(
     for _window, _scale, _median in window_rows:
         print(f"{'whole burst' if _window is None else _window:>15} | {_scale:23.3f} | {_median:.1f}")
     print(f"Moving pixels have {spectrum_moving[1] / spectrum_static[1]:.0f}x the power of static pixels at "
-          f"{spectrum_frequencies[1]:.1f} Hz and still {spectrum_moving[-1] / spectrum_static[-1]:.1f}x at the Nyquist "
+          f"{spectrum_frequencies[1]:.1f} Hz and {spectrum_moving[-1] / spectrum_static[-1]:.1f}x at the Nyquist "
           f"frequency, {spectrum_frequencies[-1]:.1f} Hz")
     return spectrum_frequencies, spectrum_moving, spectrum_static
 
@@ -860,8 +895,11 @@ def _(
     _lengths = np.array([len(_s) for _s in segments])
     _skeleton_length = skeletonize(perfused).sum()
     _density = _skeleton_length / analysed.sum()
-    print(f"{len(segments)} segments of at least {MIN_SEGMENT} px: median {np.median(_lengths):.0f} px, longest "
-          f"{_lengths.max():.0f} px, {_lengths.sum()} px in all ({_lengths.sum() / _skeleton_length:.0%} of the skeleton)")
+    if segments:
+        print(f"{len(segments)} segments of at least {MIN_SEGMENT} px: median {np.median(_lengths):.0f} px, longest "
+              f"{_lengths.max():.0f} px, {_lengths.sum()} px in all ({_lengths.sum() / _skeleton_length:.0%} of the skeleton)")
+    else:
+        print(f"No segment of at least {MIN_SEGMENT} px: nothing to measure in §4 to §6")
     print(f"Perfused length density: {_density:.4f} px of centreline per px of field"
           + (f" = {_density / (UM_PER_PX * 1e-3):.1f} mm/mm²" if UM_PER_PX else ""))
 
@@ -883,7 +921,7 @@ def _(mo):
     mo.md(r"""
     ## 4 · How fast: kymographs and the slope of their streaks
 
-    **The kymograph.** For a segment with centreline $\mathbf{r}(s)$, one point per pixel of length, the kymograph is the mean-subtracted video read along it, averaged over the centreline and the lines 1 px to either side. Each frame is one row. The temporal mean of every pixel is already gone, so the vessel walls and anything else that does not move leave nothing behind. It is read from `high_passed`, with the rolling mean over `DRIFT_WINDOW` frames removed as well: read from `mean_removed`, about a fifth of the segments on this burst showed a peak at $v = 0$ from patches of the vessel that brighten and darken slowly, which draw vertical streaks, while the cross-correlation found clear flow in them. The price is that flow slower than about a pattern length per `DRIFT_WINDOW` frames (0.2 px/frame here) is weakened. Each row's mean along the segment is subtracted as well, which removes what changes the whole segment at once. Red-cell aggregates and plasma gaps carried by the flow then draw streaks: $K(t, s) \approx f(s - v t)$, and the slope $ds/dt$ of the streaks is the velocity $v$ in px/frame.
+    **The kymograph.** For a segment with centreline $\mathbf{r}(s)$, one point per pixel of length, the kymograph is the mean-subtracted video read along it, averaged over the centreline and the lines 1 px to either side. Each frame is one row. The temporal mean of every pixel is already gone, so the vessel walls and anything else that does not move leave nothing behind. It is read from `high_passed`, with the rolling mean over `DRIFT_WINDOW` frames removed as well: read from `mean_removed`, patches of the vessel that brighten and darken slowly draw vertical streaks, which can put the peak at $v = 0$ on a segment in which the cross-correlation finds clear flow. The price is that flow slower than about a pattern length per `DRIFT_WINDOW` frames is weakened (0.2 px/frame for a 3 px pattern and the default window; §6 measures the pattern length). Each row's mean along the segment is subtracted as well, which removes what changes the whole segment at once. Red-cell aggregates and plasma gaps carried by the flow then draw streaks: $K(t, s) \approx f(s - v t)$, and the slope $ds/dt$ of the streaks is the velocity $v$ in px/frame.
 
     **The slope search.** The Radon transform integrates $K$ along every line $s = s_0 + v t$; along the streaks' slope the integrals vary most from one $s_0$ to the next. The variance of those integrals is a sum, over every pair of rows $t, t'$, of the correlation of row $t$ with row $t'$ shifted by $v (t' - t)$. The search keeps the part of that sum that carries the flow:
 
@@ -895,15 +933,13 @@ def _(mo):
 
     **Uncertainty.** The burst is split into `BLOCKS` blocks of time and the slope searched in each; the uncertainty is the standard error of the block estimates, $\mathrm{sd}/\sqrt{\texttt{BLOCKS}}$. It includes the real changes of flow over the burst (the pulse).
 
-    **The structure tensor**, as a second estimate from the same kymograph: the local orientation of $K$, from the smoothed products of its derivatives, gives $v$ wherever the pattern is line-like, and the coherence-weighted mean is the segment's value. It needs the pattern to move by less than its own size from one frame to the next, so it is trusted only up to 3 px/frame; the synthetic test below shows where it falls behind.
-
     A velocity is **positive when the blood runs from the segment's first point to its last**; the direction in the image is given as well. The synthetic test runs the same code on kymographs of known velocity, with a random pattern of 3 px correlation length and noise as large as the pattern (σ = 1) or twice as large (σ = 2), on a 40 px segment.
     """)
     return
 
 
 @app.cell
-def _(MAX_LAG, MIN_OVERLAP, cv2, gaussian_filter, gaussian_filter1d, np):
+def _(MAX_LAG, MIN_OVERLAP, cv2, gaussian_filter1d, np):
     def kymograph(video, line, half_width=1):
         """K(t, s): the video read along a centreline (length, 2) of (row, column), averaged across +-half_width px."""
         tangent = np.gradient(line, axis=0)
@@ -973,22 +1009,6 @@ def _(MAX_LAG, MIN_OVERLAP, cv2, gaussian_filter, gaussian_filter1d, np):
         return float(velocity), float(height), coarse, coarse_scores
 
 
-    def structure_tensor_velocity(K, sigma=1.0, rho=4.0):
-        """The coherence-weighted mean of the streaks' local slope in K, from its structure tensor."""
-        smooth = gaussian_filter(K, sigma)
-        d_t, d_s = np.gradient(smooth)
-        j_ss, j_tt, j_st = (gaussian_filter(product, rho) for product in (d_s * d_s, d_t * d_t, d_s * d_t))
-        trace, determinant = j_ss + j_tt, j_ss * j_tt - j_st ** 2
-        larger = trace / 2 + np.sqrt(np.maximum(trace ** 2 / 4 - determinant, 0))
-        smaller = trace - larger
-        coherence = ((larger - smaller) / np.maximum(larger + smaller, 1e-12)) ** 2
-        # the eigenvector of the smaller eigenvalue points along the streaks: (j_st, smaller - j_ss) in (s, t)
-        along_t = smaller - j_ss
-        slope = j_st / np.where(np.abs(along_t) < 1e-12, 1e-12, along_t)
-        weight = coherence * trace
-        return float(np.average(np.clip(slope, -50, 50), weights=weight)) if weight.sum() > 0 else np.nan
-
-
     def synthetic_kymograph(velocity, frames=118, length=40, correlation=3.0, noise=1.0, seed=0):
         """A random pattern of unit variance moving at `velocity` px/frame, plus white noise of SD `noise`."""
         rng = np.random.default_rng(seed)
@@ -1003,7 +1023,6 @@ def _(MAX_LAG, MIN_OVERLAP, cv2, gaussian_filter, gaussian_filter1d, np):
         clean_kymograph,
         find_slope,
         kymograph,
-        structure_tensor_velocity,
         synthetic_kymograph,
     )
 
@@ -1014,19 +1033,17 @@ def _(
     clean_kymograph,
     find_slope,
     frame_count,
-    structure_tensor_velocity,
     synthetic_kymograph,
 ):
-    print("true v | noise | slope search | structure tensor   (px/frame, 40 px segment, "
+    print("true v | noise | slope search   (px/frame, 40 px segment, "
           f"{frame_count} frames, reach {(40 - MIN_OVERLAP) / 2:.0f} px/frame)")
     synthetic_results = []
     for _true in (0.2, 1.0, 3.0, -5.0, 8.0, 12.0):
         for _noise in (1.0, 2.0):
             _K, _ = clean_kymograph(synthetic_kymograph(_true, frames=frame_count, noise=_noise))
             _found = find_slope(_K, (40 - MIN_OVERLAP) / 2)[0]
-            _tensor = structure_tensor_velocity(_K)
-            synthetic_results.append((_true, _noise, _found, _tensor))
-            print(f"{_true:6.1f} | {_noise:5.1f} | {_found:12.2f} | {_tensor:16.2f}")
+            synthetic_results.append((_true, _noise, _found))
+            print(f"{_true:6.1f} | {_noise:5.1f} | {_found:12.2f}")
     return
 
 
@@ -1127,7 +1144,6 @@ def _(
     np,
     segment_cross_check,
     segments,
-    structure_tensor_velocity,
     time,
     workers,
 ):
@@ -1152,7 +1168,7 @@ def _(
             "segment": index, "length_px": len(line), "reach": reach,
             "v": velocity, "v_se": float(np.std(blocks, ddof=1) / np.sqrt(BLOCKS)), "blocks": blocks,
             "peak": height, "mirror": mirror,
-            "v_struct": structure_tensor_velocity(K), "v_xcorr": along, "across_xcorr": across,
+            "v_xcorr": along, "across_xcorr": across,
             # the flow's direction in the picture, in degrees counter-clockwise from the +x axis (rows grow downwards)
             "direction_deg": float(np.degrees(np.arctan2(-tangent[0], tangent[1]))),
             "kymograph": K, "grid": grid, "scores": scores,
@@ -1179,7 +1195,7 @@ def _(mo):
     - **consistent** when it is neither, every block of time gives the same direction, and the standard error is at most 0.3 px/frame or 30%;
     - **confirmed** when it is consistent and the cross-correlation of §5 agrees within 0.5 px/frame or 30%.
 
-    The table has one row per measured segment. `v` is the slope search in px/frame (positive from the segment's first point to its last) with its standard error `v_se`, also in px/s and, when `UM_PER_PX` is set, in mm/s; `direction_deg` is the direction of the flow in the picture, counter-clockwise from the +x axis; `peak` is $C$ at the peak and `mirror` $C$ at the opposite velocity, so `peak` well above `mirror` means the direction is clear; `v_struct` and `v_xcorr` are the two other estimates, `across_xcorr` the cross-correlation's displacement across the vessel.
+    The table has one row per measured segment. `v` is the slope search in px/frame (positive from the segment's first point to its last) with its standard error `v_se`, also in px/s and, when `UM_PER_PX` is set, in mm/s; `direction_deg` is the direction of the flow in the picture, counter-clockwise from the +x axis; `peak` is $C$ at the peak and `mirror` $C$ at the opposite velocity, so `peak` well above `mirror` means the direction is clear; `v_xcorr` is the cross-correlation's estimate of §5, and `across_xcorr` its displacement across the vessel.
     """)
     return
 
@@ -1207,7 +1223,7 @@ def _(UM_PER_PX, fps, measurements, mo, np):
             "v_px_s": round(_row["v"] * fps, 1), "v_se_px_s": round(_row["v_se"] * fps, 1),
             "direction_deg": round(_row["direction_deg"]),
             "peak": round(_row["peak"], 3), "mirror": round(_row["mirror"], 3),
-            "v_struct": round(_row["v_struct"], 2), "v_xcorr": round(_row["v_xcorr"], 2),
+            "v_xcorr": round(_row["v_xcorr"], 2),
             "across_xcorr": round(_row["across_xcorr"], 2), "reach": round(_row["reach"], 1),
         }
         if UM_PER_PX:
@@ -1263,21 +1279,18 @@ def _(INK_MUTED, SERIES, measurements, np, plt, show_figure, velocities):
 @app.cell
 def _(INK_MUTED, SERIES, np, plt, show_figure, velocities):
     _colors = {"confirmed": SERIES[2], "consistent": SERIES[0], "inconsistent": SERIES[3], "weak": INK_MUTED, "out of reach": SERIES[7]}
-    _figure, _axes = plt.subplots(1, 2, figsize=(12, 4.6))
-    for _axis, _other, _name in ((_axes[0], "v_xcorr", "2D cross-correlation (§5)"), (_axes[1], "v_struct", "structure tensor (§4)")):
-        for _status, _color in _colors.items():
-            _rows = [_v for _v in velocities if _v["status"] == _status]
-            _axis.scatter([_v["v_px_frame"] for _v in _rows], [_v[_other] for _v in _rows], s=12, color=_color,
-                          label=f"{_status} ({len(_rows)})")
-        _top = max(abs(_v["v_px_frame"]) for _v in velocities) + 1 if velocities else 1
-        _axis.plot([-_top, _top], [-_top, _top], ":", color=INK_MUTED)
-        _axis.set_xlim(-_top, _top)
-        _axis.set_ylim(-_top, _top)
-        _axis.set_xlabel("slope search, v (px/frame)")
-        _axis.set_ylabel(f"{_name} (px/frame)")
-    _axes[0].legend(fontsize=8)
-    _axes[1].axhspan(-3, 3, color=SERIES[0], alpha=0.05)
-    _axes[1].set_title("trusted within ±3 px/frame (shaded)", fontsize=9)
+    _figure, _axis = plt.subplots(figsize=(6, 4.6))
+    for _status, _color in _colors.items():
+        _rows = [_v for _v in velocities if _v["status"] == _status]
+        _axis.scatter([_v["v_px_frame"] for _v in _rows], [_v["v_xcorr"] for _v in _rows], s=12, color=_color,
+                      label=f"{_status} ({len(_rows)})")
+    _top = max(abs(_v["v_px_frame"]) for _v in velocities) + 1 if velocities else 1
+    _axis.plot([-_top, _top], [-_top, _top], ":", color=INK_MUTED)
+    _axis.set_xlim(-_top, _top)
+    _axis.set_ylim(-_top, _top)
+    _axis.set_xlabel("slope search, v (px/frame)")
+    _axis.set_ylabel("2D cross-correlation (§5) (px/frame)")
+    _axis.legend(fontsize=8)
     _figure.tight_layout()
     show_figure(_figure, "velocity_agreement")
     _agreeing = [_v for _v in velocities if _v["status"] in ("confirmed", "consistent") and np.isfinite(_v["v_xcorr"])]
@@ -1339,7 +1352,7 @@ def _(mo):
     Three limits decide which velocities this recording can measure:
 
     - **Fast flow.** A pattern has to stay in the segment for at least two frames: each segment's reach, $(L - \texttt{MIN\_OVERLAP})/2$ px/frame, caps what it can show. Within a frame the exposure smears the pattern by $v \times$ exposure: once the smear is longer than the pattern itself (its correlation length along the vessel, measured on the kymographs), the streaks lose contrast. The smear is the same in every frame, so it does not bias the displacement, but it leaves less pattern to follow.
-    - **The sampling theorem.** At a fixed pixel, a pattern of correlation length $\lambda$ passing at $v$ px/frame changes at about $v / \lambda$ cycles per frame, so the time series of one pixel is sampled without aliasing only while $v < \lambda / 2$ (the Nyquist frequency, half the frame rate). The perfusion map's variance does not mind aliasing (it counts the power wherever it lands); the structure tensor does, because it differentiates in time; the slope search and the cross-correlation compare whole stretches of the vessel between frames, and only a pattern that repeats along the vessel at the distance it travels in one frame can fool them, which the several lags guard against.
+    - **The sampling theorem.** At a fixed pixel, a pattern of correlation length $\lambda$ passing at $v$ px/frame changes at about $v / \lambda$ cycles per frame, so the time series of one pixel is sampled without aliasing only while $v < \lambda / 2$ (the Nyquist frequency, half the frame rate). The perfusion map's variance does not mind aliasing (it counts the power wherever it lands); the slope search and the cross-correlation compare whole stretches of the vessel between frames, and only a pattern that repeats along the vessel at the distance it travels in one frame can fool them, which the several lags guard against.
     - **Slow flow.** Over the burst a pattern has to move by a few pixels to draw a measurable slope; the standard errors give the precision.
     """)
     return
@@ -1392,7 +1405,7 @@ def _(
     _marks = [(np.median(_errors) if len(_errors) else np.nan, "median uncertainty", SERIES[2]),
               (pattern_length / 2, "pattern length / 2 (Nyquist at one pixel)", SERIES[3]),
               (pattern_length / _duty if np.isfinite(_duty) else np.nan, "smear = pattern length", SERIES[7]),
-              (np.median(_reaches), "median reach of a segment", SERIES[1])]
+              (np.median(_reaches) if len(_reaches) else np.nan, "median reach of a segment", SERIES[1])]
     for _value, _name, _color in _marks:
         if np.isfinite(_value):
             _axis.axvline(_value, color=_color, ls="--", lw=1, label=f"{_name}: {_value:.1f}")
@@ -1405,9 +1418,36 @@ def _(
     _faster_than_nyquist = float(np.mean(_speeds > pattern_length / 2)) if len(_speeds) else np.nan
     _smear_limit = pattern_length / _duty if np.isfinite(_duty) else np.nan
     _smeared = float(np.mean(_speeds > _smear_limit)) if len(_speeds) and np.isfinite(_smear_limit) else np.nan
-    mo.md(rf"""
-    **On this burst.** {frame_count} frames at {fps:.1f} fps, {frame_period * 1e3:.1f} ms apart{f", each exposed for {exposure_s * 1e3:.1f} ms ({_duty:.0%} of the period): a pattern moving $v$ px/frame is smeared over {_duty:.2f} $v$ px within a frame, as long as the pattern itself at {_smear_limit:.1f} px/frame; {_smeared:.0%} of the consistent segments flow faster than that and are still measured, at lower contrast" if exposure_s else ""}. The flow patterns along the vessels have a correlation length of {pattern_length:.1f} px (median over the consistent segments), so a single pixel's time series is free of aliasing only below {pattern_length / 2:.1f} px/frame ({pattern_length / 2 * fps:.0f} px/s); {_faster_than_nyquist:.0%} of the consistent segments flow faster. The spectrum of §2 agrees: at the Nyquist frequency, {_nyquist:.1f} Hz, the moving pixels still have {spectrum_moving[-1] / spectrum_static[-1]:.1f} times the power of the static ones, so the flow puts power above it that the frame rate folds back. Speeds measured: median {np.median(_speeds) if len(_speeds) else np.nan:.2f} px/frame, 90th percentile {np.percentile(_speeds, 90) if len(_speeds) else np.nan:.2f} px/frame, fastest {_speeds.max() if len(_speeds) else np.nan:.2f} px/frame; median uncertainty {np.median(_errors) if len(_errors) else np.nan:.2f} px/frame. The reach of a segment is {np.median(_reaches):.0f} px/frame in the median, and {_out_of_reach} segments peak at their reach: their flow may be faster than they can show. Faster flow needs a higher frame rate: a shorter region of interest raises it (the reference bursts include strips at 74 and 149 fps), and a shorter exposure reduces the smear.
-    """)
+    _sentences = [f"{frame_count} frames at {fps:.1f} fps, {frame_period * 1e3:.1f} ms apart"
+                  + (f", each exposed for {exposure_s * 1e3:.1f} ms ({_duty:.0%} of the period): a pattern moving $v$ "
+                     f"px/frame is smeared over {_duty:.2f} $v$ px within a frame" if exposure_s else "") + "."]
+    if len(_speeds):
+        _sentences.append(
+            f"The flow patterns along the vessels have a correlation length of {pattern_length:.1f} px (median over the "
+            f"consistent segments), so a single pixel's time series is free of aliasing only below "
+            f"{pattern_length / 2:.1f} px/frame ({pattern_length / 2 * fps:.0f} px/s); {_faster_than_nyquist:.0%} of the "
+            "consistent segments flow faster.")
+        if np.isfinite(_smear_limit):
+            _sentences.append(
+                f"The smear is as long as the pattern itself at {_smear_limit:.1f} px/frame; {_smeared:.0%} of the "
+                "consistent segments flow faster than that"
+                + (" and are measured all the same." if _smeared > 0 else "."))
+        _sentences.append(
+            f"Speeds measured: median {np.median(_speeds):.2f} px/frame, 90th percentile {np.percentile(_speeds, 90):.2f} "
+            f"px/frame, fastest {_speeds.max():.2f} px/frame; median uncertainty {np.median(_errors):.2f} px/frame.")
+    else:
+        _sentences.append("No segment was measured consistently, so there is no pattern length and no speed to report.")
+    _sentences.append(
+        f"At the Nyquist frequency, {_nyquist:.1f} Hz, the spectrum of §2 gives the moving pixels "
+        f"{spectrum_moving[-1] / spectrum_static[-1]:.1f} times the power of the static ones; a ratio above 1 there means "
+        "the flow has power up to the Nyquist frequency, and whatever it has above it the frame rate folds back.")
+    if len(_reaches):
+        _sentences.append(
+            f"The reach of a segment is {np.median(_reaches):.0f} px/frame in the median, and {_out_of_reach} segments "
+            "peak at their reach" + (": their flow may be faster than they can show." if _out_of_reach else "."))
+    _sentences.append("Faster flow needs a higher frame rate: a shorter region of interest raises it (the reference bursts "
+                      "include strips at 74 and 149 fps), and a shorter exposure reduces the smear.")
+    mo.md("**On this burst.** " + " ".join(_sentences))
     return (pattern_length,)
 
 
