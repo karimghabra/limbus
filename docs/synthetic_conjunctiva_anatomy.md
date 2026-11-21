@@ -18,7 +18,7 @@ Every number carries one of four tags:
 
 Contents: 1 imaging geometry and the globe · 2 layers in depth · 3 calibres · 4 branching · 5 density and tortuosity ·
 6 haemodynamics · 7 optics and the camera · 8 targets measured on the real bursts · 9 assumptions and gaps ·
-10 parameter table · references.
+10 parameter table · 11 the whole anterior eye · references.
 
 ## 1. Imaging geometry
 
@@ -459,6 +459,127 @@ after hundreds of milliseconds), a slow rotation
 of about 0.05°, and a focal plane that wanders smoothly by ±25 µm about 160 µm (assumed amplitude; it makes the
 sharpness of each layer change from frame to frame).
 
+## 11. The whole anterior eye and its levels of detail
+
+`synth/eye.py` grows the network of the whole anterior eye from where its blood enters and leaves, over the curved
+globe, and lets a camera look at any region of it. Positions on the globe are given by the distance s from the
+limbus along the surface, the clock angle (superior 0°, temporal 90°, inferior 180°, nasal 270°, a right eye seen
+from in front) and the depth below the surface.
+
+### 11.1 The globe and the cornea
+
+Axial length 23.49 ± 1.35 mm, corneal radius 7.69 ± 0.28 mm and white-to-white diameter 11.80 ± 0.42 mm in a pooled
+global sample [GaneshLin2023]; a cadaver corneal diameter of 11.7 × 10.7 mm [Kim2024Tillaux]. The anterior scleral
+radius is §1.4's (12.5 mm). The scleral angle at the corneoscleral junction is 35–39° at a 15 mm chord, flatter
+nasally [Ritzmann2018]. The model's limbus is the circle of radius 5.9 mm on the sphere (`limbus_radius_um`).
+
+### 11.2 The rectus insertions (the spiral of Tillaux)
+
+| muscle | AS-OCT in adults [Pihlblad2016] | cadaver, calipers [Kim2024Tillaux] | textbook |
+|---|---|---|---|
+| medial (nasal) | 5.7 ± 0.8 mm | 5.28 mm | 5.5 mm |
+| inferior | 6.0 ± 0.6 mm | 5.72 mm | 6.5 mm |
+| lateral (temporal) | 6.8 ± 0.7 mm | 6.40 mm | 6.9 mm |
+| superior | 6.8 ± 0.6 mm | 6.78 mm | 7.7 mm |
+
+The model uses the in vivo AS-OCT distances (`insertion_mm`) and the tendon widths of [Mistry2026] (superior 10.3,
+lateral and medial 8.5, inferior 6.4 mm; `insertion_width_mm`); limbus-to-insertion distances in adult strabismus
+patients are similar [Liu2011].
+
+### 11.3 The anterior ciliary arteries and the episcleral circle
+
+The textbook count is two anterior ciliary arteries per rectus and one on the lateral rectus [AshtonSmith1953];
+measured counts differ: 2.25 ± 0.79 major arteries on the lateral and 2.05 ± 0.65 on the medial rectus
+[Johnson2009], and among 742 muscles the medial rectus carried 1, 2 or ≥ 3 major bundles in 6.8, 46.4 and 46.7 %,
+the lateral rectus in 41.2, 39.9 and 18.9 % [PanYang2020]. The model draws each eye's horizontal-rectus counts from
+those measured shares and gives each vertical rectus two (`arteries_per_muscle`). No measured lumen diameter or
+perforation distance was found; the arteries take 70–110 µm (assumed, wider than the 40–80 µm episcleral arteries
+they feed), run forward in the episclera from the insertion and send a perforating branch through the sclera
+halfway to the circle (an outflow to the ciliary body at an assumed 45 mmHg). They join the episcleral arterial
+circle, which the model places 2 mm behind the limbus (deep arcades about 2–3 mm from the limbus [Kemenes2025]; the
+circle has superficial and deep parts and is incomplete in places [MeyerWatson1987]: 15 % of its arcs are left out,
+an assumed share).
+
+### 11.4 The conjunctival arterial supply and the watershed
+
+Anterior conjunctival arteries arise from the circle and run forward to the limbal arcades and palisades and back
+into the bulbar conjunctiva; posterior conjunctival arteries come from the marginal and peripheral palpebral arcades
+(about 3.0 mm from the upper lid margin [KakizakiJCM2025], 3–4 mm from the lower [Kakizaki2026]) through the
+fornices; the two territories meet at a watershed [MeyerWatson1987] that a review places at about 4 mm from the
+limbus (lid branches supply the conjunctiva from 4 mm on [Sun2022]). In the model, anterior arteries rise from the
+circle every 1.8 mm (scaled by the quadrant's density) and posterior arteries enter from the fornix every 2.5 mm,
+and both grow by space colonisation [Runions2007] over the conjunctival band at trunk scale (branches down to
+20–28 µm), so they meet and interleave around the watershed rather than at a fixed line. Each anterior artery also
+sends a short branch forward to the limbal arcade, which drains through palisade hairpins 1.5–2.1 mm long
+[Kemenes2025, Haagdorens2017] into a limbal venous ring.
+
+### 11.5 The venous drainage
+
+Episcleral veins drain away from the limbus [Meyer1988] to the muscular and vortex veins (4–8 vortex veins per
+eye [Kutoglu2005]; 8.0 ± 2.1 ampullae on widefield angiography [Verma2020]); conjunctival veins drain to the
+palpebral veins. Aqueous enters episcleral veins at the limbus through aqueous veins; no human count was found, and
+nasal outflow dominated in live aqueous angiography [Huang2017] but not consistently in enucleated eyes
+[Saraswathy2016]. The model: episcleral veins (1.2 per mm of limbus, 50–100 µm) leave the limbal venous ring and
+run away from the limbus past the insertions in long, gently bending runs with side branches; conjunctival venular
+trees, half of whose growth follows the arteries so that veins accompany them, drain to outlets at the fornix and
+into the limbal ring. Aqueous inflow is not modelled.
+
+### 11.6 Pressures and flow
+
+Ophthalmic artery systolic pressure is 0.68 ± 0.04 times brachial [StraussKedra1987] (93/59 against 136/87 mmHg
+[daSilvaKrieglstein1980]); mean central retinal artery pressure is about 0.73 of mean arterial pressure seated
+[Kostic2021]; intraocular pressure about 14 mmHg [Pakravan2017, Kawase2008]; episcleral venous pressure 7.6 ± 1.3
+[Zeimer1983] to 9.1–9.5 mmHg [Selbach2005b]. No anterior ciliary artery pressure was found. The model sets the
+inlets of the anterior ciliary arteries at 65 mmHg (0.7 of a mean brachial pressure of 93 mmHg), the palpebral
+inlets of the posterior conjunctival arteries at 60 mmHg (assumed), and every venous outlet at 9 mmHg; the coarse
+network's flows and velocities then follow from the anatomy. The fine vessels each coarse artery feeds are lumped
+into one equivalent resistance every 0.5 mm, joining it to the nearest conjunctival vein (`bed_conductance_scale`,
+fitted so that the coarse conjunctival vessels carry the cited velocities), and episcleral arteries open into
+episcleral veins through 0.75 arteriovenous anastomoses per mm² (§2.4). Result (seed 0): conjunctival arteries
+0.3–0.4 mm/s and veins 0.2–0.6 mm/s (cited §6.5), episcleral vein flow 0.15–0.37 µl/min against 0.40 ± 0.22
+µl/min [Kim2024].
+
+### 11.7 Lids and fornices
+
+In 380 adults the upper lid margin lies 3.5 mm above and the lower 5.2 mm below the pupil centre, the fissure is
+8.7 mm high and 25.6 mm wide [Rana2023]: the upper lid covers about 1.8 mm of the superior cornea and the lower lid
+sits at the inferior limbus, so the exposed bulbar conjunctiva is mostly nasal and temporal. Fornix depths are
+15.3–16.1 mm (upper) and 10.1–10.9 mm (lower) across four populations [Jutley2016, Khan2014, Tan2025, Bulut2024],
+from a reference the abstracts do not state; canthal fornix depths 3.0 mm medially and 5.2 mm laterally
+[Kawakita2009]. The model ends the bulbar conjunctiva at 15 mm superiorly, 10.5 mm inferiorly and (assumed) 12 mm
+temporally and 8 mm nasally, and marks the palpebral fissure (`fissure_half_width_mm`, `upper_lid_mm`,
+`lower_lid_mm`); `Globe.exposed` tells whether a point can be seen.
+
+### 11.8 Regional variation
+
+Deep vessel density is about 25 % nasally and temporally against about 21 % superiorly and inferiorly [Akagi2018];
+superficial nasal and temporal densities are similar [Schuerch2020]; palisades show superiorly and inferiorly but
+rarely in the horizontal meridian [Kemenes2025]; arteries are sparse over the lateral rectus and veins concentrate
+in the vertical meridian [Meyer1988]; the sclera is thicker [FernandezVigo2022] and flatter [Choi2014] nasally. All
+slit-lamp microvessel studies image the temporal conjunctiva. The model scales the density of its anterior
+conjunctival arteries and of the coarse growth by quadrant (`quadrant_density`: 1.08 nasal and temporal, 0.92
+superior and inferior, interpolated around the clock).
+
+### 11.9 Levels of detail
+
+- **Coarse** (whole globe, once per eye, about 12 s and 0.5 GB): §11.3–11.6, about 1.8 m of conjunctival and 0.4 m of episcleral vessel in some 5 000 segments, solved as one network.
+- **Fine** (per tile of about 1 mm × 1 mm on the globe, on demand): conjunctival arteriolar and venular trees, the
+  capillary mesh and anastomoses (§4–5), grown from roots placed along the coarse conjunctival vessels that cross
+  the tile, from a seed made of the eye's seed and the tile's position only, with the tile's flow solved from the
+  coarse pressures at its roots; a tile generated again is identical (tested).
+- **The view** (the camera's field and a margin): the coarse pieces and tiles in it, assembled with the flow of
+  every piece inherited from its own level, so a vessel's path and flow do not depend on the magnification or the
+  extent of the view (tested: the same spot at 3.26 and 6.5 µm/px). Blood that leaves a drawn vessel through a
+  vessel the view does not draw (a lumped bed, a region without tiles) takes its red cells with it.
+- **Rendering by magnification**: below `tube_um_per_px` (6 µm/px) every red cell is transported and drawn; at
+  coarser magnification each vessel is a tube carrying its mean red-cell density across its cross-section (no
+  flicker), and tiles are left out above 8 µm/px. Measured on this machine: a 2.5 × 1.7 mm view at 3.26 µm/px with
+  39 tiles assembles in about 13 s and renders at about 1.5 s per frame (0.5 GB); a 7.7 × 5 mm view at 12 µm/px in
+  about 1 s per frame; the whole visible eye at 20 µm/px in 6 s (0.9 GB).
+- **Pose**: the camera's position on the globe (`Pose`: s and clock angle), magnification (`um_per_px`), field size,
+  focus (`focus_depth_um`) and tilt (`camera_tilt_deg`) are explicit parameters, so the same eye can be recorded
+  from any position.
+
 ## 8. Targets measured on the real bursts
 
 `synth/targets.py` measures every statistic below on a burst as the camera wrote it; the same code runs on the
@@ -567,13 +688,16 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Akagi2018] Akagi T, Uji A, Huang AS, et al. Conjunctival and intrascleral vasculatures assessed using anterior segment optical coherence tomography angiography in normal eyes. Am J Ophthalmol 2018;196:1-9. doi:10.1016/j.ajo.2018.08.009.
 - [Arora2017] Arora N, McLaren JW, Hodge DO, Sit AJ. Effect of Body Position on Epsicleral Venous Pressure in Healthy Subjects. Invest Ophthalmol Vis Sci 2017;58:5151-5156. doi:10.1167/iovs.17-22154.
 - [Asanad2021] Asanad S, Park A, Pottenburgh J, et al. Erythrocyte-mediated angiography: quantifying absolute episcleral blood flow in humans. Ophthalmology 2021;128:799-801. doi:10.1016/j.ophtha.2020.09.010.
+- [AshtonSmith1953] Ashton N, Smith R. Anatomical study of Schlemm's canal and aqueous veins by means of neoprene casts. III. Arterial relations of Schlemm's canal. Br J Ophthalmol 1953;37:577-586. doi:10.1136/bjo.37.10.577.
 - [Atchison2005] Atchison DA, Pritchard N, Schmid KL, et al. Shape of the retinal surface in emmetropia and myopia. Invest Ophthalmol Vis Sci 2005;46:2698-2707. doi:10.1167/iovs.04-1506.
 - [Bizheva2011] Bizheva K, Hutchings N, Sorbara L, Moayed AA, Simpson T. In vivo volumetric imaging of the human corneo-scleral limbus with spectral domain OCT. Biomed Opt Express 2011;2:1794-1802. doi:10.1364/BOE.2.001794.
 - [Bosschaart2014] Bosschaart N, Edelman GJ, Aalders MC, van Leeuwen TG, Faber DJ. A literature review and novel theoretical approach on the optical properties of whole blood. Lasers Med Sci 2014;29:453-79. doi:10.1007/s10103-013-1446-7.
+- [Bulut2024] Bulut O, Kaplan A, Furundaoturan O, Kose T, Barut Selver O. Identification of normal fornix depth dataset generated with a validated fornix meter in healthy Turkish population. Ocul Immunol Inflamm 2024;32:713-717. doi:10.1080/09273948.2023.2199055.
 - [Cherici2012] Cherici C, Kuang X, Poletti M, Rucci M. Precision of sustained fixation in trained and untrained observers. J Vis 2012;12(6):31. doi:10.1167/12.6.31.
 - [Cheung2001] Cheung AT, Ramanujam S, Greer DA, Kumagai LF, Aoki TT. Microvascular abnormalities in the bulbar conjunctiva of patients with type 2 diabetes mellitus. Endocr Pract 2001;7:358-63. doi:10.4158/EP.7.5.358.
 - [CheungCY2011] Cheung CY, Zheng Y, Hsu W, et al. Retinal vascular tortuosity, blood pressure, and cardiovascular risk factors. Ophthalmology 2011;118:812-818. doi:10.1016/j.ophtha.2010.08.045.
 - [Choi2014] Choi HJ, Lee SM, Lee JY, et al. Measurement of anterior scleral curvature using anterior segment OCT. Optom Vis Sci 2014;91:793-802. doi:10.1097/OPX.0000000000000298.
+- [daSilvaKrieglstein1980] da Silva FA, Krieglstein GK. [Measurement of ophthalmic blood pressure with the Mikuni dynamometer]. Klin Monbl Augenheilkd 1980;176:764-772. doi:10.1055/s-2008-1057550.
 - [Ding2025] Ding Y, Metha A, Bedggood P. Red Blood Cell Distribution and Volume Changes at Capillary Junctions in the Living Human Retina. Invest Ophthalmol Vis Sci 2025;66(14):65. doi:10.1167/iovs.66.14.65.
 - [Fedosov2010] Fedosov DA, Caswell B, Popel AS, Karniadakis GE. Blood flow and cell-free layer in microvessels. Microcirculation 2010;17:615-28. doi:10.1111/j.1549-8719.2010.00056.x.
 - [Felder2016] Felder AE, Mercurio C, Wanek J, Ansari R, Shahidi M. Automated Real-Time Conjunctival Microvasculature Image Stabilization. IEEE Trans Med Imaging 2016;35:1670-5. doi:10.1109/TMI.2016.2522918.
@@ -581,37 +705,50 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [FernandezVigo2021] Fernández-Vigo JI, Shi H, Burgos-Blasco B, et al. Impact of age, sex and refractive error on conjunctival and Tenon's capsule thickness dimensions by swept-source optical coherence tomography in a large population. Int Ophthalmol 2021;41:3687-3698. doi:10.1007/s10792-021-01928-5.
 - [FernandezVigo2022] Fernández-Vigo JI, Shi H, Burgos-Blasco B, et al. Anterior scleral thickness dimensions by swept-source optical coherence tomography. Clin Exp Optom 2022;105:13-19. doi:10.1080/08164622.2021.1924629.
 - [FunkRohen1996] Funk RH, Rohen JW. Scanning electron microscopic study of episcleral arteriovenous anastomoses in the owl and cynomolgus monkey. Curr Eye Res 1996;15:321-327. doi:10.3109/02713689609007627.
+- [GaneshLin2023] Ganesh D, Lin SR. Global metrics on ocular biometry: representative averages and standard deviations across ten countries from four continents. Eye (Lond) 2023;37:511-515. doi:10.1038/s41433-022-01961-3.
 - [Garg2022] Garg G, Venkatesh P, Chawla R, et al. Normative data of retinal arteriolar and venular calibre measurements determined using confocal scanning laser ophthalmoscopy system. Indian J Ophthalmol 2022;70:1657-1663. doi:10.4103/ijo.IJO_2162_21.
 - [Grippo2025] Grippo TM, LaMarche K, Davreux AM, Stauffer J, Stacey S, et al. Thermal Tissue Modeling of the Ciliary Body With Continuous Wave Transscleral Cyclophotocoagulation and Transscleral Laser Therapy Using MicroPulse Technology. Transl Vis Sci Technol 2025;14(11):32. doi:10.1167/tvst.14.11.32.
 - [Haagdorens2017] Haagdorens M, Behaegel J, Rozema J, et al. A method for quantifying limbal stem cell niches using OCT imaging. Br J Ophthalmol 2017;101:1250-1255. doi:10.1136/bjophthalmol-2016-309549.
 - [Hahn2004] Hahn M, Jünger M, Shore AC. The effect of prostaglandin E1 on nailfold capillary blood pressure and red blood cell velocity in humans. Clin Hemorheol Microcirc 2004;31:227-34. No DOI in PubMed or Crossref search (PMID 15322328; abstract).
 - [Howlett2014] Howlett J, Vahdani K, Rossiter J. Bulbar conjunctival and Tenon's layer thickness measurement using optical coherence tomography. J Curr Glaucoma Pract 2014;8:63-66. doi:10.5005/jp-journals-10008-1163.
 - [Hu2018] Hu L, Shi C, Jiang H, et al. Factors affecting microvascular responses in the bulbar conjunctiva in habitual contact lens wearers. Invest Ophthalmol Vis Sci 2018;59:4108-4114. doi:10.1167/iovs.18-24216.
+- [Huang2017] Huang AS, Li M, Yang D, Wang H, Wang N, Weinreb RN. Aqueous angiography in living nonhuman primates shows segmental, pulsatile, and dynamic angiographic aqueous humor outflow. Ophthalmology 2017;124:793-803. doi:10.1016/j.ophtha.2017.01.030.
 - [Jacques2013] Jacques SL. Optical properties of biological tissues: a review. Phys Med Biol 2013;58:R37-R61. doi:10.1088/0031-9155/58/11/R37.
 - [Jesus2017] Jesus DA, Kedzia R, Iskander DR. Precise measurement of scleral radius using anterior eye profilometry. Cont Lens Anterior Eye 2017;40:47-52. doi:10.1016/j.clae.2016.11.003.
 - [Jiang2014] Jiang H, Zhong J, DeBuc DC, Tao A, Xu Z, Lam BL, et al. Functional slit lamp biomicroscopy for imaging bulbar conjunctival microvasculature in contact lens wearers. Microvasc Res 2014;92:62-71. doi:10.1016/j.mvr.2014.01.005.
 - [Johnson2009] Johnson MS, Christiansen SP, Rath PP, et al. Anterior ciliary circulation from the horizontal rectus muscles. Strabismus 2009;17:45-48. doi:10.1080/09273970802678180.
+- [Jutley2016] Jutley G, Carpenter D, Hau S, et al. Upper and lower conjunctival fornix depth in healthy white caucasian eyes: a method of objective assessment. Eye (Lond) 2016;30:1351-1358. doi:10.1038/eye.2016.128.
+- [Kakizaki2026] Kakizaki H, Edward DP, Takahashi Y. Position of lower marginal arterial arcade in relation to lower tarsal plate. Ophthalmic Plast Reconstr Surg 2026;42:483-485. doi:10.1097/IOP.0000000000003055.
+- [KakizakiJCM2025] Kakizaki H, Edward DP, Takahashi Y. Marginal artery position on upper eyelid. J Cosmet Med 2025;9:79-81. doi:10.25056/jcm.2025.9.2.79.
 - [KassabFung1995] Kassab GS, Fung YC. The pattern of coronary arteriolar bifurcations and the uniform shear hypothesis. Ann Biomed Eng 1995;23:13-20. doi:10.1007/BF02368296.
+- [Kawakita2009] Kawakita T, Kawashima M, Murat D, Tsubota K, Shimazaki J. Measurement of fornix depth and area: a novel method of determining the severity of fornix shortening. Eye (Lond) 2009;23:1115-1119. doi:10.1038/eye.2008.205.
+- [Kawase2008] Kawase K, Tomidokoro A, Araie M, Iwase A, Yamamoto T; Tajimi Study Group. Ocular and systemic factors related to intraocular pressure in Japanese adults: the Tajimi study. Br J Ophthalmol 2008;92:1175-1179. doi:10.1136/bjo.2007.128819.
 - [Kemenes2025] Kemenes G, Rebenku I, Bajdik B, et al. Correlation of multimodal clinical imaging with the whole-slide- and superresolution-based immunohistological structure of the corneal limbal stroma. Invest Ophthalmol Vis Sci 2025;66(9):54. doi:10.1167/iovs.66.9.54.
+- [Khan2014] Khan IJ, Ghauri AJ, Hodson J, et al. Defining the limits of normal conjunctival fornix anatomy in a healthy South Asian population. Ophthalmology 2014;121:492-497. doi:10.1016/j.ophtha.2013.09.033.
 - [Khansari2016] Khansari MM, Wanek J, Felder AE, Camardo N, Shahidi M. Automated Assessment of Hemodynamics in the Conjunctival Microvasculature Network. IEEE Trans Med Imaging 2016;35:605-11. doi:10.1109/TMI.2015.2486619.
 - [Khansari2017] Khansari MM, Wanek J, Tan M, Joslin CE, Kresovich JK, Camardo N, Blair NP, Shahidi M. Assessment of Conjunctival Microvascular Hemodynamics in Stages of Diabetic Microvasculopathy. Sci Rep 2017;7:45916. doi:10.1038/srep45916.
 - [Khansari2019] Khansari MM, Garvey SL, Farzad S, Shi Y, Shahidi M. Relationship between retinal vessel tortuosity and oxygenation in sickle cell retinopathy. Int J Retina Vitreous 2019;5:47. doi:10.1186/s40942-019-0198-3.
 - [Kiani1993] Kiani MF, Cokelet GR, Sarelius IH. Effect of diameter variability along a microvessel segment on pressure drop. Microvasc Res 1993;45:219-232. doi:10.1006/mvre.1993.1020.
 - [Kim2007] Kim S, Kong RL, Popel AS, Intaglietta M, Johnson PC. Temporal and spatial variations of cell-free layer width in arterioles. Am J Physiol Heart Circ Physiol 2007;293:H1526-35. doi:10.1152/ajpheart.01090.2006.
 - [Kim2024] Kim S, Chen V, Pottenburgh J, et al. Netarsudil 0.02% alters episcleral venous flowrates: a clinical trial using erythrocyte-mediated angiography. Ophthalmol Sci 2024;4:100533. doi:10.1016/j.xops.2024.100533.
+- [Kim2024Tillaux] Kim EJ, Rana VK, Barton A, Khatri S, et al. The spiral of Tillaux: dead on accurate; a cadaveric study. Strabismus 2024;32:85-90. doi:10.1080/09273972.2024.2346548.
 - [Klitzman1979] Klitzman B, Duling BR. Microvascular hematocrit and red cell flow in resting and contracting striated muscle. Am J Physiol 1979;237:H481-90. doi:10.1152/ajpheart.1979.237.4.H481.
+- [Kostic2021] Kostic M, Gordon P, Monsalve P, et al. Non-invasive assessment of central retinal artery pressure: age and posture-dependent changes. Curr Eye Res 2021;46:135-139. doi:10.1080/02713683.2020.1772833.
 - [Koutsiaris2007] Koutsiaris AG, Tachmitzi SV, Batis N, Kotoula MG, Karabatsas CH, Tsironi E, Chatzoulis DZ. Volume flow and wall shear stress quantification in the human conjunctival capillaries and post-capillary venules in vivo. Biorheology 2007;44:375-86. doi:10.1177/0006355X2007044005006008 (no DOI in PubMed; DOI verified via Crossref; abstract).
 - [Koutsiaris2010] Koutsiaris AG, Tachmitzi SV, Papavasileiou P, Batis N, Kotoula MG, Giannoukas AD, Tsironi E. Blood velocity pulse quantification in the human conjunctival pre-capillary arterioles. Microvasc Res 2010;80:202-8. doi:10.1016/j.mvr.2010.05.001.
 - [Koutsiaris2015] Koutsiaris AG. Correlation of axial blood velocity to venular and arteriolar diameter in the human eye in vivo. Clin Hemorheol Microcirc 2015;61:429-38. doi:10.3233/CH-141888.
 - [Kumar2013] Kumar DA, Agarwal A, Karnathi S, et al. Anterior segment optical coherence tomography for imaging the sub-Tenon space. Ophthalmic Res 2013;50:231-234. doi:10.1159/000354381.
+- [Kutoglu2005] Kutoglu T, Yalcin B, Kocabiyik N, Ozan H. Vortex veins: anatomic investigations on human eyes. Clin Anat 2005;18:269-273. doi:10.1002/ca.20092.
 - [Kvernebo2022] Kvernebo AK, Moe MC, Wikslund LK, Capone L, et al. Human ocular surface microcirculation quantified by in vivo computer assisted video microscopy and diffuse reflectance spectroscopy. Exp Eye Res 2022;224:109232. doi:10.1016/j.exer.2022.109232.
 - [Li2011] Li P, An L, Reif R, Shen TT, Johnstone M, Wang RK. In vivo microstructural and microvascular imaging of the human corneo-scleral limbus using optical coherence tomography. Biomed Opt Express 2011;2:3109-3118. doi:10.1364/BOE.2.003109.
+- [Liu2011] Liu X, Wang F, Xiao Y, Ye X, et al. Measurement of the limbus-insertion distance in adult strabismus patients with anterior segment optical coherence tomography. Invest Ophthalmol Vis Sci 2011;52:8370-8373. doi:10.1167/iovs.11-7752.
 - [Liu2019] Liu Z, Wang H, Jiang H, et al. Quantitative analysis of conjunctival microvasculature imaged using optical coherence tomography angiography. Eye Vis (Lond) 2019;6:5. doi:10.1186/s40662-019-0130-9.
 - [Luo2017] Luo T, Gast TJ, Vermeer TJ, Burns SA. Retinal vascular branching in healthy and diabetic subjects. Invest Ophthalmol Vis Sci 2017;58:2685-2694. doi:10.1167/iovs.17-21653.
 - [MacKenzie2016] MacKenzie LE, Choudhary TR, McNaught AI, Harvey AR. In vivo oximetry of human bulbar conjunctival and episcleral microvasculature using snapshot multispectral imaging. Exp Eye Res 2016;149:48-58. doi:10.1016/j.exer.2016.06.008.
 - [MayrovitzRoy1983] Mayrovitz HN, Roy J. Microvascular blood flow: evidence indicating a cubic dependence on arteriolar diameter. Am J Physiol 1983;245:H1031-H1038. doi:10.1152/ajpheart.1983.245.6.H1031.
 - [Meyer1988] Meyer PA. Patterns of blood flow in episcleral vessels studied by low-dose fluorescein videoangiography. Eye (Lond) 1988;2(Pt 5):533-546. doi:10.1038/eye.1988.104.
 - [MeyerWatson1987] Meyer PA, Watson PG. Low dose fluorescein angiography of the conjunctiva and episclera. Br J Ophthalmol 1987;71:2-10. doi:10.1136/bjo.71.1.2.
+- [Mistry2026] Mistry V, Ali N, Katti K, et al. Morphometric variations of extraocular muscles in a Caucasian cohort: a pilot study on the surgical implications of ethnic diversity. Cureus 2026;18:e104472. doi:10.7759/cureus.104472.
 - [Moka2020] Moka S, Koutsiaris AG, Garas A, Messinis I, Tachmitzi SV, Giannoukas A, Tsironi EE. Blood flow velocity comparison in the eye capillaries and postcapillary venules between normal pregnant and non-pregnant women. Microvasc Res 2020;127:103926. doi:10.1016/j.mvr.2019.103926.
 - [MorrisonVanBuskirk1983] Morrison JC, Van Buskirk EM. Anterior collateral circulation in the primate eye. Ophthalmology 1983;90:707-715. doi:10.1016/s0161-6420(83)34501-2.
 - [Murray1926a] Murray CD. The physiological principle of minimum work: I. The vascular system and the cost of blood volume. Proc Natl Acad Sci U S A 1926;12:207-214. doi:10.1073/pnas.12.3.207.
@@ -621,22 +758,34 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Neriyanuri2023] Neriyanuri S, Bedggood P, Symons RCA, Metha AB. Flow Heterogeneity and Factors Contributing to the Variability in Retinal Capillary Blood Flow. Invest Ophthalmol Vis Sci 2023;64(10):15. doi:10.1167/iovs.64.10.15.
 - [Olsen1998] Olsen TW, Aaberg SY, Geroski DH, Edelhauser HF. Human sclera: thickness and surface area. Am J Ophthalmol 1998;125:237-241. doi:10.1016/s0002-9394(99)80096-8.
 - [Owen2008] Owen CG, Newsom RSB, Rudnicka AR, et al. Diabetes and the tortuosity of vessels of the bulbar conjunctiva. Ophthalmology 2008;115:e27-e32. doi:10.1016/j.ophtha.2008.02.009.
+- [Pakravan2017] Pakravan M, Javadi MA, Yazdani S, et al. Distribution of intraocular pressure, central corneal thickness and vertical cup-to-disc ratio in a healthy Iranian population: the Yazd Eye Study. Acta Ophthalmol 2017;95:e144-e151. doi:10.1111/aos.13231.
+- [PanYang2020] Pan MH, Yang M. [Morphological observation on the anterior ciliary vessels in the horizontal rectus muscles of patients with concomitant horizontal strabismus]. Zhonghua Yan Ke Za Zhi 2020;56:197-204. doi:10.3760/cma.j.issn.0412-4081.2020.03.007.
+- [Pihlblad2016] Pihlblad MS, Erenler F, Sharma A, Manchandia A, et al. Anterior segment optical coherence tomography of the horizontal and vertical extraocular muscles with measurement of the insertion to limbus distance. J Pediatr Ophthalmol Strabismus 2016;53:141-145. doi:10.3928/01913913-20160405-05.
 - [Prahl1998] Prahl S. Tabulated molar extinction coefficient for hemoglobin in water (compiled from W.B. Gratzer and N. Kollias), Oregon Medical Laser Center, 1998. https://omlc.org/spectra/hemoglobin/summary.html (web page, read in full).
 - [Pries1990] Pries AR, Secomb TW, Gaehtgens P, Gross JF. Blood flow in microvascular networks. Experiments and simulation. Circ Res 1990;67:826-34. doi:10.1161/01.res.67.4.826.
 - [Pries1992] Pries AR, Neuhaus D, Gaehtgens P. Blood viscosity in tube flow: dependence on diameter and hematocrit. Am J Physiol 1992;263:H1770-8. doi:10.1152/ajpheart.1992.263.6.H1770.
 - [Pries1994] Pries AR, Secomb TW, Gessner T, Sperandio MB, Gross JF, et al. Resistance to blood flow in microvessels in vivo. Circ Res 1994;75:904-15. doi:10.1161/01.res.75.5.904.
 - [PriesSecomb2005] Pries AR, Secomb TW. Microvascular blood viscosity in vivo and the endothelial surface layer. Am J Physiol Heart Circ Physiol 2005;289:H2657-64. doi:10.1152/ajpheart.00297.2005.
+- [Rana2023] Rana K, Beecher MB, Caltabiano C, Zhao Y, Verjans J, Selva D. Normal periocular anthropometric measurements in an Australian population. Int Ophthalmol 2023;43:2695-2701. doi:10.1007/s10792-023-02669-3.
+- [Ritzmann2018] Ritzmann M, Caroline PJ, Börret R, Korszen E. An analysis of anterior scleral shape and its role in the design and fitting of scleral contact lenses. Cont Lens Anterior Eye 2018;41:205-213. doi:10.1016/j.clae.2017.10.010.
 - [RohenFunk1994] Rohen JW, Funk RH. Functional morphology of the episcleral vasculature in rabbits and dogs: presence of arteriovenous anastomoses. J Glaucoma 1994;3:51-57. doi:10.1097/00061198-199400310-00010.
 - [Runions2007] Runions A, Lane B, Prusinkiewicz P. Modeling trees with a space colonization algorithm. Eurographics Workshop on Natural Phenomena 2007:63-70. doi:10.2312/NPH/NPH07/063-070.
+- [Saraswathy2016] Saraswathy S, Tan JCH, Yu F, et al. Aqueous angiography: real-time and physiologic aqueous humor outflow imaging. PLoS One 2016;11:e0147176. doi:10.1371/journal.pone.0147176.
+- [Schuerch2020] Schuerch K, Frech H, Zinkernagel M. Conjunctival microangiopathy in diabetes mellitus assessed with optical coherence tomography angiography. Transl Vis Sci Technol 2020;9(6):10. doi:10.1167/tvst.9.6.10.
 - [SecombPries2013] Secomb TW, Pries AR. Blood viscosity in microvessels: experiment and theory. C R Phys 2013;14:470-478. doi:10.1016/j.crhy.2013.04.002.
 - [Selbach2005] Selbach JM, Rohen JW, Steuhl KP, Lütjen-Drecoll E. Angioarchitecture and innervation of the primate anterior episclera. Curr Eye Res 2005;30:337-344. doi:10.1080/02713680590934076.
+- [Selbach2005b] Selbach JM, Posielek K, Steuhl KP, Kremmer S. Episcleral venous pressure in untreated primary open-angle and normal-tension glaucoma. Ophthalmologica 2005;219:357-361. doi:10.1159/000088378.
 - [Shahidi2010] Shahidi M, Wanek J, Gaynes B, Wu T. Quantitative assessment of conjunctival microvascular circulation of the human eye. Microvasc Res 2010;79:109-113. doi:10.1016/j.mvr.2009.12.003.
 - [Sherman1981] Sherman TF. On connecting large vessels to small. The meaning of Murray's law. J Gen Physiol 1981;78:431-453. doi:10.1085/jgp.78.4.431.
 - [Shi2018] Shi Y, Hu L, Chen W, et al. Evaluated conjunctival blood flow velocity in daily contact lens wearers. Eye Contact Lens 2018;44(Suppl 1):S238-S243. doi:10.1097/ICL.0000000000000389.
 - [Sit2011] Sit AJ, Ekdawi NS, Malihi M, McLaren JW. A novel method for computerized measurement of episcleral venous pressure in humans. Exp Eye Res 2011;92:537-44. doi:10.1016/j.exer.2011.03.018.
+- [StraussKedra1987] Strauss AL, Kedra AW. Experiences with a new procedure for the measurement of the ophthalmic artery pressure: ophthalmomanometry-Doppler. Med Instrum 1987;21:255-261. No DOI; PMID 2960872.
+- [Sun2022] Sun Z, Li Y, Liu R, et al. Progress of bulbar conjunctival microcirculation alterations in the diagnosis of ocular diseases. Dis Markers 2022;2022:4046809. doi:10.1155/2022/4046809.
+- [Tan2025] Tan ST, Htoon HM, Davidson M, Rauz S, Mehta JS, Ong HS. Defining the limits of upper and lower conjunctival fornix depths in a healthy Asian Chinese population. Eye (Lond) 2025;39:2289-2297. doi:10.1038/s41433-025-03828-9.
 - [Tangelder1986] Tangelder GJ, Slaaf DW, Muijtjens AM, Arts T, oude Egbrink MG, et al. Velocity profiles of blood platelets and red blood cells flowing in arterioles of the rabbit mesentery. Circ Res 1986;59:505-14. doi:10.1161/01.res.59.5.505.
 - [VanBuskirk1989] Van Buskirk EM. The anatomy of the limbus. Eye (Lond) 1989;3(Pt 2):101-108. doi:10.1038/eye.1989.16.
 - [vanVught2021] van Vught L, Shamonin DP, Luyten GPM, Stoel BC, Beenakker JM. MRI-based 3D retinal shape determination. BMJ Open Ophthalmol 2021;6:e000855. doi:10.1136/bmjophth-2021-000855.
+- [Verma2020] Verma A, Maram J, Alagorie AR, et al. Distribution and location of vortex vein ampullae in healthy human eyes as assessed by ultra-widefield indocyanine green angiography. Ophthalmol Retina 2020;4:530-534. doi:10.1016/j.oret.2019.11.009.
 - [Vogel1991] Vogel A, Dlugos C, Nuffer R, Birngruber R. Optical properties of human sclera, and their consequences for transscleral laser applications. Lasers Surg Med 1991;11:331-40. doi:10.1002/lsm.1900110404.
 - [Vurgese2012] Vurgese S, Panda-Jonas S, Jonas JB. Scleral thickness in human eyes. PLoS One 2012;7:e29692. doi:10.1371/journal.pone.0029692.
 - [Wang2016] Wang L, Yuan J, Jiang H, et al. Vessel sampling and blood flow velocity distribution with vessel diameter for characterizing the human bulbar conjunctival microvasculature. Eye Contact Lens 2016;42:135-140. doi:10.1097/ICL.0000000000000146.

@@ -59,6 +59,36 @@ class Result:
     seconds: dict = field(default_factory=dict)
 
 
+class TubeSampler:
+    """Vessels as tubes carrying their mean red-cell density: sample points across every segment's cross-section,
+    weighted so that each sample carries its share of the expected cells (H_T A ds / V_rbc), spread across the lumen
+    by the chord length a ray crosses (the projection of a cylinder)."""
+
+    def __init__(self, net, flow, scene):
+        step = max(scene.anatomy.um_per_px / 2.0, 1.0)
+        points, weights = [], []
+        for i, e in enumerate(net.edges):
+            pts = network.resample(e.points, step)
+            if len(pts) < 2:
+                continue
+            tangent = np.gradient(pts[:, :2], axis=0)
+            tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+            normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
+            radius = e.diameter / 2
+            k = max(1, int(np.ceil(e.diameter / step)))
+            offsets = (np.arange(k) + 0.5) / k * 2 - 1                      # across the diameter, -1..1
+            chord = np.sqrt(np.clip(1 - offsets ** 2, 0, None))
+            chord /= chord.sum()
+            cells_per_sample = flow.ht[i] * np.pi * radius ** 2 * step / scene.physiology.rbc_volume_um3
+            for o, w in zip(offsets, chord):
+                p = pts.copy()
+                p[:, :2] += (o * radius) * normal
+                points.append(p)
+                weights.append(np.full(len(p), cells_per_sample * w))
+        self.points = np.vstack(points) if points else np.zeros((0, 3))
+        self.weights = np.concatenate(weights) if weights else np.zeros(0)
+
+
 def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True, progress=None) -> Result:
     """Generate the network, solve the flow, run the cells and render n_frames."""
     timings = {}
@@ -68,12 +98,29 @@ def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, recor
     start = time.perf_counter()
     flow = haemodynamics.solve(net, scene.physiology)
     timings["flow"] = time.perf_counter() - start
+    return render_network(scene, net, flow, n_frames, warm_up_s, record_cells, record_masks, progress, timings)
+
+
+def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True,
+                   progress=None, timings=None, tubes=None) -> Result:
+    """Run the red cells of a given network and flow and render n_frames of it.
+
+    tubes: draw every vessel as a tube carrying its mean red-cell density instead of discrete cells (no flicker,
+    no cell transport, far cheaper); by default when the magnification is low (Optics.tube_um_per_px or coarser)."""
+    timings = dict(timings or {})
+    if tubes is None:
+        tubes = scene.anatomy.um_per_px >= scene.optics.tube_um_per_px
     rng = np.random.default_rng([scene.seed, 1])
     start = time.perf_counter()
-    red_cells = cells.Cells(net, flow, scene.physiology, rng)
     dt = 1.0 / scene.optics.fps / 3.0
-    red_cells.warm_up(warm_up_s, dt)
-    red_cells.t = 0.0
+    if tubes:
+        red_cells = None
+        record_cells = False
+        tube = TubeSampler(net, flow, scene)
+    else:
+        red_cells = cells.Cells(net, flow, scene.physiology, rng)
+        red_cells.warm_up(warm_up_s, dt)
+        red_cells.t = 0.0
     timings["cells warm-up"] = time.perf_counter() - start
     motion = camera.eye_motion(n_frames, scene, rng)
     renderer = camera.Renderer(scene, net, rng, motion)
@@ -90,6 +137,8 @@ def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, recor
     pad = (reach + 8.0) * scene.anatomy.um_per_px
 
     def cells_at(t):
+        if tubes:
+            return tube.points, tube.weights
         while red_cells.t < t - 1e-9:
             red_cells.step(min(dt, t - red_cells.t))
         return red_cells.positions()[red_cells.visible()]

@@ -153,6 +153,7 @@ class Optics:
     saccade_px: tuple = (40.0, 130.0)
     rotation_deg: float = 0.05
     glints: int = 4
+    tube_um_per_px: float = 6.0                     # at this magnification or coarser, vessels are drawn as tubes of mean density
 
 
 @dataclass

@@ -177,13 +177,17 @@ def _solve(network: Network, conductance, boundary_values):
 def solve(network: Network, physiology: Physiology, max_iterations=400, tolerance=1e-5, relax=0.5) -> Flow:
     edges = network.edges
     E = len(edges)
-    length = np.array([e.length for e in edges])
+    # an edge may stand for more vessel than its centreline shows (the eye's lumped beds): length_override
+    length = np.array([getattr(e, "length_override", None) or e.length for e in edges])
     diameter = np.array([e.diameter for e in edges])
     incident = network.incident()
     # boundary pressures from the role and the calibre of the vessel at each boundary node
     p_boundary = {}
     for node, role in network.boundary.items():
         d = max(edges[i].diameter for i in incident[node])
+        if node in network.boundary_pressure:
+            p_boundary[node] = network.boundary_pressure[node] * MMHG
+            continue
         offset = network.boundary_offset.get(node, 0.0)
         p_boundary[node] = (boundary_pressure(role, d, physiology) + offset) * MMHG
     arterial_nodes = {k for k, r in network.boundary.items() if r == "arterial"}

@@ -538,6 +538,65 @@ def _(FLOW_OUTPUTS, Path, SERIES, burst_folder, mo, np, plt, show_figure, valida
     return (flow_rows,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## 10 · The whole anterior eye
+
+    `synth.eye` grows the network of the whole anterior eye from where its blood comes from (the anterior ciliary
+    arteries leaving the rectus insertions, the palpebral arcades through the fornices) and where it goes (the
+    episcleral and palpebral veins at the episcleral venous pressure), over the curved globe, with levels of detail
+    (docs §11): the coarse vessels of the whole globe are generated and solved once; the fine vessels are generated
+    per 1 mm tile from the tile's position and the coarse pressures at their roots; a camera at any pose assembles
+    what is in its field with every vessel's flow inherited from its own level, and draws discrete red cells at high
+    magnification or tubes of mean density at low magnification. Below: the coarse level seen from in front, with
+    the lid margins (the conjunctiva outside them is covered), a burst at one pose, and the coarse network in 3D.
+    """)
+    return
+
+
+@app.cell
+def _(OUTPUT_DIR, mo, plt, scene, show_figure, time):
+    from synth import eye as _eye_module
+    from synth import view3d as _view3d_eye
+
+    _start = time.perf_counter()
+    whole_eye = _eye_module.Eye(seed=scene.seed)
+    print(f"Coarse network of the whole eye: {len(whole_eye.network.edges)} segments, solved in "
+          f"{time.perf_counter() - _start:.0f} s")
+    for _kind, _row in _eye_module.summary(whole_eye).items():
+        print(f"  {_kind:28s} {_row}")
+    _frame, _extent, _outlines = _eye_module.overview(whole_eye)
+    from synth import media as _media
+    _figure, _axis = plt.subplots(figsize=(11, 8.5))
+    _axis.imshow(_media.od_to_gray(_media.optical_density(_frame[None].astype("float32"))[0]), cmap="gray",
+                 extent=_extent)
+    for _name, (_x, _y) in _outlines.items():
+        _axis.plot(_x, _y, "--", lw=1, color="orange" if "lid" in _name else "cyan", label=_name)
+    _axis.set(xlabel="temporal (mm)", ylabel="superior (mm)", title="the whole anterior eye, coarse level, from in front")
+    _axis.legend(loc="lower right")
+    show_figure(_figure, "eye_overview")
+    mo.output.append(mo.ui.plotly(_view3d_eye.eye_figure(whole_eye)))
+    return (whole_eye,)
+
+
+@app.cell
+def _(OUTPUT_DIR, media, mo, scene, time, whole_eye):
+    from synth import eye as _eye_view
+
+    _start = time.perf_counter()
+    _pose = _eye_view.Pose(s_mm=3.0, clock_deg=90.0)
+    _view = _eye_view.simulate_view(whole_eye, _pose, n_frames=24, scene=scene, record_cells=False,
+                                    record_masks=False)
+    _path = media.webp(media.od_to_gray(media.optical_density(_view.frames.astype("float32"))),
+                       OUTPUT_DIR / f"eye_view_temporal_3mm_seed{scene.seed}.webp", scene.optics.fps)
+    mo.output.append(mo.md(f"The temporal conjunctiva 3 mm from the limbus, {len(_view.network.edges)} segments from "
+                           f"the coarse level and {_view.seconds.get('tiles cached', 0)} tiles, in "
+                           f"{time.perf_counter() - _start:.0f} s ({', '.join(f'{k} {v:.1f}' for k, v in _view.seconds.items())})"))
+    mo.output.append(mo.image(_path.read_bytes()))
+    return
+
+
 @app.cell
 def _(notebook_start, time):
     import resource as _resource
