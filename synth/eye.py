@@ -74,8 +74,10 @@ class EyeAnatomy:
     coarse_growth_influence_um: float = 1500.0
     coarse_growth_kill_um: float = 450.0
     coarse_leaf_diameter: tuple = (20.0, 28.0)       # where the coarse level hands over to the tiles (µm)
-    coarse_radial_bias: float = 0.5                  # conjunctival vessels converge radially on the limbus [Akagi2018]
-    coarse_branch_spacing_um: float = 600.0          # least distance between branch points of a coarse tree (as at
+    coarse_radial_bias: float = 0.15                 # conjunctival vessels run radially [Akagi2018], as at the patch level
+    coarse_growth_persistence: float = 0.6           # how much a growing coarse vessel keeps its heading (fitted to
+                                                     # the orientation spread and junction density of the recordings)
+    coarse_branch_spacing_um: float = 400.0          # least distance between branch points of a coarse tree (as at
     coarse_max_terminal_um: float = 1500.0           # the patch level, docs §5, at trunk scale)
     conjunctival_artery_diameter: tuple = (25.0, 40.0)   # within the 5.9-61 µm of conjunctival arterioles [Khansari2017]
     watershed_mm: float = 4.0                        # lid branches supply the conjunctiva from 4 mm on [Sun2022]
@@ -83,8 +85,8 @@ class EyeAnatomy:
                                                      "nasal": 8.0})   # fornix depths 15.3-16.1 / 10.1-10.9 mm [Jutley2016, Khan2014]; horizontal assumed
     episcleral_veins_per_mm: float = 0.6             # radial episcleral veins per mm of limbus (fitted, docs §5)
     episcleral_vein_diameter: tuple = (50.0, 100.0)  # [Asanad2021, Kim2024]
-    episcleral_heading_spread: float = 0.5          # rad about the meridian (fitted, as at the patch level, docs §5)
-    episcleral_curvature: float = 0.0004             # rad/µm, gentle bends over millimetres (docs §5)
+    episcleral_heading_spread: float = 0.8           # rad about the meridian, as at the patch level (docs §5)
+    episcleral_curvature: float = 0.0008             # rad/µm SD of the slow bend, as at the patch level (docs §5)
     episcleral_avas_per_mm2: float = 0.75            # arteriovenous anastomoses, 0.5-1 per mm2 [Selbach2005]
     episcleral_depth_um: float = 350.0               # docs §2.2
     conjunctival_trunk_depth_um: float = 160.0       # docs §2.2
@@ -231,15 +233,18 @@ def _shape(rng, xy, anatomy, kind):
 def _plane_vessel(globe, rng, s0, clock0, s_end, depth0, depth1, heading_spread, curvature_sd, heading_offset=0.0,
                   step=12.0):
     """A long vessel that runs away from the limbus, leaving at a heading drawn about the meridian (plus
-    heading_offset for a side branch) and turning back towards the meridian with a slow random bend (a
-    mean-reverting curvature), until it reaches s_end; returned in eye coordinates. Episcleral veins run radially
-    from the limbus [Meyer1988], so none spirals round the globe."""
-    heading = rng.normal(0.0, heading_spread) + heading_offset          # 0 is straight away from the limbus
+    heading_offset for a side branch) and bending slowly at random about that heading (a curvature pulled back
+    towards it, as at the patch level), until it reaches s_end; returned in eye coordinates. Episcleral veins drain
+    away from the limbus [Meyer1988]: the heading stays within 1.3 rad of the meridian, so none spirals round the
+    globe."""
+    heading = float(np.clip(rng.normal(0.0, heading_spread), -1.2, 1.2)) + heading_offset   # 0: away from the limbus
     s, c = float(s0), float(clock0)
     pts = []
     n_max = int(3 * abs(s_end - s0) / step) + 10
     curvature = curvature_sd * _smooth_noise(rng, n_max, 250.0 / step)
-    target = rng.normal(0.0, 0.12)
+    # pulled back towards its own initial heading, as at the patch level, so veins keep the spread of courses the
+    # recordings show instead of all turning onto the meridian
+    target = float(np.clip(heading, -1.3, 1.3))
     for k in range(n_max):
         theta = float(globe.theta(s))
         pts.append((s, c))
@@ -400,7 +405,7 @@ def build_coarse(eye: Eye):
         sources.append(("posterior", clock % 360.0))
         clock += np.degrees(a.posterior_artery_spacing_mm * 1000.0 / (g.R * math.sin(float(g.theta(f))))) * rng.uniform(0.8, 1.2)
     positions, parent, tree = colonise(rng, roots, headings, attractors, a.coarse_growth_step_um,
-                                       a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=0.85,
+                                       a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=a.coarse_growth_persistence,
                                        radial_bias=a.coarse_radial_bias, branch_spacing=a.coarse_branch_spacing_um)
     positions, parent, tree = _prune_terminals(positions, parent, tree, a.coarse_max_terminal_um)
     paths, children = _tree_paths(parent)
@@ -487,7 +492,7 @@ def build_coarse(eye: Eye):
         v_headings.append(math.pi / 2)
         v_sources.append(("limbal", 2 * k))
     vpos, vpar, vtree = colonise(rng, v_roots, v_headings, v_attractors, a.coarse_growth_step_um,
-                                 a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=0.85,
+                                 a.coarse_growth_influence_um, a.coarse_growth_kill_um, persistence=a.coarse_growth_persistence,
                                  radial_bias=a.coarse_radial_bias, branch_spacing=a.coarse_branch_spacing_um)
     vpos, vpar, vtree = _prune_terminals(vpos, vpar, vtree, a.coarse_max_terminal_um)
     vpaths, vchildren = _tree_paths(vpar)
@@ -590,6 +595,38 @@ def build_coarse(eye: Eye):
             bed = Edge(-1, -1, np.vstack([art.points[idx], vein_pts[j]]), 0.0, "bed", "bed", -1)
             bed.bed = (ai, idx, int(vein_id[j]), int(vein_k[j]))
             b.edges.append(bed)
+    # every trunk tip drains through a bed of its own: a tip beyond its trunk's last bed would carry no flow, yet the
+    # tiles root fine trees on it, and a fine tree draining into a vessel without flow ends in a stagnant column
+    arteries = [i for i, e in enumerate(b.edges) if e.kind == "conjunctival artery"]
+    art_pts = np.vstack([b.edges[i].points for i in arteries])
+    art_id = np.concatenate([np.full(len(b.edges[i].points), i) for i in arteries])
+    art_k = np.concatenate([np.arange(len(b.edges[i].points)) for i in arteries])
+    atree = cKDTree(art_pts)
+    degree = {}
+    for e in b.edges:
+        if e.kind != "bed":
+            degree[e.u] = degree.get(e.u, 0) + 1
+            degree[e.v] = degree.get(e.v, 0) + 1
+    for i, e in enumerate(list(b.edges)):
+        if e.kind not in ("conjunctival artery", "conjunctival vein") or len(e.points) < 5:
+            continue
+        for node, idx in ((e.u, 1), (e.v, len(e.points) - 2)):
+            if degree.get(node, 0) != 1 or node in b.boundary:
+                continue
+            if e.kind == "conjunctival artery":
+                dist, j = vtree.query(e.points[idx])
+                other, ok = (int(vein_id[j]), int(vein_k[j])), 1 <= vein_k[j] <= len(b.edges[vein_id[j]].points) - 2
+                pair = (i, idx) + other
+            else:
+                dist, j = atree.query(e.points[idx])
+                other, ok = (int(art_id[j]), int(art_k[j])), 1 <= art_k[j] <= len(b.edges[art_id[j]].points) - 2
+                pair = other + (i, idx)
+            if dist > 1500.0 or not ok:
+                continue
+            bed = Edge(-1, -1, np.vstack([b.edges[pair[0]].points[pair[1]], b.edges[pair[2]].points[pair[3]]]), 0.0,
+                       "bed", "bed", -1)
+            bed.bed = pair
+            b.edges.append(bed)
     # resolve the beds into real nodes (split the artery and vein edges at the bed points)
     beds = [e for e in b.edges if e.kind == "bed"]
     b.edges = [e for e in b.edges if e.kind != "bed"]
@@ -679,9 +716,45 @@ def build_tile(eye: Eye, key):
             if k <= 0 or k >= len(e.points) - 1:
                 continue
             tangent = local[min(k + 3, len(local) - 1), :2] - local[max(k - 3, 0), :2]
-            heading = math.atan2(tangent[1], tangent[0]) + rng.choice([-1, 1]) * math.radians(rng.uniform(35, 60))
+            heading = math.atan2(tangent[1], tangent[0]) + rng.choice([-1, 1]) * math.radians(rng.uniform(30, 85))
             roots.append(dict(venous=e.kind == "conjunctival vein", top=local[k].copy(), heading=heading))
             attach.append((ei, k))
+    # communicating vessels, as at the patch level: they rise obliquely from the episcleral vessels beneath the tile
+    # and root conjunctival trees that grow in every direction, not only off the radial trunks (docs §2.4)
+    A = eye.scene.anatomy
+    under = {False: [], True: []}
+    for ei, e in enumerate(coarse.edges):
+        venous = e.kind == "episcleral vein"
+        if not venous and e.kind not in ("episcleral artery", "ciliary artery"):
+            continue
+        local = g.to_local(e.points, frame)
+        inside = (local[:, 0] > domain[0] + 100) & (local[:, 0] < domain[1] - 100) & \
+                 (local[:, 1] > domain[2] + 100) & (local[:, 1] < domain[3] - 100)
+        inside[:2] = inside[-2:] = False
+        under[venous] += [(ei, int(k), local[k]) for k in np.flatnonzero(inside)]
+    top, bottom = A.conjunctival_plexus
+    # a tile whose trees all hang from one side of the circulation would carry no flow, so where a vessel of the
+    # missing side passes beneath, at least one communicating vessel rises from it
+    have = {v: any(r["venous"] == v for r in roots) for v in (False, True)}
+    n_comm = rng.poisson(A.communicating_per_mm2 * width * t * 1e-6)
+    n_comm = max(n_comm, sum(1 for v in (False, True) if not have[v] and under[v]))
+    for k in range(n_comm):
+        missing = [v for v in (False, True) if not have[v] and under[v]]
+        venous = missing[0] if missing else ((k % 2 == 1) if under[False] and under[True] else bool(under[True]))
+        if not under[venous]:
+            continue
+        for _ in range(6):
+            ei, kk, point = under[venous][int(rng.integers(len(under[venous])))]
+            angle = math.radians(rng.uniform(*A.communicating_angle_deg))
+            z_top = rng.uniform(top + 0.5 * (bottom - top), bottom)
+            run = max(point[2] - z_top, 20.0) / math.tan(angle)
+            direction = rng.uniform(0, 2 * math.pi)
+            top_xyz = np.array([point[0] + run * math.cos(direction), point[1] + run * math.sin(direction), z_top])
+            if domain[0] + 60 < top_xyz[0] < domain[1] - 60 and domain[2] + 60 < top_xyz[1] < domain[3] - 60:
+                roots.append(dict(venous=venous, top=top_xyz, heading=rng.uniform(0, 2 * math.pi), bottom=point.copy()))
+                attach.append((ei, kk))
+                have[venous] = True
+                break
     scene = eye.scene
     net, root_nodes = generate_fine(scene, domain, roots, _tile_seed(eye, key))
     # keep the roots whose trees grew; they are the tile's boundary, at the coarse pressure there

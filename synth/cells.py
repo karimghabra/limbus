@@ -162,6 +162,32 @@ class Cells:
         for node in network.boundary:
             for e in self.incident[node]:
                 self.inflow.append((e, node))
+        self.inflow_scale = {key: 1.0 for key in self.inflow}
+        # junctions whose drawn vessels do not conserve red-cell flux: in an eye's view, blood also leaves or joins
+        # through vessels the view does not draw (the coarse level's lumped beds, fine trees whose flow was solved
+        # at their own level). Where more red-cell flux arrives than leaves, the excess cells leave with that blood
+        # (keep_share); where more leaves than arrives, the missing cells enter as at an inflow boundary. Without
+        # this the cells of a vessel pile up past such a junction, or thin out, in blocks along the vessel.
+        q, hd = flow.flow, flow.hd
+        self.keep_share = {}
+        self.keep_quota = {}
+        for node, members in enumerate(self.incident):
+            if node in network.boundary or len(members) < 2:
+                continue
+            f_in = f_out = 0.0
+            for e in members:
+                into = (self.v[e] == node and q[e] > 0) or (self.u[e] == node and q[e] < 0)
+                f_in += abs(q[e]) * hd[e] if into else 0.0
+                f_out += 0.0 if into else abs(q[e]) * hd[e]
+            if f_in > 1.01 * f_out:
+                self.keep_share[node] = f_out / f_in
+            elif f_out > 1.01 * f_in and f_out > 0:
+                for e in members:
+                    leaving = (self.u[e] == node and q[e] > 0) or (self.v[e] == node and q[e] < 0)
+                    if leaving and abs(q[e]) * hd[e] > 0:
+                        key = (e, node)
+                        self.inflow.append(key)
+                        self.inflow_scale[key] = (f_out - f_in) / f_out
         self.next_arrival = {key: self.rng.exponential(1.0) for key in self.inflow}
         self.clump_state = {}
 
@@ -257,7 +283,7 @@ class Cells:
             entering = (node == self.u[e] and q > 0) or (node == self.v[e] and q < 0)
             if not entering:
                 continue
-            rate = abs(q) * 1e3 * self.flow.hd[e] / self.p.rbc_volume_um3      # cells per second
+            rate = abs(q) * 1e3 * self.flow.hd[e] / self.p.rbc_volume_um3 * self.inflow_scale[key]   # cells per second
             if rate <= 0:
                 continue
             # next_arrival is kept in units of mean gaps, so that a changing rate keeps the process continuous
@@ -300,7 +326,9 @@ class Cells:
         out, flux = [], []
         for e in self.incident[node]:
             q = q_now[e]
-            if (self.u[e] == node and q > 0) or (self.v[e] == node and q < 0):
+            # only a segment that carries red cells away can take them: one without red-cell flux (no flow, or
+            # plasma only) would hold arriving cells still and pile them into a dark spot
+            if ((self.u[e] == node and q > 0) or (self.v[e] == node and q < 0)) and abs(q) * self.flow.hd[e] > 0:
                 out.append(e)
                 flux.append(abs(q) * self.flow.hd[e])
         flux = np.array(flux)
@@ -325,6 +353,15 @@ class Cells:
             if int(n) in self.boundary:
                 keep[cells_here] = False
                 continue
+            if int(n) in self.keep_share:          # the share of arriving cells that stays in drawn vessels
+                quota = self.keep_quota.get(int(n), 0.0) + len(members) * self.keep_share[int(n)]
+                stay = int(np.floor(quota))
+                self.keep_quota[int(n)] = quota - stay
+                order = self.rng.permutation(len(members))
+                keep[cells_here[order[stay:]]] = False
+                members, cells_here = members[order[:stay]], cells_here[order[:stay]]
+                if not len(members):
+                    continue
             out, share = self._outgoing(int(n), q_now)
             if len(out) == 0:
                 # no drawn vessel carries blood away from here: the blood leaves through vessels this network does

@@ -528,9 +528,12 @@ fornices; the two territories meet at a watershed [MeyerWatson1987] that a revie
 limbus (lid branches supply the conjunctiva from 4 mm on [Sun2022]). In the model, anterior arteries rise from the
 circle every 1.8 mm (scaled by the quadrant's density) and posterior arteries enter from the fornix every 2.5 mm,
 and both grow by space colonisation [Runions2007] over the conjunctival band at trunk scale (branches down to
-20–28 µm, at least 0.6 mm between branch points, unbranched terminal branches cut to 1.5 mm, a pull along the
-meridian so that they converge radially on the limbus [Akagi2018]), so they meet and interleave around the
-watershed rather than at a fixed line. Their paths get the meander and bends of section 5, and half its calibre
+20–28 µm, at least 0.4 mm between branch points, unbranched terminal branches cut to 1.5 mm, the patch level's
+pull along the meridian (`coarse_radial_bias` 0.15 [Akagi2018]) and a persistence of heading of 0.6
+(`coarse_growth_persistence`), both fitted so that a 2.5 mm field shows the spread of vessel orientations and the
+junction density of the recordings (§7: orientation order 0.15, 33 junctions per mm²); with a stronger pull the
+trunks crossed every field as parallel radial lines), so they meet and interleave around the watershed rather than
+at a fixed line. Their paths get the meander and bends of section 5, and half its calibre
 variation (trunks vary less in proportion than small vessels [Kiani1993]). Each anterior artery also
 sends a short branch forward to the limbal arcade, which drains through palisade hairpins 1.5–2.1 mm long
 [Kemenes2025, Haagdorens2017] into a limbal venous ring (35 µm); the forward branches' ends are joined around the
@@ -543,8 +546,9 @@ eye [Kutoglu2005]; 8.0 ± 2.1 ampullae on widefield angiography [Verma2020]); co
 palpebral veins. Aqueous enters episcleral veins at the limbus through aqueous veins; no human count was found, and
 nasal outflow dominated in live aqueous angiography [Huang2017] but not consistently in enucleated eyes
 [Saraswathy2016]. The model: episcleral veins (0.6 per mm of limbus, 50–100 µm) leave the limbal venous ring and
-run away from the limbus past the insertions in long, gently bending runs (a random curvature of SD 0.0004 rad/µm
-pulled back towards the meridian, so none spirals round the globe) with side branches leaving at 25–50°; conjunctival venular
+run away from the limbus past the insertions in long, gently bending runs with the patch level's course: a heading
+drawn about the meridian with a spread of 0.8 rad (at most 1.2 rad, so none spirals round the globe) and a random
+curvature of SD 0.0008 rad/µm pulled back towards that initial heading (§5), with side branches leaving at 25–50°; conjunctival venular
 trees, half of whose growth follows the arteries so that veins accompany them, drain to outlets at the fornix and
 into the limbal ring. Aqueous inflow is not modelled.
 
@@ -557,7 +561,9 @@ Ophthalmic artery systolic pressure is 0.68 ± 0.04 times brachial [StraussKedra
 inlets of the anterior ciliary arteries at 65 mmHg (0.7 of a mean brachial pressure of 93 mmHg), the palpebral
 inlets of the posterior conjunctival arteries at 60 mmHg (assumed), and every venous outlet at 9 mmHg; the coarse
 network's flows and velocities then follow from the anatomy. The fine vessels each coarse artery feeds are lumped
-into one equivalent resistance every 0.5 mm, joining it to the nearest conjunctival vein (`bed_conductance_scale`,
+into one equivalent resistance every 0.5 mm, joining it to the nearest conjunctival vein, and every trunk tip
+drains through such a bed of its own (a tip past its trunk's last bed would carry no flow while tiles root fine
+trees on it) (`bed_conductance_scale`,
 fitted so that the coarse conjunctival vessels carry the cited velocities), and episcleral arteries open into
 episcleral veins through 0.75 arteriovenous anastomoses per mm² (§2.4). Result (seed 0): conjunctival arteries
 0.3–0.4 mm/s and veins 0.2–0.6 mm/s (cited §6.5), episcleral vein flow 0.15–0.37 µl/min against 0.40 ± 0.22
@@ -589,12 +595,18 @@ superior and inferior, interpolated around the clock).
 - **Coarse** (whole globe, once per eye, about 12 s and 0.5 GB): §11.3–11.6, about 1.8 m of conjunctival and 0.4 m of episcleral vessel in some 5 000 segments, solved as one network.
 - **Fine** (per tile of about 1 mm × 1 mm on the globe, on demand): conjunctival arteriolar and venular trees, the
   capillary mesh and anastomoses (§4–5), grown from roots placed along the coarse conjunctival vessels that cross
-  the tile, from a seed made of the eye's seed and the tile's position only, with the tile's flow solved from the
-  coarse pressures at its roots; a tile generated again is identical (tested).
+  the tile (leaving them at 30–85°) and, as at the patch level, from communicating vessels rising obliquely from
+  the episcleral vessels beneath it (`communicating_per_mm2`, §2.4; at least one of each side of the circulation
+  wherever such a vessel passes beneath, so every tile carries flow), from a seed made of the eye's seed and the
+  tile's position only, with the tile's flow solved from the coarse pressures at its roots; a tile generated again
+  is identical (tested). Branches that dangle (end in a node that is no junction) carry exactly no flow.
 - **The view** (the camera's field and a margin): the coarse pieces and tiles in it, assembled with the flow of
   every piece inherited from its own level, so a vessel's path and flow do not depend on the magnification or the
   extent of the view (tested: the same spot at 3.26 and 6.5 µm/px). Blood that leaves a drawn vessel through a
-  vessel the view does not draw (a lumped bed, a region without tiles) takes its red cells with it.
+  vessel the view does not draw (a lumped bed, a region without tiles) takes its red cells with it, and where
+  blood joins through one, its red cells enter as at an inflow boundary (`synth.cells`): at every junction the
+  red-cell flux of the drawn vessels then matches their flow solution, so cells neither pile up nor thin out in
+  blocks along a vessel. A vessel without red-cell flux never takes cells (they would stand still in it).
 - **Rendering by magnification**: below `tube_um_per_px` (6 µm/px) every red cell is transported and drawn; at
   coarser magnification each vessel is a tube carrying its mean red-cell density across its cross-section (no
   flicker), and tiles are left out above 8 µm/px. Measured on this machine: a 2.5 × 1.7 mm view at 3.26 µm/px with
