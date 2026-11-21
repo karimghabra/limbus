@@ -116,9 +116,10 @@ Measured on the lab PC with 6 threads, burst `2026-09-16_15-50-52` (140 frames o
   1¾ minutes at a peak of 4.5 GB (the preprocessing about 30 s of it, without its figures). Its own memory is
   mostly two `float32` copies of the fixation's frames, 0.8 GB on the crop; on the whole frame they take about
   3.4 GB on top of the preprocessing.
-- §7, on by default, adds roughly two minutes on the crop and raises the peak to about 5.3 GB: each candidate
-  background is a third copy of the frames, and the sliding SVD briefly holds two more, so about 3.4 GB more
-  than the two copies on the whole frame.
+- §7, on by default, adds roughly two minutes on the crop and raises the peak to about 5.3 GB (measured when §7
+  also scored a subtracted form of each background, since removed). Each candidate background is one more
+  full-size copy of the frames, and the sliding SVD briefly holds two (`flat` and `out`, which becomes its
+  residual), so about 3.4 GB on top of the two copies above on the whole frame.
 - The archive's sections 17–25 need much more: on the crop the archive, preprocessing included, runs
   in 2¼ minutes at a peak of 4.6 GB; on the whole frame it needs roughly 8–11 GB.
 

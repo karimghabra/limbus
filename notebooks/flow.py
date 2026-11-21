@@ -444,7 +444,10 @@ def _(
         window = min(window, frames)
         has_data = np.isfinite(video)
         flat = (np.where(has_data, video, 0) + np.nan_to_num(mean_image)[None]).reshape(frames, -1)
-        gram = (flat @ flat.T).astype(np.float64)
+        gram = np.zeros((frames, frames))
+        for column in range(0, flat.shape[1], 65536):
+            block = flat[:, column:column + 65536].astype(np.float64)
+            gram += block @ block.T
         out = np.empty_like(flat)
         for t in range(frames):
             first = min(max(t - window // 2, 0), frames - window)
