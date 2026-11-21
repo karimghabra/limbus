@@ -3,6 +3,7 @@
 | Notebook | |
 |---|---|
 | `foundation.py` | **The preprocessing**: one burst, from its TIFF frames to the cleaned, stabilized pictures that vessel annotation starts from, saved to one file at the end |
+| `flow.py` | **Flow without annotation**: why subtracting each pixel's temporal mean makes flow visible, the perfusion map, the centrelines of the perfused vessels, and the red-cell velocity along each from kymographs, cross-checked by 2D cross-correlation |
 | `archive_vessel_annotation.py` | The vessel annotation that used to follow the preprocessing (sections 17–25), kept unchanged for reference; a different annotation algorithm is planned |
 
 They are [marimo](https://marimo.io) notebooks: plain Python files that diff like code, run as scripts
@@ -57,6 +58,24 @@ defined by one cell only, so:
 `marimo export ipynb notebooks/foundation.py -o foundation.ipynb` writes the same cells, in the same
 order, as a Jupyter notebook.
 
+## Flow: where blood moves, and how fast
+
+`flow.py` runs `foundation.py` inside it (`app.embed()`, with the preprocessing's figures and previews left out)
+and works on one fixation's stabilized density frames. It needs no vessel annotation:
+
+| § | |
+|---|---|
+| 1 | Subtracting the temporal mean, measured: signal, noise and clutter of the moving and static pixels before and after, against a rolling mean and median, and the temporal standard-deviation map. It raises the contrast of the moving signal against the static clutter, not the signal-to-noise ratio of a pixel; the real gains come from pooling pixels and frames |
+| 2 | The perfusion map: the temporal variance of the video high-passed in time (`DRIFT_WINDOW`), levelled for shot noise and thresholded into perfused regions |
+| 3 | Centrelines: the skeleton of the perfused regions, cut at junctions into segments |
+| 4 | Kymographs along every segment and the red-cell velocity from the slope of their streaks (a multi-lag slope search, the Radon transform without its noise term), with block-of-time uncertainties and a structure-tensor estimate |
+| 5 | A cross-check by ensemble 2D cross-correlation of the frames around each segment |
+| 6 | The velocity map, the per-segment table, and what the frame rate and exposure allow |
+| 7 | Videos, figures and tables saved to `flow_outputs/<burst folder>/` in the working directory |
+
+Velocities are in px/frame and px/s; set `UM_PER_PX` (5.86 µm divided by the optical magnification) for mm/s.
+The previews it shows in the notebook are kept under 2.5 MB each; the full side-by-side video is saved as WebM.
+
 ## The archive: vessel annotation
 
 `archive_vessel_annotation.py` holds sections 17–25 of the combined notebook, unchanged, and the notes
@@ -75,7 +94,7 @@ its marimo form, §23's own `blur_valid` (a blur over the pixels with data, unli
 notebooks/live.sh install                     # the environment, in notebooks/.venv (see LIVE.md)
 source notebooks/.venv/bin/activate
 export LIMBUS_BURST="/mnt/d/Conjunctiva Code/limbus/recordings/burst_2026-09-16_15-50-52"
-cd ~/limbus-work                              # the notebooks write previews/, vessel_pictures/, preprocessed/, neural_cache/ here
+cd ~/limbus-work                              # the notebooks write previews/, vessel_pictures/, preprocessed/, neural_cache/, flow_outputs/ here
 marimo edit /path/to/limbus/notebooks         # the folder: a list of the notebooks, in the browser
 marimo export html /path/to/limbus/notebooks/foundation.py -o foundation.html   # run it all, keep the outputs
 ```
@@ -90,6 +109,9 @@ Measured on the lab PC with 6 threads, burst `2026-09-16_15-50-52` (140 frames o
 - `foundation.py` on the whole frame runs in about 2½ minutes.
 - On a 720 × 1152 crop of the same burst (all 140 frames), `foundation.py` runs in 42 seconds at a peak
   of 2.7 GB and saves a 17 MB result.
+- `flow.py` on the crop, preprocessing included, runs in about 1¾ minutes at a peak of 4.5 GB (the
+  preprocessing about 30 s of it, without its figures). Its own memory is mostly two `float32` copies of the
+  fixation's frames, 0.8 GB on the crop; on the whole frame they take about 3.4 GB on top of the preprocessing.
 - The archive's sections 17–25 need much more: on the crop the archive, preprocessing included, runs
   in 2¼ minutes at a peak of 4.6 GB; on the whole frame it needs roughly 8–11 GB.
 
