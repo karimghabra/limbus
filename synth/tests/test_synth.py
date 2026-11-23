@@ -316,6 +316,31 @@ def test_cell_truth_keeps_positions_in_a_wide_scene(burst, tmp_path):
     assert np.allclose(cells["origin_um"] + cells["xyz_decimicron"] / 10.0, xyz, atol=0.06)
 
 
+def test_masks_reach_the_end_of_every_segment():
+    """The frame-0 vessel mask is drawn along the whole of every segment, to its downstream node: the pixel of
+    each of a centreline's last points (placed by the projection the synth.simulate docstring gives) lies on a
+    vessel."""
+    scene = small_scene(3)
+    result = simulate(scene, n_frames=2, warm_up_s=0.05, record_cells=False)
+    net, mask = result.network, result.masks["edge_frame0"]
+    um, R = scene.anatomy.um_per_px, scene.optics.eye_radius_um
+    x0, x1, y0, y1 = net.field_of_view
+    centre = np.array([(x0 + x1) / 2, (y0 + y1) / 2])
+    h, w = mask.shape
+    ends = 0
+    for e in net.edges:
+        tail = e.points[-6:]
+        u = tail[:, :2] - centre
+        r = np.maximum(np.hypot(u[:, 0], u[:, 1]), 1e-9)
+        k = (R - tail[:, 2]) * np.sin(r / R) / r
+        col = np.round(w / 2 + u[:, 0] * k / um).astype(int)
+        row = np.round(h / 2 + u[:, 1] * k / um).astype(int)
+        inside = (col >= 1) & (col < w - 1) & (row >= 1) & (row < h - 1)
+        assert np.all(mask[row[inside], col[inside]] != 0)
+        ends += int(inside.sum())
+    assert ends > 100
+
+
 def test_random_scenes_stay_anatomical():
     from synth.randomize import random_scene
     for seed in (11, 12):

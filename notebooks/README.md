@@ -145,6 +145,6 @@ SYNTH_SEED=1 SYNTH_FRAMES=120 marimo export html /path/to/limbus/notebooks/synth
 
 It writes to `synthetic_outputs/` in the working directory. At the default 768 × 512 px and 120 frames it runs in
 about 4 minutes on 6 threads at a peak of about 3 GB, and the burst with its truth takes about 500 MB on disk
-(`truth/cells.npz`, every red cell in every frame, is most of it). The specification is
+(`truth/cells.npz`, every red cell the camera draws in every frame, is most of it). The specification is
 `docs/synthetic_conjunctiva_anatomy.md` and the validation `docs/synthetic_conjunctiva_validation.md`.
 

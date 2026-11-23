@@ -270,15 +270,14 @@ def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
     order = np.argsort([-float(np.mean(e.points[:, 2])) for e in net.edges])      # deepest first
     for index in order:
         e = net.edges[index]
-        pts = e.points[:: max(1, int(12 / max(np.median(np.linalg.norm(np.diff(e.points, axis=0), axis=1)), 1e-6)))]
-        if len(pts) < 2:
-            pts = e.points[[0, -1]]
+        n = len(e.points)
+        step = max(1, int(12 / max(np.median(np.linalg.norm(np.diff(e.points, axis=0), axis=1)), 1e-6)))
+        pick = np.unique(np.r_[0:n:step, n - 1])                          # every step-th point, and the last one
+        pts = e.points[pick]
         q = renderer.project(pts, frame_time) / renderer.ss * ss        # px at the mask's own supersampling
         if (q[:, 0].max() < -10 or q[:, 0].min() > w * ss + 10 or q[:, 1].max() < -10 or q[:, 1].min() > h * ss + 10):
             continue
-        local = e.local_diameter[:: max(1, int(12 / max(np.median(np.linalg.norm(np.diff(e.points, axis=0), axis=1)), 1e-6)))]
-        if len(local) != len(pts):
-            local = np.full(len(pts), e.diameter)
+        local = e.local_diameter[pick]
         tangent = np.diff(q, axis=0)
         seg_len = np.linalg.norm(tangent, axis=1, keepdims=True)
         direction = tangent / np.maximum(seg_len, 1e-9)

@@ -753,9 +753,11 @@ vessel has the same path and the same flow at every magnification and in every v
   flow and red cells exactly. Seed 0: 98.7 % of the coarse, 98.7 % of the fine-tree and 98.2 % of the capillary
   length carries red cells moving at 5 µm/s or more; the rest are dead ends and plasma-only capillaries (phase
   separation, §6.3). Generating and solving a whole eye takes about 2–3 minutes and 0.4 GB.
-- **The view** (the camera's field and a margin): every edge of the eye that falls in it, cut at the field's edge,
+- **The view** (the camera's field and a margin): every vessel of the eye that falls in it, cut at the field's edge,
   each piece carrying the flow, haematocrit and pulse of the edge it came from (tested at 1, 3.26, 6.5 and 12 µm/px:
-  every piece's flow equals its edge's, and a view draws every edge in its field). At low magnification only the
+  every piece's flow equals its edge's, and a view draws every vessel in its field). The lumped beds (§11.6, present
+  only in an eye grown with `Eye(fine_region=...)`) stay in the flow solve but are not vessels: views, their truth
+  (`graph.json`, the masks) and the browser page leave them out. At low magnification only the
   coarse level may be drawn; blood that leaves a drawn vessel through one the view does not draw takes its red
   cells with it, and where blood joins through one, its red cells enter as at an inflow boundary (`synth.cells`), so
   cells neither pile up nor thin out in blocks along a vessel. A vessel without red-cell flux never takes cells.

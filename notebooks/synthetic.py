@@ -481,8 +481,8 @@ def _(mo):
     `write_burst` writes the frames exactly as the LIMBUS recorder does (`frame_NNNNNN.tif`, `manifest.json`,
     `frames.csv`), so `foundation.py` and the flow analysis run on it unchanged, and a `truth/` folder beside them:
     the directed graph with 3D centrelines, diameters, depths, flows, velocities and haematocrits (`graph.json`),
-    the motion, focus and per-segment velocities of every frame (`frames.npz`), every red cell's 3D position in
-    every frame (`cells.npz`), per-frame maps of the shallowest vessel's id, depth and projected velocity
+    the motion, focus and per-segment velocities of every frame (`frames.npz`), the 3D position of every red cell
+    the camera draws in every frame, at mid-exposure (`cells.npz`), per-frame maps of the shallowest vessel's id, depth and projected velocity
     (`masks.npz`), and every parameter of the scene (`scene.json`). The `synth.simulate` docstring describes each
     field.
     """)
