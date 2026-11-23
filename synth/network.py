@@ -809,7 +809,10 @@ def _roughen(network_edges, rng, scene):
         tangent = np.gradient(pts[:, :2], axis=0)
         tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
         normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
-        offset = jitter_amplitude * _smooth_noise(rng, n, jitter_length / 2.0)
+        # the jitter grows with the calibre: a wide vessel's course is uneven over a few µm (anatomy.large_jitter)
+        amplitude = jitter_amplitude + a.large_jitter[0] * e.diameter
+        length = jitter_length + a.large_jitter[1] * e.diameter
+        offset = amplitude * _smooth_noise(rng, n, length / 2.0)
         if e.kind != "capillary":                      # capillaries stay smooth between their nodes
             offset += _bumps(rng, s, kink_rate * 1e-3, kink_amplitude, kink_width)
             offset += a.bend_wiggle[0] * _smooth_noise(rng, n, a.bend_wiggle[1] / 2.0)
@@ -817,12 +820,110 @@ def _roughen(network_edges, rng, scene):
         pts[:, :2] += (scale * offset * taper)[:, None] * normal
         e.points = pts
         e.points[0], e.points[-1] = pts[0], pts[-1]
-        e.width = width_profile(rng, s, a, step=2.0)
+
+
+def _noise_at(rng, s, correlation_um):
+    """Unit-SD smooth noise evaluated at arclengths s (µm), drawn on a regular grid and interpolated."""
+    step = max(correlation_um / 6.0, 0.5)
+    grid = np.arange(0.0, s[-1] + 2 * step, step)
+    return np.interp(s, grid, _smooth_noise(rng, len(grid), correlation_um / step))
+
+
+def _variation_settings(anatomy, diameter):
+    """(CV, correlation µm) of the calibre variation for a vessel of this calibre: the small-vessel setting up to
+    12 µm, the large-vessel setting from 30 µm, log-interpolated between."""
+    (cv_s, ell_s), (cv_l, ell_l) = anatomy.width_variation, anatomy.width_variation_large
+    w = float(np.clip(np.log(max(diameter, 1e-3) / 12.0) / np.log(30.0 / 12.0), 0.0, 1.0))
+    return cv_s + w * (cv_l - cv_s), ell_s * (ell_l / ell_s) ** w
+
+
+def _vessel_runs(edges):
+    """Ordered runs of edges that continue one another within a named vessel: lists of (edge index, reversed)."""
+    by_vessel = {}
+    for i, e in enumerate(edges):
+        by_vessel.setdefault(e.vessel, []).append(i)
+    runs = []
+    for vessel, members in by_vessel.items():
+        if vessel < 0 or len(members) == 1:
+            runs += [[(i, False)] for i in members]
+            continue
+        at = {}
+        for i in members:
+            at.setdefault(edges[i].u, []).append(i)
+            at.setdefault(edges[i].v, []).append(i)
+        used = set()
+        # start from an end (a node only one member touches), then any leftover (a closed run)
+        starts = [i for i in members if len(at[edges[i].u]) == 1 or len(at[edges[i].v]) == 1] + members
+        for first in starts:
+            if first in used:
+                continue
+            e = edges[first]
+            reverse = len(at[e.v]) == 1 and len(at[e.u]) != 1
+            run = [(first, reverse)]
+            used.add(first)
+            node = e.u if reverse else e.v
+            while True:
+                nxt = [j for j in at.get(node, []) if j not in used]
+                if len(nxt) != 1 or len(at[node]) != 2:
+                    break
+                j = nxt[0]
+                rev = edges[j].v == node
+                run.append((j, rev))
+                used.add(j)
+                node = edges[j].u if rev else edges[j].v
+            runs.append(run)
+    return runs
+
+
+def assign_calibres(edges, rng, anatomy):
+    """The local calibre along every vessel (edge.width, relative to its nominal diameter), continuous along each
+    named vessel through the junctions it passes: the nominal diameters of its successive edges joined by a smooth
+    interpolation (so a vessel narrows gradually past a branch instead of in a step), a gentle taper over the whole
+    vessel, a smooth random variation whose amplitude and wavelength depend on the calibre (long and low for large
+    vessels, shorter and stronger for small ones, anatomy.width_variation / width_variation_large), and a fine
+    unevenness of the wall (anatomy.wall_irregularity) on vessels above capillary size."""
+    wall_cv, wall_ell = anatomy.wall_irregularity
+    for run in _vessel_runs(edges):
+        pieces, offsets, total = [], [], 0.0
+        for i, rev in run:
+            pts = edges[i].points[::-1] if rev else edges[i].points
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            s = np.r_[0.0, np.cumsum(seg)]
+            pieces.append(s)
+            offsets.append(total)
+            total += s[-1] if len(s) else 0.0
+        if total <= 0:
+            continue
+        diam = np.array([edges[i].diameter for i, _ in run])
+        mids = np.array([o + p[-1] / 2 for o, p in zip(offsets, pieces)])
+        d_ref = float(np.max(diam))
+        cv, ell = _variation_settings(anatomy, d_ref)
+        taper = rng.uniform(*anatomy.taper) * rng.choice([-1.0, 1.0])
+        noise_rng = np.random.default_rng(rng.integers(2 ** 63))
+        for (i, rev), o, p in zip(run, offsets, pieces):
+            s_abs = o + p
+            base = np.interp(s_abs, mids, diam) if len(run) > 1 else np.full(len(p), diam[0])
+            edges[i]._s_abs = s_abs
+            edges[i]._base = base
+        # one noise realisation over the whole run, evaluated where each edge lies along it
+        grid = np.linspace(0.0, total, max(int(total / 2.0) + 2, 4))
+        smooth = 1.0 + cv * _noise_at(noise_rng, grid, ell)
+        smooth *= 1.0 + taper * (0.5 - grid / total)
+        if d_ref >= 12.0:
+            smooth *= 1.0 + wall_cv * _noise_at(noise_rng, grid, wall_ell)
+        lo = 0.55 if d_ref < 12.0 else 0.8
+        smooth = np.clip(smooth, lo, 2.0 - lo)
+        smooth /= smooth.mean()
+        for i, rev in run:
+            e = edges[i]
+            rel = np.interp(e._s_abs, grid, smooth) * e._base / e.diameter
+            e.width = rel[::-1].copy() if rev else rel
+            del e._s_abs, e._base
 
 
 def width_profile(rng, s, anatomy, step, scale=1.0):
-    """Relative calibre along a vessel sampled at arclengths s (µm, about every step µm): a smooth random variation
-    (anatomy.width_variation, its amplitude times scale) on a linear taper (anatomy.taper), with mean 1."""
+    """Relative calibre along one isolated vessel sampled at arclengths s (µm): a smooth random variation and a
+    gentle taper, mean 1 (assign_calibres does this for whole networks, continuous through the junctions)."""
     cv, width_length = anatomy.width_variation
     variation = 1.0 + scale * cv * _smooth_noise(rng, len(s), width_length / step)
     variation *= 1.0 + rng.uniform(*anatomy.taper) * rng.choice([-1.0, 1.0]) * (0.5 - s / max(s[-1], 1e-9))
@@ -1122,6 +1223,7 @@ def generate(scene: Scene) -> Network:
         builder.edge(node_top, node_bottom, path, diameter, kind, "perforating", builder.vessel(kind))
 
     _roughen(builder.edges, np.random.default_rng([scene.seed, 2]), scene)
+    assign_calibres(builder.edges, np.random.default_rng([scene.seed, 3]), scene.anatomy)
     network = Network(np.asarray(builder.nodes), builder.edges, dict(builder.boundary), domain, field_of_view,
                       dict(builder.vessel_kind))
     network = _clean(network)
@@ -1138,19 +1240,21 @@ def generate(scene: Scene) -> Network:
     return network
 
 
-def generate_fine(scene: Scene, domain, roots, seed) -> tuple:
+def generate_fine(scene: Scene, domain, roots, seed, mesh=True) -> tuple:
     """The fine vessels of one tile of the eye: conjunctival arteriolar and venular trees grown from the given roots
     (points on the coarse trunks, see synth.eye), the capillary mesh between them, anastomoses, and the multi-scale
     irregularity, all from one seed (the tile's), so a tile generated again is the same tile.
 
     roots: dicts with venous, top (x, y, z µm in the tile's own coordinates) and heading (radians). Returns the
-    network (no boundary nodes) and, per root, its node (or None when its tree did not grow)."""
+    network (no boundary nodes) and, per root, its node (or None when its tree did not grow). mesh=False leaves out
+    the capillary mesh (the eye draws one plexus over the whole conjunctiva instead)."""
     rng = np.random.default_rng(seed)
     builder = _Builder()
     roots = [dict(r) for r in roots]
     made = _conjunctival_trees(builder, rng, scene, domain, roots, border_roots=False)
     leaves = made["arteriole"]["leaves"] + made["venule"]["leaves"]
-    _capillary_mesh(builder, rng, scene, domain, leaves)
+    if mesh:
+        _capillary_mesh(builder, rng, scene, domain, leaves)
     x0, x1, y0, y1 = domain
     n_anastomoses = rng.poisson(scene.anatomy.anastomoses_per_mm2 * (x1 - x0) * (y1 - y0) * 1e-6)
     _anastomoses(builder, rng, scene, domain, "arteriole", n_anastomoses // 2)
@@ -1168,10 +1272,12 @@ def generate_fine(scene: Scene, domain, roots, seed) -> tuple:
                      diameter, kind, "communicating", builder.vessel(kind))
         r["conjunctival_node"] = node_bottom
     _roughen(builder.edges, np.random.default_rng([int(seed) % (2 ** 32), 2]), scene)
+    assign_calibres(builder.edges, np.random.default_rng([int(seed) % (2 ** 32), 3]), scene.anatomy)
     root_nodes = [r.get("conjunctival_node") for r in roots]
     network = Network(np.asarray(builder.nodes) if builder.nodes else np.zeros((0, 3)), builder.edges, {}, domain,
                       domain, dict(builder.vessel_kind))
-    return network, root_nodes
+    network.leaves = leaves               # the terminal arterioles and post-capillary venules (mesh=False: the caller
+    return network, root_nodes            # joins them to a capillary plexus of its own)
 
 
 def _clean(network: Network) -> Network:

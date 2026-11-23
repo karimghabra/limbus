@@ -37,11 +37,12 @@ import math
 from dataclasses import dataclass, field, replace
 
 import numpy as np
-from scipy.spatial import cKDTree
+from scipy.spatial import SphericalVoronoi, cKDTree
 
 from .anatomy import Scene
 from .haemodynamics import Flow, solve
-from .network import _prune_terminals, width_profile, wiggle, Edge, Network, _Builder, _smooth_noise, generate_fine, resample
+from .network import (Edge, Network, _Builder, _noise_at, _prune_terminals, _segment, _smooth_noise, assign_calibres,
+                      generate_fine, resample, wiggle)
 
 MUSCLES = {"superior": 0.0, "temporal": 90.0, "inferior": 180.0, "nasal": 270.0}   # clock angle of each rectus
 
@@ -74,12 +75,18 @@ class EyeAnatomy:
     coarse_growth_influence_um: float = 1500.0
     coarse_growth_kill_um: float = 450.0
     coarse_leaf_diameter: tuple = (20.0, 28.0)       # where the coarse level hands over to the tiles (µm)
+    # the widest conjunctival trunks: arterioles to 61 µm and venules to 75 µm are reported [Khansari2017], but the
+    # widest sharp conjunctival vessels of the recordings are about 40-50 µm, and wider trunks at conjunctival depth
+    # rendered far darker than any real vessel (docs §11.4)
+    coarse_artery_max_um: float = 40.0
+    coarse_vein_max_um: float = 48.0
     coarse_radial_bias: float = 0.15                 # conjunctival vessels run radially [Akagi2018], as at the patch level
     coarse_growth_persistence: float = 0.6           # how much a growing coarse vessel keeps its heading (fitted to
                                                      # the orientation spread and junction density of the recordings)
     coarse_branch_spacing_um: float = 400.0          # least distance between branch points of a coarse tree (as at
     coarse_max_terminal_um: float = 1500.0           # the patch level, docs §5, at trunk scale)
     conjunctival_artery_diameter: tuple = (25.0, 40.0)   # within the 5.9-61 µm of conjunctival arterioles [Khansari2017]
+    companion_offset_um: tuple = (75.0, 120.0)       # vein beside artery, centre to centre (measured 85 µm, docs §4)
     watershed_mm: float = 4.0                        # lid branches supply the conjunctiva from 4 mm on [Sun2022]
     fornix_mm: dict = field(default_factory=lambda: {"superior": 15.0, "temporal": 12.0, "inferior": 10.5,
                                                      "nasal": 8.0})   # fornix depths 15.3-16.1 / 10.1-10.9 mm [Jutley2016, Khan2014]; horizontal assumed
@@ -91,8 +98,11 @@ class EyeAnatomy:
     episcleral_depth_um: float = 350.0               # docs §2.2
     conjunctival_trunk_depth_um: float = 160.0       # docs §2.2
     # pressures at the true inlets and outlets, mmHg (docs §11.6)
-    ciliary_artery_pressure: float = 65.0            # ophthalmic artery ~0.7 x brachial [StraussKedra1987, daSilvaKrieglstein1980]
-    palpebral_artery_pressure: float = 60.0          # lid arcades, a little further down the ophthalmic tree (assumed)
+    # ophthalmic artery ~0.7 x brachial [StraussKedra1987, daSilvaKrieglstein1980]; the anterior ciliary arteries lie
+    # downstream of it through the muscular arteries and were never measured: 55 mmHg (0.6 x a mean brachial 93 mmHg),
+    # fitted so that the conjunctival red-cell velocities land within the cited ranges (docs §11.6)
+    ciliary_artery_pressure: float = 55.0
+    palpebral_artery_pressure: float = 50.0          # lid arcades, a little further down the ophthalmic tree (assumed)
     ciliary_body_pressure: float = 45.0              # where perforating branches leave for the intramuscular circle (assumed)
     venous_outlet_pressure: float = 9.0              # episcleral venous pressure 7.6-9.5 mmHg [Zeimer1983, Selbach2005b]
     bed_conductance_scale: float = 0.08              # the lumped fine beds (fitted to the cited trunk velocities)
@@ -260,19 +270,57 @@ def _plane_vessel(globe, rng, s0, clock0, s_end, depth0, depth1, heading_spread,
 
 @dataclass
 class Eye:
-    """One synthetic eye: its anatomy, the scene settings it shares with its views, and its coarse network."""
+    """One synthetic eye: its anatomy, the scene settings it shares with its views, and its network at every level of
+    detail, solved once. The same seed always gives the same eye.
+
+    fine_region: (clock from, clock to (degrees, clockwise), s from, s to (µm from the limbus)) to grow the fine
+    level over part of the conjunctiva only (the coarse level's lumped beds stand for it elsewhere); None (the
+    default) grows it over the whole conjunctiva."""
     seed: int = 0
     anatomy: EyeAnatomy = field(default_factory=EyeAnatomy)
     scene: Scene = field(default_factory=Scene)
+    fine_region: tuple | None = None
 
     def __post_init__(self):
+        import time as _time
         self.globe = Globe(self.anatomy)
         self.scene = replace(self.scene, optics=replace(self.scene.optics, eye_radius_um=self.anatomy.radius_um))
-        self.network, self.trunks = build_coarse(self)
-        self.flow = solve(self.network, self.scene.physiology)
-        self._tiles = {}
+        self.seconds = {}
+        start = _time.perf_counter()
+        self.coarse, self.trunks = build_coarse(self)
+        self.seconds["coarse"] = _time.perf_counter() - start
+        start = _time.perf_counter()
+        self.network = build_whole(self)
+        self.seconds["fine"] = _time.perf_counter() - start
+        start = _time.perf_counter()
+        # the haematocrit iteration is stopped at 100 rounds: a few near-stagnant loops keep flipping, while the
+        # flows of the rest differ from 400 rounds by 0.04 % (median) and 0.7 % (99th percentile); the final pass
+        # conserves flow and red cells exactly either way
+        self.flow = solve(self.network, self.scene.physiology, max_iterations=100)
+        self.seconds["flow"] = _time.perf_counter() - start
+        self._bounds = None
+        self._tile_index = None
 
-    # the fine level
+    def in_fine_region(self, s_um, clock_deg, margin=0.0):
+        """Whether a surface point (s µm from the limbus, clock °) lies in the conjunctiva of the fine region."""
+        fornix = self.globe.interpolate_by_clock(self.anatomy.fornix_mm, clock_deg % 360.0) * 1000.0
+        if not (-margin <= s_um <= fornix + margin):
+            return False
+        if self.fine_region is None:
+            return True
+        c0, c1, s0, s1 = self.fine_region
+        return (clock_deg - c0) % 360.0 <= (c1 - c0) % 360.0 and s0 - margin <= s_um <= s1 + margin
+
+    def edge_bounds(self):
+        """Per edge of the network: the centre and radius of a sphere holding it, and its level of detail."""
+        if self._bounds is None:
+            centres = np.array([0.5 * (e.points.min(0) + e.points.max(0)) for e in self.network.edges])
+            radii = np.array([0.5 * np.linalg.norm(e.points.max(0) - e.points.min(0)) for e in self.network.edges])
+            levels = np.array([e.level for e in self.network.edges])
+            self._bounds = (centres, radii, levels)
+        return self._bounds
+
+    # the tiles
     def tile_key(self, s_um, clock_deg):
         t = self.anatomy.tile_mm * 1000.0
         i = int(math.floor(s_um / t))
@@ -291,11 +339,11 @@ class Eye:
         n = self.tiles_around(i)
         return (i + 0.5) * t, (j + 0.5) * 360.0 / n
 
-    def tile(self, key):
-        """The fine vessels of a tile (cached): network in eye coordinates, flow, and its root attachments."""
-        if key not in self._tiles:
-            self._tiles[key] = build_tile(self, key)
-        return self._tiles[key]
+    def tile_edges(self, key):
+        """Indices of the fine edges (trees and plexus) whose middle lies in a tile."""
+        if self._tile_index is None:
+            self._tile_index = edge_tile_index(self)
+        return self._tile_index.get(tuple(key), [])
 
 
 def build_coarse(eye: Eye):
@@ -410,7 +458,8 @@ def build_coarse(eye: Eye):
     positions, parent, tree = _prune_terminals(positions, parent, tree, a.coarse_max_terminal_um)
     paths, children = _tree_paths(parent)
     leaf_d = rng.uniform(*a.coarse_leaf_diameter, len(parent))
-    d = np.minimum(_murray_diameters(parent, children, leaf_d, eye.scene.anatomy.murray_exponent_arterial), 58.0)
+    d = np.minimum(_murray_diameters(parent, children, leaf_d, eye.scene.anatomy.murray_exponent_arterial),
+                   a.coarse_artery_max_um)
     node_of = {}
 
     def node_for(i, depth):
@@ -451,7 +500,9 @@ def build_coarse(eye: Eye):
         else:
             root = b.edges[nearest].u if kk < len(pts_c) / 2 else b.edges[nearest].v
         d0 = float(d[k]) if children[k] else float(leaf_d[k])
-        edge(np.vstack([b.nodes[root], b.nodes[node]]), d0, "communicating artery", "communicating", u=root, v=node)
+        # the anterior conjunctival artery's origin from the circle, at the calibre of these arteries
+        d_root = float(np.clip(d0, *a.conjunctival_artery_diameter))
+        edge(np.vstack([b.nodes[root], b.nodes[node]]), d_root, "communicating artery", "communicating", u=root, v=node)
         forward = _radial_path(g, rng, s_c + 150.0, a.limbal_arcade_mm * 1000.0, c, conj, conj, amplitude=25.0)
         forward[0] = b.nodes[node]
         fi, _, f_end = edge(forward, 0.7 * d0, "conjunctival artery", "conjunctival", u=node)
@@ -474,9 +525,21 @@ def build_coarse(eye: Eye):
         edge(pts, rng.uniform(18.0, 28.0), "conjunctival artery", "conjunctival", u=n0, v=n1)
     # the venular trees: roots at the fornix (outlets) and on the limbal venous ring; half of their attractors lie
     # beside the arteries just grown, so veins accompany arteries
-    art_pts = np.vstack([to_plane(*g.surface_coordinates(b.edges[i].points)[:2]) for i in artery_edges])
+    # the attractors beside an artery lie to one side of it, at about the recorded spacing of an artery and its
+    # companion vein (85 µm centre to centre, docs §4), so the veins run alongside the arteries, not on top of them
+    beside_parts = []
+    for i in artery_edges:
+        xy = to_plane(*g.surface_coordinates(b.edges[i].points)[:2])
+        if len(xy) < 3:
+            continue
+        tangent = np.gradient(xy, axis=0)
+        tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
+        offset = rng.choice([-1.0, 1.0]) * rng.uniform(*a.companion_offset_um, len(xy))
+        beside_parts.append(xy + normal * offset[:, None])
+    art_pts = np.vstack(beside_parts)
     pick = rng.choice(len(art_pts), min(len(art_pts) // 3, len(attractors)), replace=False)
-    beside = art_pts[pick] + rng.normal(0, 1, (len(pick), 2)) * 60.0
+    beside = art_pts[pick]
     v_attractors = np.vstack([attractors[rng.random(len(attractors)) < 0.5], beside])
     v_roots, v_headings, v_sources = [], [], []
     clock = rng.uniform(0, 360)
@@ -497,7 +560,8 @@ def build_coarse(eye: Eye):
     vpos, vpar, vtree = _prune_terminals(vpos, vpar, vtree, a.coarse_max_terminal_um)
     vpaths, vchildren = _tree_paths(vpar)
     vleaf = rng.uniform(*a.coarse_leaf_diameter, len(vpar)) * 1.3
-    vd = np.minimum(_murray_diameters(vpar, vchildren, vleaf, eye.scene.anatomy.murray_exponent_venous), 72.0)
+    vd = np.minimum(_murray_diameters(vpar, vchildren, vleaf, eye.scene.anatomy.murray_exponent_venous),
+                    a.coarse_vein_max_um)
     vnode_of = {}
     for k, (kind, ref) in enumerate(v_sources):
         if kind == "limbal":
@@ -631,14 +695,8 @@ def build_coarse(eye: Eye):
     beds = [e for e in b.edges if e.kind == "bed"]
     b.edges = [e for e in b.edges if e.kind != "bed"]
     _attach_beds(b, beds, a)
-    # the calibre varies and tapers along every vessel, as at the patch level (docs §5)
-    for e in b.edges:
-        if e.kind in ("conjunctival artery", "conjunctival vein", "episcleral vein", "episcleral artery",
-                      "ciliary artery", "limbal vein") and len(e.points) >= 4:
-            seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
-            # half the patch level's variation: trunks vary less in proportion than small vessels [Kiani1993]
-            e.width = width_profile(rng, np.r_[0.0, np.cumsum(seg)], A, step=max(float(np.median(seg)), 1.0),
-                                    scale=0.5)
+    # their course's unevenness and their calibre along their length are drawn once the network is whole
+    # (build_whole), so they run on continuously through every split
     net = Network(np.asarray(b.nodes), b.edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = {k: v for k, v in pressure.items()}
     return net, trunks
@@ -682,14 +740,35 @@ def _attach_beds(b, beds, a):
 
 # ----------------------------------------------------------------------------------------------- the fine level
 
-def _tile_seed(eye, key):
-    digest = hashlib.sha256(f"{eye.seed}:{key[0]}:{key[1]}".encode()).digest()
+TRUNK_KINDS = ("conjunctival artery", "conjunctival vein", "episcleral vein", "episcleral artery", "ciliary artery",
+               "limbal vein")
+LEVEL_NAMES = {0: "coarse", 1: "fine trees", 2: "capillary plexus"}
+
+
+def _tile_seed(eye, key, salt=""):
+    digest = hashlib.sha256(f"{eye.seed}:{key[0]}:{key[1]}{salt}".encode()).digest()
     return int.from_bytes(digest[:8], "little")
 
 
+def fine_tile_keys(eye):
+    """The tiles of the fine level: every tile of the conjunctiva, from the limbus to the fornix, whose centre lies
+    in the eye's fine region."""
+    t = eye.anatomy.tile_mm * 1000.0
+    s_max = max(eye.anatomy.fornix_mm.values()) * 1000.0
+    keys = []
+    for i in range(int(math.ceil(s_max / t))):
+        for j in range(eye.tiles_around(i)):
+            s, c = eye.tile_centre((i, j))
+            if eye.in_fine_region(s, c, margin=0.5 * t):
+                keys.append((i, j))
+    return keys
+
+
 def build_tile(eye: Eye, key):
-    """The fine vessels of one tile, in eye coordinates, with their flow solved from the coarse pressures at their
-    roots. Returns dict(network, flow, roots: [(coarse edge, point index, node)], frame, domain)."""
+    """The conjunctival arteriolar and venular trees of one tile, in eye coordinates, grown from roots on the coarse
+    trunks that cross it and on the episcleral vessels beneath it, from a seed that depends only on the eye's seed
+    and the tile's position. No capillaries: the eye's one capillary plexus joins every tile's terminals.
+    Returns dict(network, roots: [(coarse edge, point index, node)], leaves, frame, domain, key)."""
     a, g = eye.anatomy, eye.globe
     s_c, clock_c = eye.tile_centre(key)
     frame = g.frame(s_c, clock_c)
@@ -697,12 +776,14 @@ def build_tile(eye: Eye, key):
     n = eye.tiles_around(key[0])
     width = 2 * math.pi * g.R * math.sin(float(g.theta(s_c))) / n
     domain = (-width / 2, width / 2, -t / 2, t / 2)
-    coarse = eye.network
+    coarse = eye.coarse
     rng = np.random.default_rng(_tile_seed(eye, key))
     roots, attach = [], []
     spacing = 1000.0 / max(eye.scene.anatomy.arterial_trees_per_mm2 * 4.0, 1e-3)    # roots per mm of trunk
+    centres, radii = _coarse_bounds(eye)
+    near = set(np.flatnonzero(np.linalg.norm(centres - frame[0] * g.R, axis=1) < radii + math.hypot(width, t)).tolist())
     for ei, e in enumerate(coarse.edges):
-        if e.kind not in ("conjunctival artery", "conjunctival vein"):
+        if ei not in near or e.kind not in ("conjunctival artery", "conjunctival vein"):
             continue
         local = g.to_local(e.points, frame)
         inside = (local[:, 0] > domain[0]) & (local[:, 0] < domain[1]) & (local[:, 1] > domain[2]) & (local[:, 1] < domain[3])
@@ -713,7 +794,7 @@ def build_tile(eye: Eye, key):
         marks = np.arange(rng.uniform(0, spacing), arc[-1], spacing * rng.uniform(0.8, 1.2))
         for m in marks:
             k = idx[int(np.searchsorted(arc, m).clip(0, len(idx) - 1))]
-            if k <= 0 or k >= len(e.points) - 1:
+            if k <= 1 or k >= len(e.points) - 2:
                 continue
             tangent = local[min(k + 3, len(local) - 1), :2] - local[max(k - 3, 0), :2]
             heading = math.atan2(tangent[1], tangent[0]) + rng.choice([-1, 1]) * math.radians(rng.uniform(30, 85))
@@ -725,7 +806,7 @@ def build_tile(eye: Eye, key):
     under = {False: [], True: []}
     for ei, e in enumerate(coarse.edges):
         venous = e.kind == "episcleral vein"
-        if not venous and e.kind not in ("episcleral artery", "ciliary artery"):
+        if ei not in near or (not venous and e.kind not in ("episcleral artery", "ciliary artery")):
             continue
         local = g.to_local(e.points, frame)
         inside = (local[:, 0] > domain[0] + 100) & (local[:, 0] < domain[1] - 100) & \
@@ -733,8 +814,6 @@ def build_tile(eye: Eye, key):
         inside[:2] = inside[-2:] = False
         under[venous] += [(ei, int(k), local[k]) for k in np.flatnonzero(inside)]
     top, bottom = A.conjunctival_plexus
-    # a tile whose trees all hang from one side of the circulation would carry no flow, so where a vessel of the
-    # missing side passes beneath, at least one communicating vessel rises from it
     have = {v: any(r["venous"] == v for r in roots) for v in (False, True)}
     n_comm = rng.poisson(A.communicating_per_mm2 * width * t * 1e-6)
     n_comm = max(n_comm, sum(1 for v in (False, True) if not have[v] and under[v]))
@@ -748,39 +827,264 @@ def build_tile(eye: Eye, key):
             angle = math.radians(rng.uniform(*A.communicating_angle_deg))
             z_top = rng.uniform(top + 0.5 * (bottom - top), bottom)
             run = max(point[2] - z_top, 20.0) / math.tan(angle)
-            direction = rng.uniform(0, 2 * math.pi)
-            top_xyz = np.array([point[0] + run * math.cos(direction), point[1] + run * math.sin(direction), z_top])
+            direction_ = rng.uniform(0, 2 * math.pi)
+            top_xyz = np.array([point[0] + run * math.cos(direction_), point[1] + run * math.sin(direction_), z_top])
             if domain[0] + 60 < top_xyz[0] < domain[1] - 60 and domain[2] + 60 < top_xyz[1] < domain[3] - 60:
                 roots.append(dict(venous=venous, top=top_xyz, heading=rng.uniform(0, 2 * math.pi), bottom=point.copy()))
                 attach.append((ei, kk))
                 have[venous] = True
                 break
-    scene = eye.scene
-    net, root_nodes = generate_fine(scene, domain, roots, _tile_seed(eye, key))
-    # keep the roots whose trees grew; they are the tile's boundary, at the coarse pressure there
-    boundary, bpressure, root_list = {}, {}, []
-    for (ei, k), node, r in zip(attach, root_nodes, roots):
-        if node is None:
-            continue
-        boundary[node] = "venous" if r["venous"] else "arterial"
-        bpressure[node] = coarse_pressure_at(eye, ei, k)
-        root_list.append((ei, k, node))
-    net.boundary = boundary
-    net.boundary_pressure = bpressure
-    net = _drop_unrooted(net)
-    root_list = [(ei, k, node) for (ei, k, node) in root_list if node in net.boundary]
-    flow = solve(net, scene.physiology) if net.edges else None
-    # into eye coordinates
+    net, root_nodes = generate_fine(eye.scene, domain, roots, _tile_seed(eye, key), mesh=False)
+    root_list = [(ei, k, node) for (ei, k), node in zip(attach, root_nodes) if node is not None]
     for e in net.edges:
         e.points = g.from_local(e.points, frame)
     net.nodes = g.from_local(net.nodes, frame) if len(net.nodes) else net.nodes
-    return dict(network=net, flow=flow, roots=root_list, frame=frame, domain=domain, key=key)
+    return dict(network=net, roots=root_list, leaves=list(net.leaves), frame=frame, domain=domain, key=key)
 
 
-def _drop_unrooted(net):
-    """Remove fine components that reach no root (they could carry no flow); renumber the boundary maps."""
+def _coarse_bounds(eye):
+    """Centre and radius of a sphere holding each coarse edge (cached)."""
+    if getattr(eye, "_coarse_bounds", None) is None:
+        edges = eye.coarse.edges
+        lo = np.array([e.points.min(0) for e in edges])
+        hi = np.array([e.points.max(0) for e in edges])
+        eye._coarse_bounds = (0.5 * (lo + hi), 0.5 * np.linalg.norm(hi - lo, axis=1))
+    return eye._coarse_bounds
+
+
+def _surface_path(g, p, q, rng, amplitude, correlation):
+    """A slightly bowed vessel between two points of the eye (µm), drawn in the local frame at its middle."""
+    s, c, _ = g.surface_coordinates(0.5 * (p + q))
+    frame = g.frame(float(s), float(c))
+    ends = g.to_local(np.vstack([p, q]), frame)
+    path = _segment(ends[0], ends[1], rng, amplitude, correlation)
+    out = g.from_local(path, frame)
+    out[0], out[-1] = p, q
+    return out
+
+
+def build_plexus(eye: Eye, keys):
+    """One capillary plexus over the whole fine region: the Voronoi tessellation, on the sphere, of a jittered
+    lattice of sites laid tile by tile (vertices of degree three, like capillary junctions; docs §5), so the mesh runs
+    on across tile borders without a seam. Returns (nodes (n, 3) in eye coordinates, edges [(u, v, points,
+    diameter)])."""
+    a, g, A = eye.anatomy, eye.globe, eye.scene.anatomy
+    spacing = A.capillary_mesh_spacing
+    stretch = np.random.default_rng([eye.seed, 23]).uniform(1.0, 1.3)       # mesh cells longer radially
+    sites = []
+    for key in keys:
+        r = np.random.default_rng(_tile_seed(eye, key, ":mesh"))
+        s_c, c_c = eye.tile_centre(key)
+        frame = g.frame(s_c, c_c)
+        t = a.tile_mm * 1000.0
+        width = 2 * math.pi * g.R * math.sin(float(g.theta(s_c))) / eye.tiles_around(key[0])
+        dy = spacing * 0.866 * stretch
+        ys = np.arange(-t / 2 + r.uniform(0, dy), t / 2, dy)
+        for row, y in enumerate(ys):
+            xs = np.arange(-width / 2 + r.uniform(0, spacing), width / 2, spacing)
+            local = np.column_stack([xs, np.full(len(xs), y), np.zeros(len(xs))])
+            local[:, :2] += r.normal(0, 0.3 * spacing, (len(xs), 2))
+            sites.append(g.from_local(local, frame))
+    P = np.vstack(sites)
+    # sites laid by neighbouring tiles may fall too close together at their shared border: thin them
+    tree = cKDTree(P)
+    drop = set()
+    for i, j in sorted(tree.query_pairs(0.45 * spacing)):
+        if i not in drop and j not in drop:
+            drop.add(j)
+    P = P[[k for k in range(len(P)) if k not in drop]]
+    unit = P / np.linalg.norm(P, axis=1, keepdims=True)
+    sv = SphericalVoronoi(unit, radius=1.0)
+    sv.sort_vertices_of_regions()
+    V = sv.vertices * g.R
+    s_v, c_v, _ = g.surface_coordinates(V)
+    fornix = np.array([g.interpolate_by_clock(a.fornix_mm, c) * 1000.0 for c in c_v])
+    keep = (s_v > a.limbal_vein_mm * 1000.0 + 150.0) & (s_v < fornix)
+    keep &= np.array([eye.in_fine_region(s, c) for s, c in zip(s_v, c_v)])
+    ridges = set()
+    for region in sv.regions:
+        for k in range(len(region)):
+            i, j = region[k], region[(k + 1) % len(region)]
+            if keep[i] and keep[j]:
+                ridges.add((min(i, j), max(i, j)))
+    ridges = sorted(r for r in ridges if np.linalg.norm(V[r[0]] - V[r[1]]) < 2.5 * spacing)
+    rng = np.random.default_rng([eye.seed, 24])
+    ridges = [r for r in ridges if rng.random() > A.capillary_edge_drop]
+    while True:                         # a dead end carries no flow: prune dangling ridges, again and again
+        degree = np.bincount(np.array(ridges).ravel(), minlength=len(V)) if ridges else np.zeros(len(V), int)
+        dangling = degree == 1
+        if not dangling.any():
+            break
+        ridges = [r for r in ridges if not (dangling[r[0]] or dangling[r[1]])]
+    used = sorted({k for r in ridges for k in r})
+    index = {k: n for n, k in enumerate(used)}
+    top = A.conjunctival_plexus[0]
+    depth = top + np.abs(rng.normal(0, 12.0, len(used)))
+    unitv = V[used] / g.R
+    nodes = unitv * (g.R - depth)[:, None]
+    edges = []
+    for i, j in ridges:
+        u, v = index[i], index[j]
+        pts = _surface_path(g, nodes[u], nodes[v], rng, *A.wiggle["capillary"])
+        edges.append((u, v, pts, float(rng.uniform(*A.capillary_diameter))))
+    return nodes, edges
+
+
+def _roughen_trunks(edges, rng, anatomy):
+    """A mild unevenness of the course of every coarse vessel, growing with its calibre (anatomy.fine_jitter and
+    large_jitter, as at the patch level), across the vessel in the surface's plane and tapered to nothing at its
+    ends, so junctions stay put."""
+    amp0, ell0 = anatomy.fine_jitter
+    for e in edges:
+        if e.kind not in TRUNK_KINDS or len(e.points) < 6:
+            continue
+        pts = e.points
+        s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]
+        if s[-1] <= 0:
+            continue
+        amplitude = amp0 + anatomy.large_jitter[0] * e.diameter
+        ell = ell0 + anatomy.large_jitter[1] * e.diameter
+        offset = amplitude * _noise_at(rng, s, ell)
+        taper = np.clip(np.minimum(s, s[-1] - s) / (2 * ell), 0, 1)
+        tangent = np.gradient(pts, axis=0)
+        tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
+        normal = np.cross(tangent, pts / np.linalg.norm(pts, axis=1, keepdims=True))
+        normal /= np.maximum(np.linalg.norm(normal, axis=1, keepdims=True), 1e-9)
+        e.points = pts + (offset * taper)[:, None] * normal
+
+
+def build_whole(eye: Eye):
+    """The eye's network at every level of detail in one piece: the coarse vessels, the trees of every tile of the
+    fine region rooted on them, and the capillary plexus joining the trees' terminals; the coarse level's lumped beds
+    remain only where no fine vessels are drawn. Returns the network (eye coordinates; every edge has .level 0, 1 or
+    2 and .tile, the tile key of its middle or None)."""
+    g, A = eye.globe, eye.scene.anatomy
+    coarse = eye.coarse
+    keys = fine_tile_keys(eye)
+    tiles = [build_tile(eye, key) for key in keys]
+    b = _Builder()
+    b.nodes = [p.copy() for p in coarse.nodes]
+    b.vessel_kind = dict(coarse.vessel_names)
+    b.next_vessel = max(b.vessel_kind, default=0)
+    b.boundary = dict(coarse.boundary)
+    for e in coarse.edges:
+        c = Edge(e.u, e.v, e.points.copy(), e.diameter, e.kind, e.layer, e.vessel, paired_with=e.paired_with)
+        if getattr(e, "length_override", None):
+            c.length_override = e.length_override
+        c.level = 0
+        b.edges.append(c)
+    n_coarse = len(b.edges)
+    # the lumped beds stand for fine vessels: where the fine level draws them, the beds go
+    drop = set()
+    for i, e in enumerate(coarse.edges):
+        if e.kind == "bed":
+            s, c, _ = g.surface_coordinates(e.points[[0, -1]])
+            if any(eye.in_fine_region(si, ci) for si, ci in zip(s, c)):
+                drop.add(i)
+    # split the coarse vessels where trees are rooted (descending, so earlier indices on an edge stay valid)
+    at = {}
+    for tile in tiles:
+        for ei, k, _ in tile["roots"]:
+            at.setdefault(ei, set()).add(k)
+    split_node = {}
+    for ei in sorted(at):
+        for k in sorted(at[ei], reverse=True):
+            e = b.edges[ei]
+            if k <= 0:
+                split_node[(ei, k)] = e.u
+            elif k >= len(e.points) - 1:
+                split_node[(ei, k)] = e.v
+            else:
+                split_node[(ei, k)] = b.split(ei, k)
+                b.edges[-1].level = 0
+    # the tiles' trees, their roots merged into the coarse nodes
+    leaves = []
+    for tile in tiles:
+        net = tile["network"]
+        base = len(b.nodes)
+        remap = {node: split_node[(ei, k)] for ei, k, node in tile["roots"]}
+        index = {}
+        for k in range(len(net.nodes)):
+            if k in remap:
+                index[k] = remap[k]
+            else:
+                index[k] = len(b.nodes)
+                b.nodes.append(net.nodes[k].copy())
+        vessel_base = b.next_vessel
+        for vid, kind in net.vessel_names.items():
+            b.vessel_kind[vessel_base + vid] = kind
+            b.next_vessel = max(b.next_vessel, vessel_base + vid)
+        for e in net.edges:
+            pts = e.points.copy()
+            pts[0], pts[-1] = b.nodes[index[e.u]], b.nodes[index[e.v]]
+            c = Edge(index[e.u], index[e.v], pts, e.diameter, e.kind, e.layer,
+                     vessel_base + e.vessel if e.vessel >= 0 else -1,
+                     paired_with=vessel_base + e.paired_with if e.paired_with >= 0 else -1)
+            c.width = e.width
+            c.level = 1
+            b.edges.append(c)
+        leaves += [index[k] for k in tile["leaves"]]
+        del base
+    # the capillary plexus
+    plexus_nodes, plexus_edges = build_plexus(eye, keys)
+    base = len(b.nodes)
+    b.nodes += [p for p in plexus_nodes]
+    rng = np.random.default_rng([eye.seed, 25])
+    for u, v, pts, d in plexus_edges:
+        c = Edge(base + u, base + v, pts, d, "capillary", "conjunctival", b.vessel("capillary"))
+        c.level = 2
+        b.edges.append(c)
+    # the terminal arterioles and post-capillary venules each open into one or two plexus junctions, and so does the
+    # tip of every coarse trunk that ends in the fine region (a trunk branches on into the fine vessels there)
+    spacing = A.capillary_mesh_spacing
+    degree = np.zeros(len(b.nodes), int)
+    for i, e in enumerate(b.edges):
+        if i not in drop:
+            degree[e.u] += 1
+            degree[e.v] += 1
+    tips = []
+    for i, e in enumerate(b.edges[:n_coarse]):
+        if e.kind in ("conjunctival artery", "conjunctival vein"):
+            for node in (e.u, e.v):
+                if degree[node] == 1 and node not in b.boundary:
+                    s, c, _ = g.surface_coordinates(b.nodes[node][None])
+                    if eye.in_fine_region(float(s[0]), float(c[0])):
+                        tips.append(node)
+    if len(plexus_nodes):
+        tree = cKDTree(plexus_nodes)
+        for node, n_links, d_link in [(k, 1 + int(rng.random() < 0.35), None) for k in leaves] + \
+                                     [(k, 3, 9.0) for k in tips]:
+            p = b.nodes[node]
+            distance, nearest = tree.query(p, k=n_links)
+            for dist, near in zip(np.atleast_1d(distance), np.atleast_1d(nearest)):
+                if dist > 2.5 * spacing:
+                    continue
+                pts = _surface_path(g, p, plexus_nodes[near], rng, *A.wiggle["capillary"])
+                d = d_link or float(rng.uniform(*A.capillary_diameter))
+                c = Edge(node, base + int(near), pts, d, "capillary", "conjunctival", b.vessel("capillary"))
+                c.level = 2
+                b.edges.append(c)
+    # the trunks' course and calibre (continuous along each vessel through every split)
+    trunks = [e for i, e in enumerate(b.edges) if getattr(e, "level", 0) == 0 and i not in drop]
+    _roughen_trunks(trunks, np.random.default_rng([eye.seed, 26]), A)
+    for e in trunks:
+        e.width = None
+    assign_calibres([e for e in trunks if e.kind in TRUNK_KINDS], np.random.default_rng([eye.seed, 27]), A)
+    edges = [e for i, e in enumerate(b.edges) if i not in drop]
+    net = Network(np.asarray(b.nodes), edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
+    net.boundary_pressure = dict(coarse.boundary_pressure)
+    net = _keep_perfusable(net)
+    for e in net.edges:
+        mid = e.points[len(e.points) // 2]
+        s, c, _ = g.surface_coordinates(mid[None])
+        e.tile = eye.tile_key(float(s[0]), float(c[0])) if e.level > 0 else None
+    return net
+
+
+def _keep_perfusable(net):
+    """Drop zero-length edges and the components that reach no boundary node (they could carry no flow)."""
     n = len(net.nodes)
-    parent = list(range(n))
+    parent = np.arange(n)
 
     def find(i):
         while parent[i] != i:
@@ -788,29 +1092,47 @@ def _drop_unrooted(net):
             i = parent[i]
         return i
 
-    for e in net.edges:
-        parent[find(e.u)] = find(e.v)
+    edges = [e for e in net.edges if e.u != e.v and e.length > 1.0]
+    for e in edges:
+        ru, rv = find(e.u), find(e.v)
+        if ru != rv:
+            parent[ru] = rv
     rooted = {find(k) for k in net.boundary}
-    edges = [e for e in net.edges if find(e.u) in rooted and e.length > 1.0 and e.u != e.v]
+    edges = [e for e in edges if find(e.u) in rooted]
     used = sorted({k for e in edges for k in (e.u, e.v)})
     remap = {old: new for new, old in enumerate(used)}
     for e in edges:
         e.u, e.v = remap[e.u], remap[e.v]
-    out = Network(net.nodes[used] if used else np.zeros((0, 3)), edges,
-                  {remap[k]: r for k, r in net.boundary.items() if k in remap}, net.domain, net.field_of_view,
-                  net.vessel_names)
+    out = Network(net.nodes[used], edges, {remap[k]: r for k, r in net.boundary.items() if k in remap}, net.domain,
+                  net.field_of_view, net.vessel_names)
     out.boundary_pressure = {remap[k]: p for k, p in net.boundary_pressure.items() if k in remap}
     return out
 
 
-def coarse_pressure_at(eye, edge_index, point_index):
-    """The coarse solution's pressure at a point of a coarse edge (linear in arclength between its nodes)."""
-    e = eye.network.edges[edge_index]
-    seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
-    s = np.r_[0, np.cumsum(seg)]
-    f = s[point_index] / max(s[-1], 1e-9)
-    p = eye.flow.pressure
-    return float((1 - f) * p[e.u] + f * p[e.v])
+def perfusion(eye: Eye, threshold_mm_s=0.005):
+    """Share of the length of each level that carries red cells moving at least threshold_mm_s, and the number of
+    edges that do not (dead ends excepted, which carry no flow by construction and are reported apart)."""
+    v = np.abs(eye.flow.rbc_velocity)
+    hd = eye.flow.hd
+    out = {}
+    for level, name in LEVEL_NAMES.items():
+        sel = np.array([e.level == level for e in eye.network.edges])
+        if not sel.any():
+            continue
+        length = eye.flow.length[sel]
+        moving = (v[sel] >= threshold_mm_s) & (hd[sel] > 0)
+        out[name] = dict(edges=int(sel.sum()), still=int((~moving).sum()),
+                         perfused_length_share=float(length[moving].sum() / length.sum()))
+    return out
+
+
+def edge_tile_index(eye):
+    """tile key -> indices of the fine edges whose middle lies in it."""
+    index = {}
+    for i, e in enumerate(eye.network.edges):
+        if e.level > 0:
+            index.setdefault(e.tile, []).append(i)
+    return index
 
 
 # ----------------------------------------------------------------------------------------------- the view
@@ -823,29 +1145,48 @@ class Pose:
     clock_deg: float = 90.0
 
 
-def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True):
+def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
     """The network of the camera's field in the camera's own coordinates (x, y along the surface about the field's
-    centre, depth), with the flow of every piece inherited from its own level. Returns (network, flow)."""
+    centre, depth). Every level of detail is a selection of the one network of the eye, solved once, so every piece
+    carries exactly the flow of the eye's edge it came from at every magnification. fine: draw the fine trees and the
+    capillary plexus too (else only the coarse level). roll_deg turns the camera's image about the field's centre
+    (0: image x along the limbus, towards larger clock angles). Returns (network, flow)."""
     g = eye.globe
     s0 = pose.s_mm * 1000.0
     frame = g.frame(s0, pose.clock_deg)
+    if roll_deg:
+        c, e1, e2 = frame
+        r = math.radians(roll_deg)
+        frame = (c, math.cos(r) * e1 + math.sin(r) * e2, -math.sin(r) * e1 + math.cos(r) * e2)
     um = scene.anatomy.um_per_px
     half_w = scene.width_px * um / 2 + scene.margin_um
     half_h = scene.height_px * um / 2 + scene.margin_um
     domain = (-half_w, half_w, -half_h, half_h)
     b = _Builder()
-    props = []                         # per view edge: (source flow object, source edge index)
+    props = []                         # per view edge: (flow, eye edge index, source)
     boundary, bpressure = {}, {}
     node_map = {}
+    full = eye.network
+    flow = eye.flow
+    centres, radii, levels = eye.edge_bounds()
+    reach = math.hypot(half_w, half_h)
+    near = np.linalg.norm(centres - frame[0] * g.R, axis=1) < radii + reach + 50.0
+    if not fine:
+        near &= levels == 0
 
-    def inside(local):
-        return (local[:, 0] > domain[0]) & (local[:, 0] < domain[1]) & (local[:, 1] > domain[2]) & (local[:, 1] < domain[3])
+    def pressure_at(ei, k):
+        e = full.edges[ei]
+        seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
+        s = np.r_[0, np.cumsum(seg)]
+        f = s[k] / max(s[-1], 1e-9)
+        return float((1 - f) * flow.pressure[e.u] + f * flow.pressure[e.v])
 
-    def add_pieces(net, flow, source, ei, local, pressure_at):
-        e = net.edges[ei]
-        keep = inside(local)
+    for ei in np.flatnonzero(near):
+        e = full.edges[ei]
+        local = g.to_local(e.points, frame)
+        keep = (local[:, 0] > domain[0]) & (local[:, 0] < domain[1]) & (local[:, 1] > domain[2]) & (local[:, 1] < domain[3])
         if not keep.any():
-            return
+            continue
         runs = np.split(np.arange(len(keep)), np.flatnonzero(np.diff(keep.astype(int))) + 1)
         for run in runs:
             if not keep[run[0]] or len(run) < 2:
@@ -853,10 +1194,9 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True):
             ends = []
             for end, node in ((run[0], e.u if run[0] == 0 else None), (run[-1], e.v if run[-1] == len(local) - 1 else None)):
                 if node is not None:
-                    keyn = (source, node)
-                    if keyn not in node_map:
-                        node_map[keyn] = b.node(local[end])
-                    ends.append(node_map[keyn])
+                    if node not in node_map:
+                        node_map[node] = b.node(local[end])
+                    ends.append(node_map[node])
                 else:
                     nn = b.node(local[end])
                     boundary[nn] = "arterial" if "arter" in e.kind else ("venous" if "vein" in e.kind or "venule" in e.kind else "capillary")
@@ -864,124 +1204,38 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True):
                     ends.append(nn)
             b.edge(ends[0], ends[1], local[run].copy(), e.diameter, e.kind, e.layer, e.vessel)
             b.edges[-1].width = e.width[run] if e.width is not None and len(e.width) == len(local) else None
-            props.append((flow, ei, source))
-
-    coarse = eye.network
-    for ei, e in enumerate(coarse.edges):
-        if e.kind == "bed":
-            continue
-        add_pieces(coarse, eye.flow, "coarse", ei, g.to_local(e.points, frame),
-                   lambda i, k: coarse_pressure_at(eye, i, k))
-    if fine:
-        for key in tiles_in_view(eye, frame, domain):
-            tile = eye.tile(key)
-            net, flow = tile["network"], tile["flow"]
-            if flow is None:
-                continue
-            for ei, e in enumerate(net.edges):
-                local = g.to_local(e.points, frame)
-
-                def tile_pressure(i, k, net=net, flow=flow):
-                    ee = net.edges[i]
-                    seg = np.linalg.norm(np.diff(ee.points, axis=0), axis=1)
-                    s = np.r_[0, np.cumsum(seg)]
-                    f = s[k] / max(s[-1], 1e-9)
-                    return float((1 - f) * flow.pressure[ee.u] + f * flow.pressure[ee.v])
-                add_pieces(net, flow, key, ei, local, tile_pressure)
-            # a root sits on a coarse trunk: the trunk and the tree share that node in the view
-            for ci, k, node in tile["roots"]:
-                keyn = (key, node)
-                if keyn in node_map:
-                    view_node = node_map[keyn]
-                    boundary.pop(view_node, None)
-                    bpressure.pop(view_node, None)
-                    _join_to_coarse(b, props, eye, ci, k, view_node, g, frame)
+            b.edges[-1].paired_with = e.paired_with
+            props.append((flow, int(ei), "eye"))
+    # where only part of a node's vessels are drawn (the coarse level alone), the node is where blood leaves or joins
+    # through vessels the view leaves out; the cells handle that (synth.cells keep_share)
     net = Network(np.asarray(b.nodes) if b.nodes else np.zeros((0, 3)), b.edges, boundary, domain,
                   (-scene.width_px * um / 2, scene.width_px * um / 2, -scene.height_px * um / 2, scene.height_px * um / 2),
                   dict(b.vessel_kind))
     net.boundary_pressure = bpressure
-    net.origins = [(source, ei) for (_, ei, source) in props[:len(net.edges)]]   # where every view edge came from
-    flow = _inherit_flow(net, props, scene)
-    return net, flow
-
-
-def _join_to_coarse(b, props, eye, coarse_edge, point_index, root_node, g, frame):
-    """Move a fine tree's root onto the view piece of its coarse trunk: split the piece at the nearest point and
-    merge the root into that node."""
-    target = eye.network.edges[coarse_edge].points[point_index]
-    local = g.to_local(target[None], frame)[0]
-    best = None
-    for vi, (flow, ei, source) in enumerate(props):
-        if source != "coarse" or ei != coarse_edge:
-            continue
-        pts = b.edges[vi].points
-        d = np.linalg.norm(pts - local, axis=1)
-        k = int(np.argmin(d))
-        if best is None or d[k] < best[0]:
-            best = (d[k], vi, k)
-    if best is None or best[0] > 5.0:
-        return
-    _, vi, k = best
-    e = b.edges[vi]
-    if k == 0:
-        node = e.u
-    elif k == len(e.points) - 1:
-        node = e.v
-    else:
-        node = b.split(vi, k)
-        props.append(props[vi])
-        if e.width is not None:
-            b.edges[-1].width, e.width = e.width[k:], e.width[:k + 1]
-    for edge in b.edges:
-        if edge.u == root_node:
-            edge.u = node
-            edge.points[0] = b.nodes[node]
-        if edge.v == root_node:
-            edge.v = node
-            edge.points[-1] = b.nodes[node]
-
-
-def tiles_in_view(eye, frame, domain):
-    """The keys of the tiles whose area meets the view's domain."""
-    g = eye.globe
-    xs = np.linspace(domain[0], domain[1], 9)
-    ys = np.linspace(domain[2], domain[3], 9)
-    grid = np.array([[x, y, 0.0] for x in xs for y in ys])
-    s, clock, _ = g.surface_coordinates(g.from_local(grid, frame))
-    keys = set()
-    for si, ci in zip(s, clock):
-        if si <= 0:
-            continue
-        i, j = eye.tile_key(si, ci)
-        n = eye.tiles_around(i)
-        for di in (-1, 0, 1):
-            ii = i + di
-            if ii < 0:
-                continue
-            nn = eye.tiles_around(ii)
-            jj = int(round(j * nn / n))
-            for dj in (-1, 0, 1):
-                keys.add((ii, (jj + dj) % nn))
-    return sorted(keys)
+    net.origins = [(source, ei) for (_, ei, source) in props]   # where every view edge came from
+    return net, _inherit_flow(net, props, scene)
 
 
 def _inherit_flow(net, props, scene):
-    """The view's Flow: every piece takes the flow, haematocrit and velocity of the edge it came from; node
-    pressures are interpolated likewise."""
+    """The view's Flow: every piece takes the flow, haematocrit, velocity and pulse of the edge it came from; node
+    pressures at the cut ends are interpolated likewise."""
     E = len(net.edges)
-    fields = {k: np.zeros(E) for k in ("flow", "flow_arterial", "flow_rest", "hd", "ht", "viscosity", "velocity",
-                                        "rbc_velocity", "shear_rate")}
-    for vi, (flow, ei, _) in enumerate(props[:E]):
-        for k in fields:
-            fields[k][vi] = getattr(flow, k)[ei]
+    source = props[0][0] if props else None
+    index = np.array([ei for (_, ei, _) in props], int)
+    fields = {}
+    for k in ("flow", "flow_arterial", "flow_rest", "hd", "ht", "viscosity", "velocity", "rbc_velocity", "shear_rate"):
+        fields[k] = getattr(source, k)[index] if E else np.zeros(0)
     length = np.array([e.length for e in net.edges])
     diameter = np.array([e.diameter for e in net.edges])
     pressure = np.zeros(len(net.nodes))
     for node, p in net.boundary_pressure.items():
         pressure[node] = p
-    return Flow(pressure, fields["flow"], fields["flow_arterial"], fields["flow_rest"], fields["hd"], fields["ht"],
-                fields["viscosity"], fields["velocity"], fields["rbc_velocity"], fields["shear_rate"], length, diameter,
-                0, scene.physiology)
+    out = Flow(pressure, fields["flow"], fields["flow_arterial"], fields["flow_rest"], fields["hd"], fields["ht"],
+               fields["viscosity"], fields["velocity"], fields["rbc_velocity"], fields["shear_rate"], length, diameter,
+               0, scene.physiology)
+    if E and getattr(source, "pulse", None) is not None:
+        out.pulse = source.pulse[:, index]
+    return out
 
 
 def view_scene(eye: Eye, pose: Pose, scene: Scene | None = None) -> Scene:
@@ -1012,7 +1266,7 @@ def simulate_view(eye: Eye, pose: Pose, n_frames=60, scene: Scene | None = None,
         fine = scene.anatomy.um_per_px < 8.0
     start = _time.perf_counter()
     net, flow = assemble_view(eye, pose, scene, fine=fine)
-    timings = {"view assembly": _time.perf_counter() - start, "tiles cached": len(eye._tiles)}
+    timings = {"view assembly": _time.perf_counter() - start}
     return render_network(scene, net, flow, n_frames, timings=timings, **kw)
 
 

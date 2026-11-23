@@ -16,10 +16,14 @@ conserved at every node as well. Viscosity depends on H_D, so flow and haematocr
 The tube haematocrit H_T (the cells actually present in a segment, lower than H_D: the Fahraeus effect) follows
 [Pries1992]; the mean red-cell velocity is v_rbc = Q H_D / (A H_T) and the mean blood velocity Q / A.
 
-Pulsation: with the viscosities frozen at their mean values the system is linear, so the flow is the sum of the
-part driven by the arterial boundary pressures and the part driven by the rest: Q(t) = Q_art (1 + m sin(2 pi f t +
-phi)) + Q_rest, with the cardiac frequency f and the arterial pulse amplitude m of docs §6.3. Flow may reverse in
-a segment during the cycle, as it does in some capillaries.
+Pulsation: with the viscosities frozen at their mean values the system is linear, so the pulse is solved harmonic
+by harmonic about the mean flow. The arterial inlets carry an arterial pressure wave (a systolic peak and a dicrotic
+wave, half its pulse pressure m times the mean; docs §6.3) at the cardiac frequency f; the vessels are distensible,
+so every node stores a volume C dp/dt (C from the volume of the vessels meeting there and their distensibility,
+larger on the venous side), and each harmonic solves sum_j g_ij (P_i - P_j) + i k w C_i P_i = 0. The pulse is
+therefore largest in the arterioles, damped and delayed through the capillaries, and small in the veins. Volume is
+conserved at every node with the stored volume included, and exactly on average over the cycle. Flow may reverse
+in a segment during the cycle, as it does in some capillaries.
 
 Units: µm, s, Pa internally; pressures reported in mmHg, flows in pl/s (1 pl = 1000 µm^3), velocities in mm/s.
 """
@@ -120,11 +124,36 @@ class Flow:
     iterations: int
     physiology: Physiology
 
+    pulse: np.ndarray | None = None          # (K, E) complex pl/s: harmonic k + 1 of every edge's flow
+    pulse_pressure: np.ndarray | None = None  # (K, N) complex mmHg: of every node's pressure
+    compliance: np.ndarray | None = None     # (N,) µm^3 / mmHg stored at every node
+
+    def _phasors(self, t):
+        k = np.arange(1, len(self.pulse) + 1)
+        return np.exp(2j * np.pi * self.physiology.heart_rate_hz * k * t)
+
     def flow_at(self, t):
         """Flow (pl/s) of every edge at time t (s), with the cardiac pulse."""
-        p = self.physiology
-        pulse = 1.0 + p.arterial_pulsatility * np.sin(2 * np.pi * p.heart_rate_hz * t)
-        return self.flow_arterial * pulse + self.flow_rest
+        if self.pulse is None:
+            p = self.physiology
+            pulse = 1.0 + p.arterial_pulsatility * np.sin(2 * np.pi * p.heart_rate_hz * t)
+            return self.flow_arterial * pulse + self.flow_rest
+        return self.flow + np.real(self._phasors(t) @ self.pulse)
+
+    def pressure_at(self, t):
+        """Pressure (mmHg) of every node at time t (s)."""
+        if self.pulse_pressure is None:
+            return self.pressure
+        return self.pressure + np.real(self._phasors(t) @ self.pulse_pressure)
+
+    def storage_at(self, t):
+        """Rate (pl/s) at which every node's distending vessels take up volume at time t (s)."""
+        if self.pulse_pressure is None:
+            return np.zeros(len(self.pressure))
+        k = np.arange(1, len(self.pulse) + 1)[:, None]
+        w = 2 * np.pi * self.physiology.heart_rate_hz
+        rate = 1j * k * w * self.pulse_pressure * self.compliance[None, :]          # µm^3/s
+        return np.real(self._phasors(t) @ rate) * 1e-3
 
     def conservation(self, network: Network):
         """Largest relative imbalance of volume flow and of red-cell flux over the interior nodes."""
@@ -231,8 +260,70 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
     velocity = q / area * 1e-3                                   # µm/s -> mm/s
     rbc_velocity = np.where(ht > 1e-6, velocity * hd / np.maximum(ht, 1e-6), velocity)
     shear = 8 * np.abs(velocity * 1e3) / diameter
-    return Flow(pressure / MMHG, q * 1e-3, q_art * 1e-3, (q - q_art) * 1e-3, hd, ht, mu_rel, velocity, rbc_velocity,
+    flow = Flow(pressure / MMHG, q * 1e-3, q_art * 1e-3, (q - q_art) * 1e-3, hd, ht, mu_rel, velocity, rbc_velocity,
                 shear, length, diameter, iterations, physiology)
+    flow.pulse, flow.pulse_pressure, flow.compliance = _pulse(network, g, p_boundary, arterial_nodes, length,
+                                                              diameter, dangling, physiology)
+    return flow
+
+
+def pulse_wave(physiology: Physiology):
+    """Complex amplitudes of harmonics 1..K of the arterial pressure wave, relative to the mean pressure: the
+    generic wave of physiology.pulse_shape scaled so that half its pulse pressure is arterial_pulsatility."""
+    t = np.linspace(0, 1, 512, endpoint=False)
+    wave = np.zeros_like(t)
+    for centre, width, height in physiology.pulse_shape:
+        for shift in (-1, 0, 1):                            # periodic
+            wave += height * np.exp(-0.5 * ((t - centre - shift) / width) ** 2)
+    spectrum = np.fft.rfft(wave) / len(t) * 2
+    harmonics = spectrum[1:physiology.pulse_harmonics + 1]
+    k = np.arange(1, len(harmonics) + 1)
+    rebuilt = np.real(np.exp(2j * np.pi * np.outer(t, k)) @ harmonics)
+    return harmonics * physiology.arterial_pulsatility / max(0.5 * (rebuilt.max() - rebuilt.min()), 1e-12)
+
+
+def _pulse(network, g, p_boundary, arterial_nodes, length, diameter, dangling, physiology):
+    """The pulse about the mean flow, harmonic by harmonic, with distensible vessels (see the module docstring).
+    Returns (flow harmonics (K, E) pl/s, pressure harmonics (K, N) mmHg, compliance (N,) µm^3/mmHg)."""
+    n = len(network.nodes)
+    edges = network.edges
+    u = np.array([e.u for e in edges])
+    v = np.array([e.v for e in edges])
+    side = np.array([0 if (e.kind in ARTERIAL_KINDS or "arter" in e.kind) else
+                     2 if (e.kind in VENOUS_KINDS or "vein" in e.kind or "venul" in e.kind) else 1 for e in edges])
+    kappa = np.asarray(physiology.distensibility_per_mmhg)[side]              # 1/mmHg
+    volume = np.pi * diameter ** 2 / 4 * length                               # µm^3
+    compliance = np.zeros(n)
+    np.add.at(compliance, u, 0.5 * volume * kappa)
+    np.add.at(compliance, v, 0.5 * volume * kappa)
+    rows = np.r_[u, v, u, v]
+    cols = np.r_[u, v, v, u]
+    vals = np.r_[g, g, -g, -g]
+    laplacian = coo_matrix((vals, (rows, cols)), shape=(n, n)).tocsr()          # µm^3 / (Pa s)
+    fixed = np.zeros(n, bool)
+    fixed[list(p_boundary)] = True
+    free = ~fixed
+    harmonics = pulse_wave(physiology)
+    w = 2 * np.pi * physiology.heart_rate_hz
+    flows = np.zeros((len(harmonics), len(edges)), complex)
+    pressures = np.zeros((len(harmonics), n), complex)
+    from scipy.sparse import diags
+    A_ff = laplacian[free][:, free]
+    A_fx = laplacian[free][:, fixed]
+    C_f = compliance[free] / MMHG                                              # µm^3 / Pa
+    for k, amplitude in enumerate(harmonics, start=1):
+        value = np.zeros(n, complex)
+        for node in arterial_nodes:
+            value[node] = amplitude * p_boundary[node]                         # Pa
+        system = (A_ff + diags(1j * k * w * C_f)).tocsc()
+        P = value.copy()
+        if free.any():
+            P[free] = spsolve(system, -A_fx @ value[fixed])
+        q = g * (P[u] - P[v])
+        q[dangling] = 0.0
+        flows[k - 1] = q * 1e-3
+        pressures[k - 1] = P / MMHG
+    return flows, pressures, compliance
 
 
 def _dangling(network, incident):

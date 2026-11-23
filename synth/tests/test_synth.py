@@ -67,18 +67,39 @@ def test_conservation_at_every_junction(solved):
 
 
 def test_pulse_keeps_conservation(solved):
+    """Through the cardiac cycle the volume a node's distending vessels take up is exactly what flows in less what
+    flows out, and over a whole cycle nothing is stored."""
     _, net, flow = solved
-    q = flow.flow_at(0.3)
     n = len(net.nodes)
-    balance = np.zeros(n)
-    scale = np.zeros(n)
-    for i, e in enumerate(net.edges):
-        balance[e.u] -= q[i]
-        balance[e.v] += q[i]
-        scale[e.u] += abs(q[i])
-        scale[e.v] += abs(q[i])
     interior = np.array([k not in net.boundary for k in range(n)])
-    assert np.max(np.abs(balance[interior]) / np.maximum(scale[interior], 1e-6 * scale.max())) < 1e-8
+    for t in (0.1, 0.3, 0.7):
+        q = flow.flow_at(t)
+        balance = np.zeros(n)
+        scale = np.zeros(n)
+        for i, e in enumerate(net.edges):
+            balance[e.u] -= q[i]
+            balance[e.v] += q[i]
+            scale[e.u] += abs(q[i])
+            scale[e.v] += abs(q[i])
+        stored = flow.storage_at(t)
+        assert np.max(np.abs(balance - stored)[interior] / np.maximum(scale[interior], 1e-6 * scale.max())) < 1e-8
+    period = 1.0 / flow.physiology.heart_rate_hz
+    mean_storage = np.mean([flow.storage_at(t) for t in np.linspace(0, period, 64, endpoint=False)], axis=0)
+    assert np.max(np.abs(mean_storage)) < 1e-9 * np.abs(flow.flow).max()
+
+
+def test_pulse_is_damped_downstream(solved):
+    """The pulse is strongest in the arterioles and damped through the capillaries into the venules."""
+    _, net, flow = solved
+    t = np.linspace(0, 1.0 / flow.physiology.heart_rate_hz, 32, endpoint=False)
+    series = np.abs(np.stack([flow.flow_at(tt) for tt in t]))
+    pi = (series.max(0) - series.min(0)) / np.maximum(series.mean(0), 1e-12)
+    kind = np.array([e.kind for e in net.edges])
+    moving = np.abs(flow.flow) > 0
+    arteriole = np.median(pi[(kind == "arteriole") & moving])
+    capillary = np.median(pi[(kind == "capillary") & moving])
+    venule = np.median(pi[(kind == "venule") & moving])
+    assert arteriole > capillary > venule
 
 
 def test_flow_runs_downhill(solved):
@@ -202,42 +223,144 @@ def test_random_scenes_stay_anatomical():
 @pytest.fixture(scope="module")
 def eye():
     from synth.eye import Eye
-    return Eye(seed=3)
+    return Eye(seed=3, fine_region=(75.0, 105.0, 0.0, 5000.0))
 
 
-def test_eye_coarse_conservation_and_outflow(eye):
+def test_eye_conservation_and_outflow(eye):
     flow_error, cell_error = eye.flow.conservation(eye.network)
     assert flow_error < 1e-6 and cell_error < 1e-8
-    # every outlet is at the episcleral venous pressure and every inlet above it: blood runs from the arteries in
     q = eye.flow.flow
     assert np.isfinite(q).all() and np.abs(q).max() > 0
 
 
-def test_tiles_are_reproducible(eye):
-    from synth.eye import build_tile
+def test_same_seed_same_eye(eye):
+    """A patient is their seed: the same seed grows the same eye, vessel for vessel."""
+    from synth.eye import Eye, build_tile
     key = eye.tile_key(3000.0, 90.0)
-    a = build_tile(eye, key)
-    b = build_tile(eye, key)
+    a, b = build_tile(eye, key), build_tile(eye, key)
     assert len(a["network"].edges) == len(b["network"].edges) > 0
     assert np.allclose(a["network"].nodes, b["network"].nodes)
+    again = Eye(seed=3, fine_region=eye.fine_region)
+    assert len(again.network.edges) == len(eye.network.edges)
+    assert np.allclose(again.network.nodes, eye.network.nodes)
+    assert np.allclose(again.flow.flow, eye.flow.flow)
 
 
-def test_zoom_never_changes_a_vessel(eye):
-    """The same spot at two magnifications: every vessel piece in a view carries exactly the flow of the coarse edge
-    or tile edge it came from, and the pieces common to both views agree."""
-    from synth.eye import Pose, assemble_view
+def test_plexus_is_continuous(eye):
+    """The capillaries form one plexus over the fine region: no tile's capillaries are cut off from its
+    neighbours', and the plexus runs across tile borders."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    net = eye.network
+    cap = [e for e in net.edges if e.level == 2]
+    nodes = sorted({k for e in cap for k in (e.u, e.v)})
+    index = {k: i for i, k in enumerate(nodes)}
+    rows = [index[e.u] for e in cap]
+    cols = [index[e.v] for e in cap]
+    graph = coo_matrix((np.ones(len(cap)), (rows, cols)), shape=(len(nodes), len(nodes)))
+    n, labels = connected_components(graph, directed=False)
+    assert np.bincount(labels).max() > 0.95 * len(nodes)
+    crossing = 0
+    for e in cap:
+        s, c, _ = eye.globe.surface_coordinates(e.points[[0, -1]])
+        crossing += eye.tile_key(s[0], c[0]) != eye.tile_key(s[1], c[1])
+    assert crossing > 0.1 * len(cap)
+
+
+def test_every_perfused_vessel_flows_at_every_level(eye):
+    """Every vessel the network perfuses carries red cells in every view that draws it, at every magnification
+    (the views are selections of the eye's one solved network), and a view draws every vessel in its field."""
+    from synth.eye import Pose, assemble_view, perfusion
+    report = perfusion(eye)
+    assert report["capillary plexus"]["perfused_length_share"] > 0.95
+    assert report["fine trees"]["perfused_length_share"] > 0.9
     pose = Pose(s_mm=3.0, clock_deg=90.0)
+    g = eye.globe
+    frame = g.frame(pose.s_mm * 1000.0, pose.clock_deg)
     seen = []
-    for um in (3.26, 6.5):
+    for um, fine in ((1.0, True), (3.26, True), (6.5, True), (12.0, False)):
         scene = replace(eye.scene, anatomy=replace(eye.scene.anatomy, um_per_px=um), width_px=256, height_px=192)
-        net, flow = assemble_view(eye, pose, scene, fine=True)
-        flows = {}
+        net, flow = assemble_view(eye, pose, scene, fine=fine)
+        drawn = {}
         for i, (source, ei) in enumerate(net.origins):
-            truth = eye.flow.flow[ei] if source == "coarse" else eye.tile(source)["flow"].flow[ei]
-            assert np.isclose(flow.flow[i], truth)
-            flows[(source, ei)] = float(flow.flow[i])
-        seen.append(flows)
-    shared = set(seen[0]) & set(seen[1])
-    assert any(src == "coarse" for src, _ in shared) and any(src != "coarse" for src, _ in shared)
-    for key in shared:
-        assert np.isclose(seen[0][key], seen[1][key])
+            assert source == "eye"
+            assert flow.flow[i] == eye.flow.flow[ei] and flow.rbc_velocity[i] == eye.flow.rbc_velocity[ei]
+            drawn[ei] = float(flow.flow[i])
+        x0, x1, y0, y1 = net.domain
+        expected = set()
+        for ei, e in enumerate(eye.network.edges):
+            if not fine and e.level > 0:
+                continue
+            local = g.to_local(e.points, frame)
+            if ((local[:, 0] > x0) & (local[:, 0] < x1) & (local[:, 1] > y0) & (local[:, 1] < y1)).sum() >= 2:
+                expected.add(ei)
+        assert expected <= set(drawn)
+        length = np.array([e.length for e in net.edges])
+        moving = np.abs(flow.rbc_velocity) > 0.005
+        assert length[moving].sum() > 0.9 * length.sum()
+        assert {eye.network.edges[ei].level for ei in drawn} <= ({0, 1, 2} if fine else {0})
+        seen.append(drawn)
+    shared = set(seen[1]) & set(seen[2])
+    assert {eye.network.edges[ei].level for ei in shared} == {0, 1, 2}
+
+
+# ------------------------------------------------------------------------------------------- the patient and mapping
+
+def test_listing_points_the_eye_without_torsion():
+    from synth.gaze import direction_of, listing
+    for h, v in ((0, 0), (20, 0), (0, -15), (25, 18), (-30, 10)):
+        R = listing(h, v)
+        assert np.allclose(R @ R.T, np.eye(3)) and np.isclose(np.linalg.det(R), 1.0)
+        assert np.allclose(R @ np.array([0, 0, 1.0]), direction_of(h, v))
+        # Listing's law: the rotation axis lies in the plane perpendicular to the primary direction
+        w, vecs = np.linalg.eig(R)
+        axis = np.real(vecs[:, np.argmin(np.abs(w - 1))])
+        assert abs(axis[2]) < 1e-6 or (h, v) == (0, 0)
+
+
+def test_patient_is_their_seed():
+    from synth.gaze import patient
+    import synth.gaze as gaze_module
+    # the anatomy drawn from a seed, without growing the network
+    calls = []
+    original = gaze_module.Eye
+    gaze_module.Eye = lambda **kw: calls.append(kw) or kw
+    try:
+        a, b, c = patient(5), patient(5), patient(6)
+    finally:
+        gaze_module.Eye = original
+    assert a["anatomy"] == b["anatomy"] and a["scene"] == b["scene"]
+    assert a["anatomy"] != c["anatomy"]
+
+
+def test_slit_lamp_and_mapper(eye):
+    """A few bursts at commanded gazes: their truth follows the gaze, the lids cover the field where they should, and
+    the mapper places every burst near its true place from the frames alone."""
+    from synth.gaze import SlitLamp
+    from synth.mapping import Mapper, gaze_for
+    scene = replace(eye.scene, width_px=320, height_px=240, margin_um=150.0)
+    lamp = SlitLamp(eye, aim=(40.0, 0.0), scene=scene, seed=1)
+    targets = [gaze_for(lamp, s, c)[0] for s, c in ((3000.0, 88.0), (3000.0, 89.2), (3350.0, 88.6))]
+    mapper = Mapper(eye.globe, region=((85.0, 93.0), (2.5, 3.8)), um_per_px=4.0)
+    previous, truth = None, []
+    for gaze in targets:
+        burst = lamp.record(gaze, n_frames=4, previous=previous)
+        assert burst.result.frames.shape == (4, 240, 320)
+        assert burst.occlusion.shape == (4,) and np.all((burst.occlusion >= 0) & (burst.occlusion <= 1))
+        # the field the camera saw lies within a fixation error (0.25°, about 55 µm) of the commanded one
+        aimed, _ = lamp.field_pose(gaze)
+        a = eye.globe.point(aimed.s_mm * 1000, aimed.clock_deg, 0)
+        b = eye.globe.point(burst.pose.s_mm * 1000, burst.pose.clock_deg, 0)
+        assert np.linalg.norm(a - b) < 400.0
+        placed = mapper.add(burst.result.frames, gaze, lamp)
+        first = placed["first"] if placed else 0
+        p = burst.poses[first]
+        truth.append((p.s_mm * 1000, p.clock_deg))
+        previous = gaze
+    report = mapper.evaluate(eye, true_poses=truth)
+    assert report["coverage"] > 0.1
+    assert report["relative_placement_error_um_median"] < 60.0
+    # looking down brings the upper lid down over the upper conjunctiva
+    up, _ = lamp.lid_margins(0.0)
+    down, _ = lamp.lid_margins(-20.0)
+    assert down < up

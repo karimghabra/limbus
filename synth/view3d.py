@@ -113,7 +113,7 @@ def eye_figure(eye, kinds=None, step=4):
                                                    ("conjunctival vein", "#2a78d6"), ("limbal vein", "#5f9fe0")]:
         if kinds is not None and kind not in kinds:
             continue
-        chosen = [e for e in eye.network.edges if e.kind == kind]
+        chosen = [e for e in eye.network.edges if e.kind == kind and getattr(e, "level", 0) == 0]
         if not chosen:
             continue
         xs, ys, zs = [], [], []

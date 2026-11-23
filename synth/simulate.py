@@ -60,33 +60,75 @@ class Result:
 
 
 class TubeSampler:
-    """Vessels as tubes carrying their mean red-cell density: sample points across every segment's cross-section,
+    """Vessels as tubes carrying their red-cell density: sample points across every segment's cross-section,
     weighted so that each sample carries its share of the expected cells (H_T A ds / V_rbc), spread across the lumen
-    by the chord length a ray crosses (the projection of a cylinder)."""
+    by the chord length a ray crosses (the projection of a cylinder). The density is modulated along each vessel by
+    the axial structure of the red cells (aggregates and plasma gaps: a log-normal field with the clump length and
+    amplitude of synth.cells), carried downstream at the vessel's red-cell speed through the cardiac cycle, so that
+    blood is seen to flow at magnifications too low to draw single cells (weights_at)."""
+
+    PERIOD_UM = 4096.0
 
     def __init__(self, net, flow, scene):
         step = max(scene.anatomy.um_per_px / 2.0, 1.0)
-        points, weights = [], []
+        points, weights, edge, arc = [], [], [], []
         for i, e in enumerate(net.edges):
-            pts = network.resample(e.points, step)
+            local = np.column_stack([e.points, e.local_diameter])
+            sampled = network.resample(local, step)
+            pts, diam = sampled[:, :3], sampled[:, 3]
             if len(pts) < 2:
                 continue
             tangent = np.gradient(pts[:, :2], axis=0)
             tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
             normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
-            radius = e.diameter / 2
-            k = max(1, int(np.ceil(e.diameter / step)))
+            s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]
+            radius = diam / 2
+            k = max(1, int(np.ceil(float(diam.max()) / step)))
             offsets = (np.arange(k) + 0.5) / k * 2 - 1                      # across the diameter, -1..1
             chord = np.sqrt(np.clip(1 - offsets ** 2, 0, None))
             chord /= chord.sum()
             cells_per_sample = flow.ht[i] * np.pi * radius ** 2 * step / scene.physiology.rbc_volume_um3
             for o, w in zip(offsets, chord):
                 p = pts.copy()
-                p[:, :2] += (o * radius) * normal
+                p[:, :2] += (o * radius)[:, None] * normal
                 points.append(p)
-                weights.append(np.full(len(p), cells_per_sample * w))
+                weights.append(cells_per_sample * w)
+                edge.append(np.full(len(p), i))
+                arc.append(s)
         self.points = np.vstack(points) if points else np.zeros((0, 3))
         self.weights = np.concatenate(weights) if weights else np.zeros(0)
+        self.edge = np.concatenate(edge) if edge else np.zeros(0, int)
+        self.arc = np.concatenate(arc) if arc else np.zeros(0)
+        # the axial red-cell structure: one periodic log-normal field shared by all vessels, entered at a random
+        # place per vessel
+        p = scene.physiology
+        rng = np.random.default_rng([scene.seed, 7])
+        n = int(self.PERIOD_UM)
+        spectrum = np.fft.rfft(rng.standard_normal(n))
+        freq = np.fft.rfftfreq(n)
+        g = np.fft.irfft(spectrum * np.exp(-0.5 * (2 * np.pi * freq * p.clump_length_um) ** 2), n)
+        g /= max(g.std(), 1e-12)
+        # stronger than the per-cell value: here it stands for the whole texture of the cells, which single cells
+        # (not drawn at this magnification) would add
+        sigma = min(2.0 * p.clump_amplitude, 0.8)
+        self.field = np.exp(sigma * g - 0.5 * sigma ** 2).astype(np.float32)
+        self.entry = rng.uniform(0, self.PERIOD_UM, max(len(net.edges), 1))
+        self.flow = flow
+
+    def weights_at(self, t):
+        """The samples' weights at time t (s): the expected cells, modulated by the axial structure carried along
+        each vessel by its red-cell speed (pulsatile when the flow has harmonics)."""
+        f = self.flow
+        v = f.rbc_velocity * 1e3                                          # µm/s, signed along u -> v
+        travel = v * t
+        if getattr(f, "pulse", None) is not None and len(f.pulse):
+            w = 2 * np.pi * f.physiology.heart_rate_hz
+            k = np.arange(1, len(f.pulse) + 1)[:, None]
+            ratio = np.where(np.abs(f.flow) > 1e-12, f.pulse / np.where(np.abs(f.flow) > 1e-12, f.flow, 1.0), 0.0)
+            phase = np.exp(1j * k * w * t)
+            travel = v * (t + np.real(ratio * phase / (1j * k * w)).sum(0))
+        position = (self.arc - travel[self.edge] + self.entry[self.edge]) % self.PERIOD_UM
+        return self.weights * self.field[position.astype(np.int64) % len(self.field)]
 
 
 def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True, progress=None) -> Result:
@@ -102,11 +144,14 @@ def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, recor
 
 
 def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True,
-                   progress=None, timings=None, tubes=None) -> Result:
+                   progress=None, timings=None, tubes=None, motion=None, occluder=None, time_offset=0.0) -> Result:
     """Run the red cells of a given network and flow and render n_frames of it.
 
     tubes: draw every vessel as a tube carrying its mean red-cell density instead of discrete cells (no flicker,
-    no cell transport, far cheaper); by default when the magnification is low (Optics.tube_um_per_px or coarser)."""
+    no cell transport, far cheaper); by default when the magnification is low (Optics.tube_um_per_px or coarser).
+    motion: the camera's motion over the burst (camera.Motion), by default drawn from the measured statistics.
+    occluder: callable(frame index, renderer) -> (mask, irradiance) that covers part of each frame (the lids).
+    time_offset: the time (s) of the first frame, for the phase of the cardiac cycle."""
     timings = dict(timings or {})
     if tubes is None:
         tubes = scene.anatomy.um_per_px >= scene.optics.tube_um_per_px
@@ -119,15 +164,16 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
         tube = TubeSampler(net, flow, scene)
     else:
         red_cells = cells.Cells(net, flow, scene.physiology, rng)
+        red_cells.t = time_offset - warm_up_s
         red_cells.warm_up(warm_up_s, dt)
-        red_cells.t = 0.0
+        red_cells.t = time_offset
     timings["cells warm-up"] = time.perf_counter() - start
-    motion = camera.eye_motion(n_frames, scene, rng)
+    motion = motion if motion is not None else camera.eye_motion(n_frames, scene, rng)
     renderer = camera.Renderer(scene, net, rng, motion)
     scale = camera.background_scale(scene)
     period = 1.0 / scene.optics.fps
     frames = np.empty((n_frames, scene.height_px, scene.width_px), np.uint16)
-    times = np.arange(n_frames) * period
+    times = time_offset + np.arange(n_frames) * period
     cell_frames = []
     masks = {"edge": [], "depth": [], "velocity": []}
     x0, x1, y0, y1 = net.field_of_view
@@ -137,8 +183,9 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
     pad = (reach + 8.0) * scene.anatomy.um_per_px
 
     def cells_at(t):
+        t = t + time_offset
         if tubes:
-            return tube.points, tube.weights
+            return tube.points, tube.weights_at(t)
         while red_cells.t < t - 1e-9:
             red_cells.step(min(dt, t - red_cells.t))
         return red_cells.positions()[red_cells.visible()]
@@ -146,6 +193,10 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
     start = time.perf_counter()
     for k in range(n_frames):
         irradiance, glint = renderer.expose(k, cells_at)
+        if occluder is not None:
+            mask, cover = occluder(k, renderer)
+            irradiance = irradiance * (1 - mask) + cover * mask * renderer.light
+            glint = glint * (1 - mask)
         frames[k] = renderer.sensor(irradiance, glint, scale)
         mid = k + 0.5 * scene.optics.exposure_s / period
         if record_cells:
@@ -154,7 +205,7 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
             cell_frames.append(dict(xyz=xyz[inside].astype(np.float32), id=red_cells.ids[inside].astype(np.uint32),
                                     edge=red_cells.edge[inside].astype(np.uint16)))
         if record_masks:
-            edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, k * period)
+            edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, time_offset + k * period)
             masks["edge"].append(edge_map)
             masks["depth"].append(depth_map)
             masks["velocity"].append(velocity_map)
