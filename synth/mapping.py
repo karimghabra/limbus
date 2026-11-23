@@ -130,10 +130,14 @@ def _illumination(image, grid=(32, 24), rounds=4):
 class Mapper:
     """The map of one eye's surface over a region ((clock from, clock to), (s from, s to) mm), at um_per_px."""
 
-    def __init__(self, globe, region, um_per_px=4.0, min_ncc=0.75):
+    def __init__(self, globe, region, um_per_px=4.0, min_ncc=0.75, adjust=True, z_reg_um=150.0):
         self.g = globe
+        self.z_reg = z_reg_um                     # the depth at which fields are matched (the vessels' typical depth)
+        self.adjust = adjust                      # re-solve all places after each burst (False: place once)
+        self.links = []                           # pairwise measurements (i, j, chart dx, dy um, correlation)
         self.min_ncc = min_ncc                    # least correlation for a registration to be trusted
         self.levels = []                          # the sclera's brightness in the bursts accepted so far
+        self.bursts = []                          # every placed burst: pose, vesselness, valid mask
         self.corrections = []                     # accepted registrations: where the field was against the gaze's
                                                   # prediction (eye coordinates, µm): the head's drift
         (c0, c1), (s0, s1) = region
@@ -155,6 +159,28 @@ class Mapper:
         self._clock = self.c0 + np.degrees((cols + 0.5) * um_per_px / self.r_ref)
         self._xyz = None
 
+    # the camera's projection: it sees the globe orthographically along its axis (synth.camera), and the vessels lie
+    # some way below the surface, so a field pixel is matched to the direction of a point on the sphere of the
+    # vessels' typical depth (z_reg), which keeps the parallax between overlapping fields small
+    def _axes(self, pose_s, pose_clock, roll_deg):
+        c, e1, e2 = self.g.frame(pose_s, pose_clock)
+        r = math.radians(roll_deg)
+        return np.asarray(c), math.cos(r) * e1 + math.sin(r) * e2, -math.sin(r) * e1 + math.cos(r) * e2
+
+    def _pixels_to_directions(self, pose_s, pose_clock, roll_deg, um_cam, w, h):
+        c, a1, a2 = self._axes(pose_s, pose_clock, roll_deg)
+        Rr = self.g.R - self.z_reg
+        yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
+        X, Y = (xx - w / 2) * um_cam, (yy - h / 2) * um_cam
+        Z = np.sqrt(np.clip(Rr ** 2 - X ** 2 - Y ** 2, 0, None))
+        return (Z[..., None] * c + X[..., None] * a1 + Y[..., None] * a2) / Rr
+
+    def _directions_to_pixels(self, u, pose_s, pose_clock, roll_deg, um_cam, w, h):
+        c, a1, a2 = self._axes(pose_s, pose_clock, roll_deg)
+        Rr = self.g.R - self.z_reg
+        return (Rr * (u @ a1) / um_cam + w / 2).astype(np.float32), (Rr * (u @ a2) / um_cam + h / 2).astype(np.float32), \
+            (u @ c) > 0.5
+
     # chart <-> globe
     def chart_xyz(self):
         if self._xyz is None:
@@ -166,25 +192,26 @@ class Mapper:
 
     def _field_lookup(self, pose_s, pose_clock, roll_deg, um_cam, w, h):
         """For every chart pixel, its pixel in a camera field at that pose (float maps), and which fall inside."""
-        frame = self.g.frame(pose_s, pose_clock)
-        local = self.g.to_local(self.chart_xyz(), frame)
-        r = math.radians(roll_deg)
-        X = math.cos(r) * local[..., 0] + math.sin(r) * local[..., 1]
-        Y = -math.sin(r) * local[..., 0] + math.cos(r) * local[..., 1]
-        px = X / um_cam + w / 2                   # the renderer's convention: the field's centre at pixel w / 2
-        py = Y / um_cam + h / 2
-        inside = (px >= 0) & (px <= w - 1) & (py >= 0) & (py <= h - 1) & (local[..., 2] > -1e3)
-        return px.astype(np.float32), py.astype(np.float32), inside
+        u = self.chart_xyz() / self.g.R
+        px, py, front = self._directions_to_pixels(u, pose_s, pose_clock, roll_deg, um_cam, w, h)
+        inside = (px >= 0) & (px <= w - 1) & (py >= 0) & (py <= h - 1) & front
+        return px, py, inside
+
+    def _burst_in_field(self, prev, pose_s, pose_clock, roll_deg, um_cam, w, h):
+        """An earlier burst's vesselness seen in a camera field at a pose (NaN where it saw nothing)."""
+        u = self._pixels_to_directions(pose_s, pose_clock, roll_deg, um_cam, w, h)
+        ps, pc, proll = prev["pose"]
+        pw, ph = prev["size"]
+        mx, my, front = self._directions_to_pixels(u, ps, pc, proll, prev["um"], pw, ph)
+        img = np.where(prev["valid"], prev["ves"], np.nan).astype(np.float32)
+        out = cv2.remap(img, mx, my, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=np.nan)
+        out[~front] = np.nan
+        return out
 
     def _map_in_field(self, layer, pose_s, pose_clock, roll_deg, um_cam, w, h):
         """The map layer rendered into a camera field at a pose (NaN where the map holds nothing)."""
-        frame = self.g.frame(pose_s, pose_clock)
-        yy, xx = np.mgrid[0:h, 0:w].astype(np.float64)
-        X, Y = (xx - w / 2) * um_cam, (yy - h / 2) * um_cam
-        r = math.radians(roll_deg)
-        lx, ly = math.cos(r) * X - math.sin(r) * Y, math.sin(r) * X + math.cos(r) * Y
-        xyz = self.g.from_local(np.stack([lx, ly, np.zeros_like(lx)], -1), frame)
-        s, clock, _ = self.g.surface_coordinates(xyz)
+        u = self._pixels_to_directions(pose_s, pose_clock, roll_deg, um_cam, w, h)
+        s, clock, _ = self.g.surface_coordinates(u * self.g.R)
         cx, cy = self.to_chart(s, clock)
         filled = np.where(self.weight > 0, layer / np.maximum(self.weight, 1e-9), np.nan).astype(np.float32)
         return cv2.remap(filled, cx.astype(np.float32), cy.astype(np.float32), cv2.INTER_LINEAR,
@@ -224,8 +251,15 @@ class Mapper:
         mean_raw = np.nanmean(np.stack([cv2.warpAffine(f[k], np.float32([[1, 0, -s[0]], [0, 1, -s[1]]]), (w, h))
                                         for k, s in zip(kept, shifts)]), 0)
         smooth = cv2.GaussianBlur(mean_raw, (0, 0), 6) / _illumination(mean_raw)
-        lid = (smooth > 1.09) | (smooth < 0.6)
-        lid = cv2.dilate(lid.astype(np.uint8), np.ones((15, 15), np.uint8)) > 0
+        # a lid is a broad region without vessels, brighter than the sclera, edged by its dark margin (a band far
+        # broader than any vessel); the illumination fit may absorb a lid that covers much of the field, so the
+        # vessels' absence decides as much as the brightness
+        od_mean = np.log(np.maximum(_illumination(mean_raw), 1.0) / np.maximum(mean_raw, 1.0))
+        density = cv2.GaussianBlur(vesselness(od_mean), (0, 0), 30)
+        sparse = density < 0.2 * np.median(density)
+        margin = cv2.GaussianBlur(smooth, (0, 0), 12) < 0.8
+        lid = (smooth > 1.09) | (smooth < 0.6) | margin | (sparse & (smooth > 0.98))
+        lid = cv2.dilate(lid.astype(np.uint8), np.ones((25, 25), np.uint8)) > 0
         valid &= ~lid
         return stack, kept, np.array(shifts), valid
 
@@ -254,68 +288,144 @@ class Mapper:
             s_n, c_n, _ = self.g.surface_coordinates((moved_p * self.g.R / np.linalg.norm(moved_p))[None])
             s_p, c_p = float(s_n[0]), float(c_n[0])
         start = self.g.point(s_p, c_p, 0.0)
+        self._predicted = (s_p, c_p)
         shift_um = np.zeros(2)
         diagnostics = dict(overlap=0.0, response=0.0, valid=float(valid.mean()))
-        if refine and (self.weight > 0).any():
-            prior = self._map_in_field(self.vessel, s_p, c_p, roll, um_cam, w, h)
-            overlap = np.isfinite(prior) & valid
-            diagnostics["overlap"] = float(overlap.mean())
-            if overlap.mean() > 0.08:
-                # registered on the vessels themselves (the vesselness, softly compressed), which the texture, focus
-                # and illumination of the two recordings change far less than they change the raw density
-                soft = lambda x: np.sqrt(np.clip(cv2.GaussianBlur(x, (0, 0), 1.0), 0, None)).astype(np.float32)
-                a = soft(np.where(np.isfinite(prior), prior, 0.0).astype(np.float32))
-                b = soft(ves.astype(np.float32))
-                # masked normalised cross-correlation over the shifts (Padfield's masked FFT registration): the
-                # shift that brings the burst onto the map where both hold data
-                shift = phase_cross_correlation(a, b, reference_mask=np.isfinite(prior), moving_mask=valid,
-                                                overlap_ratio=0.2)
+        if refine and self.bursts:
+            # registered against every earlier burst whose field overlaps, one at a time (not the blended map, which
+            # one misplaced burst would ghost), on the vessels themselves (the vesselness, softly compressed), which
+            # the texture, focus and illumination of two recordings change far less than the raw density; the
+            # earlier burst that matches best decides
+            soft = lambda x: np.sqrt(np.clip(cv2.GaussianBlur(x, (0, 0), 1.0), 0, None)).astype(np.float32)
+            b = soft(ves.astype(np.float32))
+            best = None
+            measured = []
+            for prev in self.bursts:
+                prior = self._burst_in_field(prev, s_p, c_p, roll, um_cam, w, h)
+                known = np.isfinite(prior)
+                overlap = known & valid
+                if overlap.mean() < 0.08:
+                    continue
+                a = soft(np.where(known, prior, 0.0).astype(np.float32))
+                # masked normalised cross-correlation over the shifts (Padfield's masked FFT registration)
+                shift = phase_cross_correlation(a, b, reference_mask=known, moving_mask=valid, overlap_ratio=0.2)
                 sy, sx = -float(shift[0][0]), -float(shift[0][1])
                 M = np.float32([[1, 0, -sx], [0, 1, -sy]])
                 moved = cv2.warpAffine(b, M, (w, h), flags=cv2.INTER_LINEAR, borderValue=np.nan)
-                both = np.isfinite(prior) & np.isfinite(moved) & (cv2.warpAffine(valid.astype(np.uint8), M, (w, h)) > 0)
-                if both.sum() > 500:
-                    x, y = a[both], moved[both]
-                    diagnostics["response"] = float(np.corrcoef(x, y)[0, 1])
+                both = known & np.isfinite(moved) & (cv2.warpAffine(valid.astype(np.uint8), M, (w, h)) > 0)
+                if both.sum() < 2000:
+                    continue
+                ncc = float(np.corrcoef(a[both], moved[both])[0, 1])
+                if math.hypot(sx, sy) < 0.25 * w:
+                    measured.append((prev["index"], sx, sy, ncc))
+                if best is None or ncc > best[0]:
+                    best = (ncc, sx, sy, float(overlap.mean()))
+            if best is not None:
+                ncc, sx, sy, diagnostics["overlap"] = best
+                diagnostics["response"] = ncc
                 # a small correction of a well predicted field needs less evidence than a large jump
                 small = math.hypot(sx, sy) * um_cam < 120.0
-                if (diagnostics["response"] > self.min_ncc or (small and diagnostics["response"] > 0.5)) \
-                        and math.hypot(sx, sy) < 0.25 * w:
-                    # the burst's content sits (sx, sy) px from where the map has it: move the field the other way
+                if (ncc > self.min_ncc or (small and ncc > 0.5)) and math.hypot(sx, sy) < 0.25 * w:
+                    # the burst's content sits (sx, sy) px from where the earlier one has it: move the field back
                     r = math.radians(roll)
                     dxl, dyl = -sx * um_cam, -sy * um_cam
-                    shift_um = np.array([math.cos(r) * dxl - math.sin(r) * dyl, math.sin(r) * dxl + math.cos(r) * dyl])
+                    local_shift = np.array([math.cos(r) * dxl - math.sin(r) * dyl, math.sin(r) * dxl + math.cos(r) * dyl])
                     frame = self.g.frame(s_p, c_p)
-                    moved_c = self.g.from_local(np.array([[shift_um[0], shift_um[1], 0.0]]), frame)
+                    moved_c = self.g.from_local(np.array([[local_shift[0], local_shift[1], 0.0]]), frame)
                     s_n, c_n, _ = self.g.surface_coordinates(moved_c)
                     s_p, c_p = float(s_n[0]), float(c_n[0])
                     self.corrections.append(self.g.point(s_p, c_p, 0.0) - predicted)
                     shift_um = self.g.point(s_p, c_p, 0.0) - start
-        px, py, inside = self._field_lookup(s_p, c_p, roll, um_cam, w, h)
-        if not inside.any():
-            self.placements.append(dict(pose=(s_p, c_p, roll), shift_um=shift_um, kept=len(kept), first=int(kept[0]), **diagnostics))
-            return self.placements[-1]
-        # weight: towards the field's centre, zero where the burst is invalid
+        index = len(self.bursts)
+        # every trusted pairwise measurement, as the chart offset between this burst and the earlier one
+        frame_p = self.g.frame(s_p, c_p)
+        if refine and self.bursts:
+            r = math.radians(roll)
+            for j, sx, sy, ncc in measured:
+                if ncc <= 0.6:
+                    continue
+                dxl, dyl = -sx * um_cam, -sy * um_cam
+                ls = np.array([math.cos(r) * dxl - math.sin(r) * dyl, math.sin(r) * dxl + math.cos(r) * dyl])
+                # where this burst lies by that measurement (measured from the predicted pose that was correlated)
+                base_frame = self.g.frame(*self._predicted)
+                at = self.g.from_local(np.array([[ls[0], ls[1], 0.0]]), base_frame)
+                si, ci, _ = self.g.surface_coordinates(at)
+                xi, yi = self.to_chart(float(si[0]), float(ci[0]))
+                xj, yj = self.to_chart(*self.bursts[j]["pose"][:2])
+                self.links.append((index, j, (xi - xj) * self.um, (yi - yj) * self.um, ncc))
+        del frame_p
         yy, xx = np.mgrid[0:h, 0:w]
         centre = (np.minimum.reduce([xx, w - 1 - xx, yy, h - 1 - yy]) / (0.15 * min(w, h))).clip(0, 1)
-        weight_img = (centre * valid).astype(np.float32) * len(kept)
+        self.bursts.append(dict(index=index, pose=(s_p, c_p, roll), ves=ves.astype(np.float32), valid=valid,
+                                um=um_cam, mean=mean.astype(np.float32), flick=flick.astype(np.float32),
+                                weight=(centre * valid).astype(np.float32) * len(kept), size=(w, h)))
+        self.placements.append(dict(pose=(s_p, c_p, roll), shift_um=shift_um, kept=len(kept), first=int(kept[0]),
+                                    **diagnostics))
+        if self.adjust and len(self.links) > 0:
+            self._adjust()
+        else:
+            self._accumulate(self.bursts[-1])
+        return self.placements[-1]
+
+    def _adjust(self):
+        """Re-solve every burst's place from all the pairwise measurements at once (least squares on the chart,
+        weighted by each match's correlation, the first burst holding the map in place), and rebuild the map: the
+        drift that a chain of registrations accumulates is spread out instead of carried along."""
+        n = len(self.bursts)
+        rows, rhs, wts = [], [], []
+        for i, j, dx, dy, ncc in self.links:
+            for axis, d in ((0, dx), (1, dy)):
+                row = np.zeros(2 * n)
+                row[2 * i + axis], row[2 * j + axis] = 1.0, -1.0
+                rows.append(row); rhs.append(d); wts.append(ncc ** 2)
+        x0 = np.array([self.to_chart(*b["pose"][:2]) for b in self.bursts]) * self.um
+        for axis in (0, 1):                               # the first burst fixes the map's place
+            row = np.zeros(2 * n)
+            row[axis] = 1.0
+            rows.append(row); rhs.append(x0[0, axis]); wts.append(100.0)
+        for i in range(1, n):                             # a burst no link reaches keeps its own place
+            for axis in (0, 1):
+                row = np.zeros(2 * n)
+                row[2 * i + axis] = 1.0
+                rows.append(row); rhs.append(x0[i, axis]); wts.append(1e-4)
+        A = np.array(rows) * np.sqrt(wts)[:, None]
+        b = np.array(rhs) * np.sqrt(wts)
+        x = np.linalg.lstsq(A, b, rcond=None)[0].reshape(n, 2) / self.um
+        for k, burst in enumerate(self.bursts):
+            col, row = x[k]
+            s_um = self.s0 + (row + 0.5) * self.um
+            clock = self.c0 + math.degrees((col + 0.5) * self.um / self.r_ref)
+            burst["pose"] = (s_um, clock, burst["pose"][2])
+            placed = [p for p in self.placements if p is not None][k]
+            placed["pose"] = burst["pose"]
+        for layer in (self.od, self.vessel, self.flicker, self.weight):
+            layer[:] = 0
+        for burst in self.bursts:
+            self._accumulate(burst)
+
+    def _accumulate(self, burst):
+        """Add one burst into the chart at its place, weighted towards the field's centre."""
+        s_p, c_p, roll = burst["pose"]
+        w, h = burst["size"]
+        px, py, inside = self._field_lookup(s_p, c_p, roll, burst["um"], w, h)
+        if not inside.any():
+            return
         sample = lambda img: cv2.remap(img.astype(np.float32), px, py, cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
                                        borderValue=0)
-        wgt = sample(weight_img) * inside
-        self.od += wgt * sample(mean)
-        self.vessel += wgt * sample(ves)
-        self.flicker += wgt * sample(flick)
+        wgt = sample(burst["weight"]) * inside
+        self.od += wgt * sample(burst["mean"])
+        self.vessel += wgt * sample(burst["ves"])
+        self.flicker += wgt * sample(burst["flick"])
         self.weight += wgt
-        self.placements.append(dict(pose=(s_p, c_p, roll), shift_um=shift_um, kept=len(kept), first=int(kept[0]), **diagnostics))
-        return self.placements[-1]
 
     # products
     def layer(self, name):
         data = getattr(self, name)
         return np.where(self.weight > 0, data / np.maximum(self.weight, 1e-9), np.nan)
 
-    def vessel_map(self, threshold=None):
-        """Binary vessel map from the accumulated vesselness (Otsu's threshold over the covered area by default)."""
+    def vessel_map(self, threshold=None, otsu_factor=0.6):
+        """Binary vessel map from the accumulated vesselness: above a threshold, by default a share of Otsu's over the
+        covered area (Otsu's alone keeps only the clearest vessels: faint small ones fall below it)."""
         v = np.nan_to_num(self.layer("vessel"))
         covered = self.weight > 0
         if threshold is None:
@@ -324,7 +434,7 @@ class Mapper:
                 return np.zeros_like(covered)
             scaled = np.clip(vals / max(np.percentile(vals, 99.5), 1e-9) * 255, 0, 255).astype(np.uint8)
             t, _ = cv2.threshold(scaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            threshold = t / 255 * max(np.percentile(vals, 99.5), 1e-9)
+            threshold = otsu_factor * t / 255 * max(np.percentile(vals, 99.5), 1e-9)
         return (v > threshold) & covered
 
     # truth
@@ -403,4 +513,6 @@ class Mapper:
         out["recall"] = float((truth_line & found_d).sum() / max(truth_line.sum(), 1))
         large = skeletonize(self.truth_vessels(eye, min_diameter_um=15.0, max_depth_um=500.0) & cov)
         out["recall_15um_and_wider"] = float((large & found_d).sum() / max(large.sum(), 1))
+        conj = skeletonize(self.truth_vessels(eye, min_diameter_um=8.0, max_depth_um=250.0) & cov)
+        out["recall_conjunctival_8um_and_wider"] = float((conj & found_d).sum() / max(conj.sum(), 1))
         return out

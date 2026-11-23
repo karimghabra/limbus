@@ -704,14 +704,28 @@ targets so that different parts of the conjunctiva come under the camera.
   without the vessels' fine structure), registers the rest by phase correlation, flat-fields their mean by a robust
   quadratic fit of the illumination, and measures vesselness and red-cell flicker. It predicts the field's place
   on the globe from the commanded gaze (Listing's law through the fixed camera), moved by the head's drift on the
-  chin rest as the last accepted registrations measured it, then registers the burst's vesselness against the map's
-  by masked normalised cross-correlation [Padfield2012], accepting a large correction only at a correlation of 0.75
-  and a small one (under 120 µm) at 0.5, and adds the burst into a chart of the globe's surface (polar and clock
-  angle about the corneal axis, 4 µm per pixel), weighted towards the field's centre. `Mapper.evaluate` scores the
+  chin rest as the last accepted registrations measured it, then registers the burst's vesselness against each earlier burst
+  whose field overlaps (one at a time, not the blended map, which one misplaced burst would ghost) by masked
+  normalised cross-correlation [Padfield2012], the best match deciding, a large correction needing a correlation of
+  0.75 and a small one (under 120 µm) 0.5. Fields are matched through the camera's own projection (orthographic
+  along its axis, `synth.camera`) on the sphere of the vessels' typical depth (150 µm), which keeps the parallax
+  between overlapping fields small; matching surface points instead biased every pairwise measurement by a few tens
+  of micrometres. After every burst all bursts' places are re-solved at once from every trusted pairwise
+  measurement (weighted least squares on the chart), so the drift of a chain of registrations is spread out, and
+  the bursts are added into a chart of the globe's surface (polar and clock angle about the corneal axis, 4 µm per
+  pixel), weighted towards each field's centre. The vessel map keeps the vesselness above 0.6 of Otsu's threshold. `Mapper.evaluate` scores the
   map against the eye's network: the share of the region covered, the error of every burst's placement (absolute,
   and relative to the map's common offset - a map built without an absolute reference sits on the globe within
   the first bursts' error), and, after that common offset, the precision and recall of the vessel map's
   centrelines against the true vessels' centrelines within 8 µm.
+- **A demonstration** (patient 7, the camera aimed 40° temporal of the primary gaze, 22 fixations planned over the
+  temporal conjunctiva from 72° to 108° and 1.4–5.0 mm from the limbus with 35 % overlap, 16 frames each at
+  3.26 µm/px; seven fixations partly under a lid): the map covers 77 % of the region; every burst is placed within
+  13 µm (median; 32 µm at the 90th percentile) of its true place relative to the map's common offset of 90 µm (the
+  head's position on the chin rest at the first burst); 96 % of the mapped vessel centreline lies on a true
+  vessel, and the map finds 52 % of the centreline of the vessels of 15 µm and more, 31 % of the conjunctival
+  vessels of 8 µm and more, and 26 % of all vessels including the capillaries, most of which are too faint at this
+  magnification to stand out from a burst of 16 frames.
 
 ## 8. Targets measured on the real bursts
 
