@@ -31,7 +31,9 @@ and a truth/ folder beside them:
 |                      | the shallowest segment at every                                                             |
 |                      | pixel (0 is none, else edge index + 1), its depth (µm), and its projected red-cell velocity |
 |                      | (px per frame, x and y); and, with every vessel at its frame-0 position, the id and depth   |
-|                      | maps and the projected velocity of the mean (cycle-averaged) flow                           |
+|                      | maps and the projected velocity of the mean (cycle-averaged) flow. Each segment is drawn at |
+|                      | its local diameter, but never narrower than about 1.5 px, so that no vessel has holes: the  |
+|                      | maps say where vessels are, not how wide the thin ones are (take widths from graph.json)    |
 
 The integers are uint16, or uint32 where a scene is too large for them (more than 65 535 segments, or cells spread
 over more than 6.5 mm).
@@ -252,7 +254,9 @@ def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6,
 
 def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
     """Per-pixel truth for one frame: the shallowest segment's id (edge index + 1), its depth (µm) and its
-    projected red-cell velocity (px/frame, x and y), drawn with each segment's diameter, deepest first.
+    projected red-cell velocity (px/frame, x and y), drawn with each segment's local diameter, deepest first. No
+    segment is drawn narrower than about 1.5 px (3 px of the 2x grid the maps are drawn on), so that thin vessels
+    keep an unbroken trace when the grid is reduced; below that calibre the maps overstate the width.
     t_seconds sets the instant of the cardiac cycle; None gives the mean flow."""
     scene = renderer.scene
     h, w = renderer.shape
