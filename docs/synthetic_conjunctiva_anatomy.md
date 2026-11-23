@@ -590,9 +590,13 @@ vessels of the recordings (`coarse_artery_max_um`, `coarse_vein_max_um`; reporte
 the fine level is grown (the whole conjunctiva by default, §11.9) the conjunctival trunks drain through the fine
 trees and the capillary plexus; elsewhere the fine vessels each coarse artery feeds are lumped into one equivalent
 resistance every 0.5 mm, joining it to the nearest conjunctival vein, and every trunk tip drains through such a bed
-of its own (`bed_conductance_scale`, fitted so that the coarse conjunctival vessels carry the cited velocities). Result (seed 0): conjunctival arteries
-0.3–0.4 mm/s and veins 0.2–0.6 mm/s (cited §6.5), episcleral vein flow 0.15–0.37 µl/min against 0.40 ± 0.22
-µl/min [Kim2024].
+of its own (`bed_conductance_scale`, fitted so that the coarse conjunctival vessels carry the cited velocities). Result (seed 0, the whole eye
+with its fine level): median red-cell speed 0.93 mm/s in arterioles (interquartile 0.51–1.51), 0.88 in capillaries
+(0.40–1.70) and 0.53 in venules (0.23–1.01), against 0.63–0.70 mm/s in conjunctival arterioles and 0.54–0.59 in
+venules [Khansari2016, Khansari2017] and 0.29–1.5 mm/s in capillaries [Moka2020, Hahn2004]; 1.6 mm/s in the
+conjunctival arterial and 0.8 mm/s in the venous trunks; median capillary pressure 26 mmHg (§6.2); episcleral vein
+flow 0.06–0.23 µl/min (interquartile) against 0.40 ± 0.22 µl/min [Kim2024]; pulsatility index 0.54 in 6–12 µm
+arterioles, 0.28 in capillaries, 0.10 in venules of 15 µm and more and 0.01 in episcleral veins.
 
 ### 11.7 Lids and fornices
 
@@ -640,9 +644,9 @@ vessel has the same path and the same flow at every magnification and in every v
 - **The flow** is solved once over the whole network (about 58 000 segments) from the true inlets and outlets
   (§11.6); the haematocrit iteration stops after 100 rounds, when the flows of all but a few near-stagnant loops have
   settled (they differ from 400 rounds by 0.04 % median, 0.7 % at the 99th percentile), and the final pass conserves
-  flow and red cells exactly. Seed 0: 98.7 % of the coarse, 98.8 % of the fine-tree and 98.2 % of the capillary
+  flow and red cells exactly. Seed 0: 98.7 % of the coarse, 98.7 % of the fine-tree and 98.2 % of the capillary
   length carries red cells moving at 5 µm/s or more; the rest are dead ends and plasma-only capillaries (phase
-  separation, §6.3). Generating and solving a whole eye takes about 2 minutes and 0.4 GB.
+  separation, §6.3). Generating and solving a whole eye takes about 2–3 minutes and 0.4 GB.
 - **The view** (the camera's field and a margin): every edge of the eye that falls in it, cut at the field's edge,
   each piece carrying the flow, haematocrit and pulse of the edge it came from (tested at 1, 3.26, 6.5 and 12 µm/px:
   every piece's flow equals its edge's, and a view draws every edge in its field). At low magnification only the
@@ -694,12 +698,20 @@ targets so that different parts of the conjunctiva come under the camera.
   they cover, and the cardiac phase carried on from burst to burst; its truth is every frame's gaze, field pose,
   lid cover and blink state, on top of the usual truth of the burst.
 - **Mapping** (`synth.mapping`, a proof of concept): `plan` turns a region of the conjunctiva into fixation targets
-  whose fields tile it; `Mapper.add` builds the map from each burst's frames, the commanded gaze and the camera's
-  fixed geometry only (never the truth): it drops frames a lid or blink covers, registers the rest by phase
-  correlation, averages them into optical density, measures vesselness and red-cell flicker, predicts the field's
-  place on the globe from the commanded gaze, refines it by registering against the map built so far, and adds the
-  burst into a chart of the globe's surface. `Mapper.evaluate` scores the map against the eye's network: coverage
-  of the region, the error of every burst's placement, and the precision and recall of the vessel map.
+  whose fields tile it (spaced by the field's shorter side, since the image lies at any roll on the globe);
+  `Mapper.add` builds the map from each burst's frames, the commanded gaze and the camera's fixed geometry only
+  (never the truth). It drops frames a lid or blink covers (brighter than the sclera of the earlier bursts, or
+  without the vessels' fine structure), registers the rest by phase correlation, flat-fields their mean by a robust
+  quadratic fit of the illumination, and measures vesselness and red-cell flicker. It predicts the field's place
+  on the globe from the commanded gaze (Listing's law through the fixed camera), moved by the head's drift on the
+  chin rest as the last accepted registrations measured it, then registers the burst's vesselness against the map's
+  by masked normalised cross-correlation [Padfield2012], accepting a large correction only at a correlation of 0.75
+  and a small one (under 120 µm) at 0.5, and adds the burst into a chart of the globe's surface (polar and clock
+  angle about the corneal axis, 4 µm per pixel), weighted towards the field's centre. `Mapper.evaluate` scores the
+  map against the eye's network: the share of the region covered, the error of every burst's placement (absolute,
+  and relative to the map's common offset - a map built without an absolute reference sits on the globe within
+  the first bursts' error), and, after that common offset, the precision and recall of the vessel map's
+  centrelines against the true vessels' centrelines within 8 µm.
 
 ## 8. Targets measured on the real bursts
 
@@ -883,6 +895,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Neriyanuri2023] Neriyanuri S, Bedggood P, Symons RCA, Metha AB. Flow Heterogeneity and Factors Contributing to the Variability in Retinal Capillary Blood Flow. Invest Ophthalmol Vis Sci 2023;64(10):15. doi:10.1167/iovs.64.10.15.
 - [Olsen1998] Olsen TW, Aaberg SY, Geroski DH, Edelhauser HF. Human sclera: thickness and surface area. Am J Ophthalmol 1998;125:237-241. doi:10.1016/s0002-9394(99)80096-8.
 - [Owen2008] Owen CG, Newsom RSB, Rudnicka AR, et al. Diabetes and the tortuosity of vessels of the bulbar conjunctiva. Ophthalmology 2008;115:e27-e32. doi:10.1016/j.ophtha.2008.02.009.
+- [Padfield2012] Padfield D. Masked object registration in the Fourier domain. IEEE Trans Image Process 2012;21:2706-2718. doi:10.1109/TIP.2011.2181402.
 - [Pakravan2017] Pakravan M, Javadi MA, Yazdani S, et al. Distribution of intraocular pressure, central corneal thickness and vertical cup-to-disc ratio in a healthy Iranian population: the Yazd Eye Study. Acta Ophthalmol 2017;95:e144-e151. doi:10.1111/aos.13231.
 - [PanYang2020] Pan MH, Yang M. [Morphological observation on the anterior ciliary vessels in the horizontal rectus muscles of patients with concomitant horizontal strabismus]. Zhonghua Yan Ke Za Zhi 2020;56:197-204. doi:10.3760/cma.j.issn.0412-4081.2020.03.007.
 - [Pihlblad2016] Pihlblad MS, Erenler F, Sharma A, Manchandia A, et al. Anterior segment optical coherence tomography of the horizontal and vertical extraocular muscles with measurement of the insertion to limbus distance. J Pediatr Ophthalmol Strabismus 2016;53:141-145. doi:10.3928/01913913-20160405-05.
