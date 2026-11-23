@@ -232,7 +232,7 @@ def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6,
         if record_cells:
             cell_frames.append(exposed[len(exposed) // 2])           # the middle one: mid-exposure, as the masks
         if record_masks:
-            edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, time_offset + k * period)
+            edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, time_offset + mid * period)
             masks["edge"].append(edge_map)
             masks["depth"].append(depth_map)
             masks["velocity"].append(velocity_map)
@@ -288,7 +288,7 @@ def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
         for j in range(len(q) - 1):
             a = tuple(int(round(c)) for c in q[j])
             b = tuple(int(round(c)) for c in q[j + 1])
-            thickness = max(1, int(round(0.5 * (local[j] + local[j + 1]) / um * ss)))
+            thickness = max(ss + 1, int(round(0.5 * (local[j] + local[j + 1]) / um * ss)))    # survives the reduction
             cv2.line(edge_map, a, b, int(index + 1), thickness)
             cv2.line(depth_map, a, b, float(np.mean(pts[j:j + 2, 2])), thickness)
             cv2.line(vx, a, b, float(speed[j] * direction[j, 0]), thickness)

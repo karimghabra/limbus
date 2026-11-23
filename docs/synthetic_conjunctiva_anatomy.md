@@ -68,7 +68,7 @@ sphere to 3D profilometry (n = 23 emmetropes) [Jesus2017]; the globe is not quit
 vanVught2021]. The renderer takes a sphere of `eye_radius_um` = 12.5 mm. The generator's surface coordinates (x, y)
 are arc lengths from the centre of the camera's field and z is depth along the radius; the camera looks along the
 surface normal at the field's centre, optionally tilted (`camera_tilt_deg`). A point at arc distance r and depth z
-lies at polar angle θ = r / R and is seen at (R − z) sin θ from the axis, at a depth (R − z)(1 − cos θ) + z cos θ
+lies at polar angle θ = r / R and is seen at (R − z) sin θ from the axis, at a depth R (1 − cos θ) + z cos θ
 below the tangent plane (`camera.Renderer._globe`). Over a 2.5 × 1.7 mm field the surface falls 90 µm below the
 tangent plane at the corners, which the defocus model carries (§7.2); the lateral compression is under 1 %
 at the surface and up to about 7 % for the deepest vessels (the deep plexus at the corners), which sit nearer the

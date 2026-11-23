@@ -316,29 +316,40 @@ def test_cell_truth_keeps_positions_in_a_wide_scene(burst, tmp_path):
     assert np.allclose(cells["origin_um"] + cells["xyz_decimicron"] / 10.0, xyz, atol=0.06)
 
 
-def test_masks_reach_the_end_of_every_segment():
-    """The frame-0 vessel mask is drawn along the whole of every segment, to its downstream node: the pixel of
-    each of a centreline's last points (placed by the projection the synth.simulate docstring gives) lies on a
-    vessel."""
+@pytest.mark.parametrize("um", [3.26, 6.5])
+def test_masks_cover_every_vessel_along_its_length(um):
+    """The frame-0 vessel mask has no holes along a vessel, however thin it is drawn at the magnification, and
+    reaches each segment's downstream node: the pixel of every centreline point (placed by the projection the
+    synth.simulate docstring gives) lies on a vessel or next to one (the mask is drawn through a chord every 12 µm)."""
+    import cv2
     scene = small_scene(3)
+    scene = replace(scene, anatomy=replace(scene.anatomy, um_per_px=um))
     result = simulate(scene, n_frames=2, warm_up_s=0.05, record_cells=False)
-    net, mask = result.network, result.masks["edge_frame0"]
-    um, R = scene.anatomy.um_per_px, scene.optics.eye_radius_um
+    net = result.network
+    mask = cv2.dilate((result.masks["edge_frame0"] != 0).astype(np.uint8), np.ones((3, 3), np.uint8))
+    R = scene.optics.eye_radius_um
     x0, x1, y0, y1 = net.field_of_view
     centre = np.array([(x0 + x1) / 2, (y0 + y1) / 2])
     h, w = mask.shape
-    ends = 0
+    seen = 0
     for e in net.edges:
-        tail = e.points[-6:]
-        u = tail[:, :2] - centre
+        u = e.points[:, :2] - centre
         r = np.maximum(np.hypot(u[:, 0], u[:, 1]), 1e-9)
-        k = (R - tail[:, 2]) * np.sin(r / R) / r
+        k = (R - e.points[:, 2]) * np.sin(r / R) / r
         col = np.round(w / 2 + u[:, 0] * k / um).astype(int)
         row = np.round(h / 2 + u[:, 1] * k / um).astype(int)
         inside = (col >= 1) & (col < w - 1) & (row >= 1) & (row < h - 1)
         assert np.all(mask[row[inside], col[inside]] != 0)
-        ends += int(inside.sum())
-    assert ends > 100
+        seen += int(inside.sum())
+    assert seen > 1000
+
+
+def test_burst_starts_unmoved():
+    """Frame 0 is the truth's reference: the eye's motion starts from no shift and no rotation."""
+    from synth import camera
+    scene = small_scene(4)
+    motion = camera.burst_motion(8, replace(scene, optics=replace(scene.optics, rotation_deg=0.3)))
+    assert motion.dx[0] == 0 and motion.dy[0] == 0 and motion.rotation[0] == 0 and np.any(motion.rotation != 0)
 
 
 def test_random_scenes_stay_anatomical():
@@ -546,6 +557,7 @@ def test_slit_lamp_and_mapper(eye):
         p = burst.poses[first]
         truth.append((p.s_mm * 1000, p.clock_deg))
         previous = gaze
+    assert all(np.shape(p["shift_um"]) == (2,) for p in mapper.placements if p)
     report = mapper.evaluate(eye, true_poses=truth)
     assert report["coverage"] > 0.1
     assert report["relative_placement_error_um_median"] < 60.0

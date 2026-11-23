@@ -78,7 +78,8 @@ def eye_motion(n_frames, scene: Scene, rng) -> Motion:
             step += amplitude * np.array([np.cos(angle), np.sin(angle)])
             saccades.append(k)
         x[k], y[k] = x[k - 1] + step[0], y[k - 1] + step[1]
-    rotation = np.radians(o.rotation_deg) * np.cumsum(rng.normal(0, 1, n_frames)) / np.sqrt(max(n_frames, 1))
+    turn = np.cumsum(rng.normal(0, 1, n_frames))
+    rotation = np.radians(o.rotation_deg) * (turn - turn[0]) / np.sqrt(max(n_frames, 1))
     focus = o.focus_depth_um + o.focus_wander_um * _smooth(rng, n_frames, 12.0)
     return Motion(x, y, rotation, focus, np.array(saccades, int))
 

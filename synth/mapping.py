@@ -152,7 +152,8 @@ class Mapper:
         self.vessel = np.zeros(shape, np.float32)
         self.flicker = np.zeros(shape, np.float32)
         self.weight = np.zeros(shape, np.float32)
-        self.placements = []                      # per burst: dict(predicted, refined (s_um, clock, roll), shift_um)
+        self.placements = []                      # per burst: dict(pose (s_um, clock, roll), shift_um (the
+                                                  # registration's correction along the limbus and away from it), ...)
         rows, cols = np.mgrid[0:self.H, 0:self.W].astype(np.float64)
         self._s = self.s0 + (rows + 0.5) * um_per_px
         self._clock = self.c0 + np.degrees((cols + 0.5) * um_per_px / self.r_ref)
@@ -282,7 +283,6 @@ class Mapper:
             moved_p = predicted + np.median(np.array(self.corrections[-3:]), 0)
             s_n, c_n, _ = self.g.surface_coordinates((moved_p * self.g.R / np.linalg.norm(moved_p))[None])
             s_p, c_p = float(s_n[0]), float(c_n[0])
-        start = self.g.point(s_p, c_p, 0.0)
         self._predicted = (s_p, c_p)
         shift_um = np.zeros(2)
         diagnostics = dict(overlap=0.0, response=0.0, valid=float(valid.mean()))
@@ -330,7 +330,7 @@ class Mapper:
                     s_n, c_n, _ = self.g.surface_coordinates(moved_c)
                     s_p, c_p = float(s_n[0]), float(c_n[0])
                     self.corrections.append(self.g.point(s_p, c_p, 0.0) - predicted)
-                    shift_um = self.g.point(s_p, c_p, 0.0) - start
+                    shift_um = local_shift
         index = len(self.bursts)
         # every trusted pairwise measurement, as the chart offset between this burst and the earlier one
         if self.bursts:
