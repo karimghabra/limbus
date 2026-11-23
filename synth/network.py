@@ -74,13 +74,6 @@ class Network:
     boundary_offset: dict = field(default_factory=dict)  # node -> mmHg added to its role's boundary pressure
     boundary_pressure: dict = field(default_factory=dict)  # node -> mmHg, overriding the role's pressure (the eye)
 
-    def degree(self):
-        degree = np.zeros(len(self.nodes), int)
-        for e in self.edges:
-            degree[e.u] += 1
-            degree[e.v] += 1
-        return degree
-
     def incident(self):
         lists = [[] for _ in range(len(self.nodes))]
         for index, e in enumerate(self.edges):

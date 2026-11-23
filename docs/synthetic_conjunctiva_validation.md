@@ -234,6 +234,8 @@ check on further seeds and on randomised scenes (`synth/tests`).
 | capillary pressure (median) | 21 | 12-35 | mmHg | within | 13-16 mmHg nailfold [Williams1990, Hahn2004]; 30-35 mmHg after precapillary branches [Zweifach1974] |
 | capillary linear cell density (median, <= 6 µm) | 42.2 | 23.7-93.7 | cells/mm | within | 48 ± 15, range 23.7-93.7 cells/mm in 4.3 ± 0.9 µm retinal capillaries [Neriyanuri2023]; 55.9 ± 19.3 [Ding2025] |
 | precapillary arteriolar pulsatility index | 0.577 | 0.3-1.3 |  | within | PI about 0.8, RI 53 % in 6-12 µm arterioles [Koutsiaris2010] |
+| venular pulsatility index (>= 15 µm) | 0.0808 | 0-0.4 |  | within | venous flow pulses far less than arterial [Puyo2019] |
+| capillary pulse pressure (median) | 1.61 | 0.75-4.5 | mmHg | within | 1.5-4 mmHg [Zweifach1974, Hahn2004]; the bounds allow for the spread between single networks |
 | episcleral vein flow (median) | 0.919 | 0-0.84 | µl/min | outside | 0.40 ± 0.22 µl/min in 61 µm episcleral veins [Kim2024], mean ± 2 SD |
 | companion venule calibre over its arteriole's (median) | 1.53 | 1.27-1.93 |  | within | artery:vein calibre 0.653 ± 0.068 [Yusufu2025], mean ± 2 SD |
 | calibre variation along vessels >= 15 µm (CV, median) | 0.0987 | 0.05-0.4 |  | within | about 0.1 above 15 µm, up to 0.4 below [Kiani1993]; ~0.19 in conjunctiva [Shahidi2010] |
@@ -243,6 +245,11 @@ check on further seeds and on randomised scenes (`synth/tests`).
 | fractal dimension of the projected network | not computed here | 1.59-1.63 (slit lamp), 1.28-1.33 (OCTA) |  | reference | [Jiang2014, Shi2018, Akagi2018, Liu2019] |
 | bifurcation angle (daughter to daughter) | measured on the images (synth.targets) | 78° in retinal arteries |  | reference | [Luo2017] |
 
+In this table seed 1 lies outside one cited range: its median episcleral vein flow, 0.919 µl/min against 0-0.84
+(the notebook prints "Outside the cited range" for such a row). The table is of an earlier state of the generator,
+except the two pulse rows (venular pulsatility index, capillary pulse pressure), which were added to the check later
+and are given as the present code measures them on seed 1; the present code also gives seed 1 a median episcleral
+vein flow of 0.196 µl/min, within the range, and a precapillary arteriolar pulsatility index of 0.621.
 
 Over 25 seeds, every checked quantity is within its cited range in 19 of 25 default scenes and in
 18 of 25 randomised scenes (`synth.randomize`, whose appearance ranges are wide on purpose and whose

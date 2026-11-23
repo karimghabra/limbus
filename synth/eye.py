@@ -1127,6 +1127,7 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
         e = full.edges[ei]
         local = g.to_local(e.points, frame)
         keep = (local[:, 0] > domain[0]) & (local[:, 0] < domain[1]) & (local[:, 1] > domain[2]) & (local[:, 1] < domain[3])
+        keep &= np.hypot(local[:, 0], local[:, 1]) < g.R * math.pi / 2          # the half of the globe that faces the camera
         if not keep.any():
             continue
         runs = np.split(np.arange(len(keep)), np.flatnonzero(np.diff(keep.astype(int))) + 1)
@@ -1227,7 +1228,8 @@ def overview(eye: Eye, um_per_px=20.0, size_px=(1300, 1000)):
     scene = replace(eye.scene, anatomy=replace(eye.scene.anatomy, um_per_px=um_per_px),
                     optics=replace(eye.scene.optics, glints=0, motion_step_px=0.0, saccade_rate_hz=0.0,
                                    focus_depth_um=eye.globe.R * (1 - math.cos(0.6)), focus_wander_um=0.0),
-                    width_px=size_px[0], height_px=size_px[1], margin_um=500.0)
+                    width_px=size_px[0], height_px=size_px[1],
+                    margin_um=max(500.0, eye.globe.R * math.pi / 2 - min(size_px) * um_per_px / 2))
     pose = Pose(s_mm=apex, clock_deg=0.0)
     net, flow = assemble_view(eye, pose, scene, fine=False)
     result = render_network(scene, net, flow, burst_motion(1, scene), n_frames=1, record_cells=False, record_masks=False,

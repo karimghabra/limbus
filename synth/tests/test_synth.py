@@ -230,6 +230,23 @@ def test_margin_covers_motion_in_large_and_coarse_fields(width, height, um):
     assert _frames_stay_inside(scene, motion, field, domain, scene.anatomy.deep_plexus[1])
 
 
+def test_texture_is_not_mirrored_where_a_saccade_reveals_it(solved):
+    """The scleral texture is a random field fixed to the tissue, so the strip a large movement brings into the
+    frame is new texture: no column of the frame is a mirror axis of its fine structure (a canvas too small for the
+    movement would be filled in by reflection at its edge)."""
+    import cv2
+    from synth import camera
+    scene, net, _ = solved
+    scene = replace(scene, optics=replace(scene.optics, motion_bound_px=20.0, glints=0))
+    motion = camera.Motion(np.array([200.0]), np.zeros(1), np.zeros(1), np.full(1, 250.0), np.zeros(0, int))
+    renderer = camera.Renderer(scene, net, np.random.default_rng(0), motion)
+    texture = np.log(renderer.tissue_maps(0.0)[0])
+    fine = texture - cv2.GaussianBlur(texture, (0, 0), 3)
+    mirror = [np.corrcoef(fine[:, axis - 30:axis][:, ::-1].ravel(), fine[:, axis:axis + 30].ravel())[0, 1]
+              for axis in range(30, 200)]
+    assert max(mirror) < 0.5
+
+
 def test_tubes_carry_each_vessels_cells_once(solved):
     """Drawn as tubes, a vessel holds the red cells its volume and tube haematocrit give, H_T V / V_rbc, however
     its centreline is sampled."""

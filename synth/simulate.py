@@ -197,9 +197,9 @@ def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6,
     cell_frames = []
     masks = {"edge": [], "depth": [], "velocity": []}
     x0, x1, y0, y1 = net.field_of_view
-    # cells are recorded where the camera can see them: the field plus the furthest the tissue moves, plus the
-    # rotation's reach at the corners
-    pad = camera.motion_reach_um(motion, scene) + 8.0 * scene.anatomy.um_per_px
+    # cells are recorded where the camera can see them: the field plus what the frames show beyond it (the motion,
+    # and the globe's curvature down to the deepest plexus)
+    pad = camera.shown_beyond_field_um(scene, motion) + 8.0 * scene.anatomy.um_per_px
     edge_dtype = _unsigned(len(net.edges))
 
     def cells_at(t):
