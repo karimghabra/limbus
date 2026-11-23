@@ -121,7 +121,7 @@ const spectrum = D.spectrum;
 const uniforms = {
   uProps: { value: propTex }, uOffs: { value: offTex }, uR: { value: R }, uZ: { value: 1.0 },
   uViewH: { value: 800 }, uTanHalf: { value: Math.tan(THREE.MathUtils.degToRad(15)) }, uAspect: { value: 1 },
-  uVeil: { value: D.veil_um }, uBlur500: { value: D.blur_um_at_500 }, uColour: { value: 0 },
+  uVeil: { value: D.veil_um }, uPass: { value: D.double_pass }, uBlur500: { value: D.blur_um_at_500 }, uColour: { value: 0 },
   uW: { value: new Float32Array(9).map((_, i) => spectrum[i] ? spectrum[i][0] : 0) },
   uMu: { value: new Float32Array(9).map((_, i) => spectrum[i] ? spectrum[i][1] : 0) },
   uRbcVol: { value: D.rbc_volume }, uPeriod: { value: PERIOD },
@@ -158,7 +158,7 @@ const vesselMat = new THREE.ShaderMaterial({
     }`,
   fragmentShader: `
     precision highp float;
-    uniform float uVeil, uColour, uRbcVol, uPeriod; uniform float uW[9]; uniform float uMu[9];
+    uniform float uVeil, uPass, uColour, uRbcVol, uPeriod; uniform float uW[9]; uniform float uMu[9];
     in float vX, vHalf, vSig, vR, vDepth, vNarrow, vS, vHt, vOff, vSeed, vSide, vWpx;
     out vec4 outColor;
     float hash(float n) { return fract(sin(n * 127.1 + vSeed * 311.7) * 43758.5453); }
@@ -202,7 +202,7 @@ const vesselMat = new THREE.ShaderMaterial({
         float g = vnoise2(vec2(s / 7.0, (x + 50.0) / 7.0), uPeriod / 7.0);   // cells overlapping across the lumen
         density = clump * (0.65 + 0.7 * g);
       }
-      float tauBase = 2.0 * 1e-3 * chord * (vHt / 0.45) * density;     // double pass, µm -> mm
+      float tauBase = uPass * 1e-3 * chord * (vHt / 0.45) * density;     // double pass, µm -> mm
       float T = 0.0;
       for (int b = 0; b < 9; b++) T += uW[b] * exp(-uMu[b] * tauBase);
       float veil = 1.0 - exp(-max(vDepth, 0.0) / uVeil);              // light returned before reaching the vessel

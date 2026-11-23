@@ -1,27 +1,29 @@
 """The whole anterior eye, built from where the blood comes from and where it goes, with levels of detail.
 
     from synth.eye import Eye, Pose, simulate_view
-    eye = Eye(seed=4)                                   # the coarse network of the whole globe, solved once
+    eye = Eye(seed=4)                                   # the whole eye's network at every level, solved once
     result = simulate_view(eye, Pose(s_mm=3.0, clock_deg=90), n_frames=60)   # a burst of one region
 
-Levels of detail (docs/synthetic_conjunctiva_anatomy.md §11):
+Levels of detail (docs/synthetic_conjunctiva_anatomy.md §11), all parts of one network that is generated and solved
+once per eye:
 
-- Coarse (the whole globe, generated and solved once per eye): the anterior ciliary arteries leaving the four rectus
+- Coarse (the whole globe): the anterior ciliary arteries leaving the four rectus
   tendons at their insertions (the spiral of Tillaux), two per muscle and one on the lateral rectus; the episcleral
   arterial circle they form near the limbus; the anterior conjunctival arteries it gives off towards the limbal
   arcades and back into the bulbar conjunctiva; the posterior conjunctival arteries entering from the fornices (the
   palpebral arcades), meeting the anterior ones at the watershed; companion conjunctival veins draining to the
   fornices; the limbal venous ring and the episcleral veins draining away from the limbus; episcleral arteriovenous
-  anastomoses. The fine vessels each trunk feeds are represented at this level by lumped beds (one resistance every
-  0.5 mm between a trunk and its companion vein), so the coarse solve sees the load they put on the trunks. Pressures
-  are set at the true inlets (the anterior ciliary arteries, the palpebral arcades) and outlets (the episcleral and
-  palpebral veins at the episcleral venous pressure), and every flow and velocity of the coarse level follows.
-- Fine (per tile of about 1 mm, generated on demand): the conjunctival arteriolar and venular trees, the capillary
-  mesh and their anastomoses (synth.network.generate_fine), grown from roots on the coarse trunks that cross the
-  tile, from a seed that depends only on the eye's seed and the tile's position. A tile's flows are solved with the
-  coarse pressures at its roots, so a tile is the same whenever and from wherever it is generated.
-- The view (the camera's field only): the coarse pieces and the tiles that fall in it, assembled into one network
-  in the camera's coordinates with the flows inherited from their own level - so zooming from an overview to high
+  anastomoses. Where no fine vessels are grown (outside Eye(fine_region=...)), the fine vessels each trunk feeds
+  are represented by lumped beds (one resistance every 0.5 mm between a trunk and its companion vein), so the
+  solve sees the load they put on the trunks. Pressures are set at the true inlets (the anterior ciliary arteries,
+  the palpebral arcades) and outlets (the episcleral and palpebral veins at the episcleral venous pressure), and
+  every flow and velocity follows.
+- Fine (grown tile by tile of about 1 mm over the fine region, the whole conjunctiva by default): the conjunctival
+  arteriolar and venular trees (synth.network.generate_fine), rooted on the coarse trunks that cross each tile,
+  from a seed that depends only on the eye's seed and the tile's position; and one capillary plexus over the whole
+  region that joins the trees' terminals across the tiles' borders (build_whole).
+- The view (the camera's field only): the pieces of the eye's network that fall in it, in the camera's
+  coordinates, each carrying the flow of the eye's edge it came from - so zooming from an overview to high
   magnification never changes a vessel's path or flow - and rendered with discrete red cells at high magnification,
   or as tubes carrying their mean red-cell density at low magnification (synth.camera).
 
@@ -956,7 +958,6 @@ def build_whole(eye: Eye):
             c.length_override = e.length_override
         c.level = 0
         b.edges.append(c)
-    n_coarse = len(b.edges)
     # the lumped beds stand for fine vessels: where the fine level draws them, the beds go
     drop = set()
     for i, e in enumerate(coarse.edges):
@@ -1024,8 +1025,8 @@ def build_whole(eye: Eye):
             degree[e.u] += 1
             degree[e.v] += 1
     tips = []
-    for i, e in enumerate(b.edges[:n_coarse]):
-        if e.kind in ("conjunctival artery", "conjunctival vein"):
+    for i, e in enumerate(b.edges):
+        if e.level == 0 and i not in drop and e.kind in ("conjunctival artery", "conjunctival vein"):
             for node in (e.u, e.v):
                 if degree[node] == 1 and node not in b.boundary:
                     s, c, _ = g.surface_coordinates(b.nodes[node][None])
@@ -1166,6 +1167,8 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
                     if node not in node_map:
                         node_map[node] = b.node(local[end])
                         anchors.append((node, node, 0.0))
+                        if node in full.boundary:
+                            boundary[node_map[node]] = full.boundary[node]
                     ends.append(node_map[node])
                 else:
                     nn = b.node(local[end])

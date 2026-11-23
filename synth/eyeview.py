@@ -72,6 +72,7 @@ def export(eye, harmonics=4):
         heart_rate_hz=eye.scene.physiology.heart_rate_hz,
         fissure=[eye.anatomy.fissure_half_width_mm, eye.anatomy.upper_lid_mm, eye.anatomy.lower_lid_mm],
         spectrum=[[float(w), float(mu)] for w, mu in eye.scene.optics.spectrum],
+        double_pass=eye.scene.optics.double_pass,
         veil_um=eye.scene.optics.scatter_veil_length_um, blur_um_at_500=eye.scene.optics.scatter_blur_um_at_500,
         rbc_um=eye.scene.physiology.rbc_diameter_um, rbc_volume=eye.scene.physiology.rbc_volume_um3,
         seed=eye.seed,

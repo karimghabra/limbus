@@ -164,8 +164,8 @@ class Cells:
                 self.inflow.append((e, node))
         self.inflow_scale = {key: 1.0 for key in self.inflow}
         # junctions whose drawn vessels do not conserve red-cell flux: in an eye's view, blood also leaves or joins
-        # through vessels the view does not draw (the coarse level's lumped beds, fine trees whose flow was solved
-        # at their own level). Where more red-cell flux arrives than leaves, the excess cells leave with that blood
+        # through vessels the view does not draw (the fine trees and the capillary plexus, when only the coarse
+        # level is drawn). Where more red-cell flux arrives than leaves, the excess cells leave with that blood
         # (keep_share); where more leaves than arrives, the missing cells enter as at an inflow boundary. Without
         # this the cells of a vessel pile up past such a junction, or thin out, in blocks along the vessel.
         q, hd = flow.flow, flow.hd

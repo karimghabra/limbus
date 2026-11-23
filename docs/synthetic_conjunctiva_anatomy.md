@@ -25,9 +25,10 @@ Contents: 1 imaging geometry and the globe · 2 layers in depth · 3 calibres ·
 ### 1.1 Coordinates
 
 The generator works in tissue micrometres: x along the limbus, y radially away from it, z depth below the
-conjunctival epithelial surface (positive downwards). The camera looks along z. A tissue point (x, y) appears in
-frame 0 at pixel ((x − x₀) / s, (y − y₀) / s), where (x₀, y₀) is the corner of the field of view and s the
-pixel scale; later frames add the eye's motion (section 7.6).
+conjunctival epithelial surface (positive downwards). The camera looks along z at the centre of its field and
+sees the tissue through the curvature of the globe (section 1.4), so a tissue point's pixel is not a plain division
+by the pixel scale: the mapping from (x, y, z) to the pixel of frame 0 is given in the `synth.simulate` docstring;
+later frames add the eye's motion (section 7.6).
 
 ### 1.2 The field
 
@@ -725,7 +726,10 @@ targets so that different parts of the conjunctiva come under the camera.
   head's position on the chin rest at the first burst); 96 % of the mapped vessel centreline lies on a true
   vessel, and the map finds 52 % of the centreline of the vessels of 15 µm and more, 31 % of the conjunctival
   vessels of 8 µm and more, and 26 % of all vessels including the capillaries, most of which are too faint at this
-  magnification to stand out from a burst of 16 frames.
+  magnification to stand out from a burst of 16 frames. These placement figures were computed before
+  `Mapper.evaluate` counted a chart column for the arc it spans on the globe (`um_per_column`): they took every
+  column as 4 µm, which overstates the along-limbus part of each error by up to about a third at the limbal edge
+  of this region, so the figures above are upper bounds.
 
 ## 8. Targets measured on the real bursts
 
@@ -798,7 +802,7 @@ this document.
 | perforator_per_mm2, perforator_angle_deg | 0.25, 30–70° | assumed, §2.4 and §9 |
 | wiggle | per kind | fitted to the measured tortuosity, §5 |
 | growth_step, growth_influence, growth_kill, attractors_per_mm2, growth_persistence, venous_kill_ratio | 18 µm, 400 µm, 210 µm, 120 /mm², 0.8, 1.0 | fitted to capillary velocity and arteriolar flow, §5 and §6.5 |
-| systemic_haematocrit, inflow_discharge_haematocrit | 0.45, 0.40 | [SecombPries2013, Pries1990], §6.3 |
+| inflow_discharge_haematocrit | 0.40 | [SecombPries2013, Pries1990], §6.3 |
 | plasma_viscosity_mpas | 1.25 | [Pries1992], §6.1 |
 | rbc_volume_um3, rbc_diameter_um, rbc_thickness_um | 90, 7.8, 2.2 | [Bosschaart2014, Fedosov2010], §6.4 |
 | arterial_pressure_at_10um, _at_100um | 30, 50 mmHg | [Zweifach1974], §6.2 |

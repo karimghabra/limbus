@@ -270,7 +270,7 @@ class Renderer:
                 values = counts[support]
                 absorbed = np.zeros(values.shape, np.float32)
                 for weight, tau in zip(self.weights, self.tau_per_cell):
-                    absorbed += np.float32(weight) * (1.0 - np.exp(np.float32(-2.0 * tau) * values))
+                    absorbed += np.float32(weight) * (1.0 - np.exp(np.float32(-self.scene.optics.double_pass * tau) * values))
                 t = np.ones((h, w), np.float32)
                 t[support] = 1.0 - absorbed
                 t = self._blur_across_field(t, self.slab_depth[b], focus)

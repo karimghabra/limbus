@@ -213,15 +213,6 @@ class Mapper:
         out[~front] = np.nan
         return out
 
-    def _map_in_field(self, layer, pose_s, pose_clock, roll_deg, um_cam, w, h):
-        """The map layer rendered into a camera field at a pose (NaN where the map holds nothing)."""
-        u = self._pixels_to_directions(pose_s, pose_clock, roll_deg, um_cam, w, h)
-        s, clock, _ = self.g.surface_coordinates(u * self.g.R)
-        cx, cy = self.to_chart(s, clock)
-        filled = np.where(self.weight > 0, layer / np.maximum(self.weight, 1e-9), np.nan).astype(np.float32)
-        return cv2.remap(filled, cx.astype(np.float32), cy.astype(np.float32), cv2.INTER_LINEAR,
-                         borderMode=cv2.BORDER_CONSTANT, borderValue=np.nan)
-
     # one burst
     @staticmethod
     def stabilise(frames, reference=None):

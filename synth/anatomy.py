@@ -104,7 +104,6 @@ class Anatomy:
 @dataclass
 class Physiology:
     """Blood and haemodynamics (docs §6)."""
-    systemic_haematocrit: float = 0.45               # 40-45 % [SecombPries2013]
     inflow_discharge_haematocrit: float = 0.40       # discharge haematocrit entering the field (docs §6.3)
     plasma_viscosity_mpas: float = 1.25              # plasma viscosity at 37 °C [Pries1992]
     rbc_volume_um3: float = 90.0                     # 90 µm^3 [Bosschaart2014]; 75 ± 25 fL in vivo [Ding2025]

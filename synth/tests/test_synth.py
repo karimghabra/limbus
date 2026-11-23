@@ -301,6 +301,24 @@ def test_capillary_calibre_varies_along_the_plexus(eye):
     assert len(cv) > 100 and 0.05 < np.median(cv) < 0.4
 
 
+def test_view_keeps_the_eyes_inlets(eye):
+    """Blood enters a network only at a boundary (conservation holds at every other node), so in a view that holds
+    one of the eye's own inlets, every vessel end from which blood flows into the view is a boundary node - where
+    the red cells are supplied - whether the view cut the vessel there or the eye begins there."""
+    from synth.eye import Pose, assemble_view
+    inlet = next(k for k, role in eye.network.boundary.items() if role == "arterial")
+    s, clock, _ = eye.globe.surface_coordinates(eye.network.nodes[inlet][None])
+    scene = replace(eye.scene, width_px=256, height_px=192)
+    net, flow = assemble_view(eye, Pose(s_mm=float(s[0]) / 1000.0, clock_deg=float(clock[0])), scene, fine=False)
+    assert "arterial" in net.boundary.values()
+    incident = net.incident()
+    sources = [n for n, members in enumerate(incident) if len(members) == 1 and
+               flow.flow[members[0]] * (1 if net.edges[members[0]].u == n else -1) > 0]
+    assert sources and all(n in net.boundary for n in sources)
+    here = [n for n in net.boundary if np.linalg.norm(net.nodes[n][:2]) < 1.0]
+    assert here and all(net.boundary[n] == "arterial" for n in here)
+
+
 def test_every_perfused_vessel_flows_at_every_level(eye):
     """Every vessel the network perfuses carries red cells in every view that draws it, at every magnification
     (the views are selections of the eye's one solved network), and a view draws every vessel in its field."""
