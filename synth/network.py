@@ -1004,7 +1004,7 @@ def _paired_venules(builder, rng, scene, domain):
             continue
         taken_xy.append(companion[:, :2])
         taken_r.append(d_ven / 2)
-        # nodes every 150-250 µm, each draining a capillary of the mesh
+        # nodes every 100-160 µm, each draining a capillary of the mesh
         cuts = [0]
         while True:
             nxt = np.searchsorted(s_c, s_c[cuts[-1]] + rng.uniform(100.0, 160.0))

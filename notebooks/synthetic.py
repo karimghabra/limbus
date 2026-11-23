@@ -579,7 +579,7 @@ def _(OUTPUT_DIR, mo, plt, scene, show_figure, time):
     from synth import media as _media
     _figure, _axis = plt.subplots(figsize=(11, 8.5))
     _axis.imshow(_media.od_to_gray(_media.optical_density(_frame[None].astype("float32"))[0]), cmap="gray",
-                 extent=_extent)
+                 extent=_extent, origin="lower")
     for _name, (_x, _y) in _outlines.items():
         if "lid" in _name:            # the limbus is left undrawn: its vascular rings lie just outside it
             _axis.plot(_x, _y, "--", lw=1, color="orange", label=_name)

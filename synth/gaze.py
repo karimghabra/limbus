@@ -24,7 +24,6 @@ from .camera import Motion, cover_motion
 from .eye import Eye, EyeAnatomy, Pose, assemble_view, view_scene
 from .simulate import render_network
 
-ARCMIN = math.pi / (180 * 60)
 
 
 @dataclass

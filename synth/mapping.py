@@ -435,7 +435,7 @@ class Mapper:
         """The eye's vessels drawn into the chart at their local calibre (a mask), for the evaluation."""
         mask = np.zeros((self.H, self.W), np.uint8)
         for e in eye.network.edges:
-            if e.diameter < min_diameter_um or float(np.mean(eye.globe.R - np.linalg.norm(e.points, axis=1))) > max_depth_um:
+            if e.kind == "bed" or e.diameter < min_diameter_um or float(np.mean(eye.globe.R - np.linalg.norm(e.points, axis=1))) > max_depth_um:
                 continue
             s, clock, _ = self.g.surface_coordinates(e.points)
             x, y = self.to_chart(s, clock)

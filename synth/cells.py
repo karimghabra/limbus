@@ -40,12 +40,11 @@ class Geometry:
     centre: np.ndarray       # (M, 3)
     normal: np.ndarray       # (M, 3)
     binormal: np.ndarray     # (M, 3)
-    tangent: np.ndarray      # (M, 3)
     width: np.ndarray        # (M,) local diameter over the segment's nominal diameter
 
 
 def geometry(network: Network) -> Geometry:
-    starts, counts, lengths, centres, normals, binormals, tangents, widths = [], [], [], [], [], [], [], []
+    starts, counts, lengths, centres, normals, binormals, widths = [], [], [], [], [], [], []
     offset = 0
     for e in network.edges:
         if e.width is not None:
@@ -67,11 +66,10 @@ def geometry(network: Network) -> Geometry:
         centres.append(points)
         normals.append(normal)
         binormals.append(binormal)
-        tangents.append(tangent)
         widths.append(width)
         offset += len(points)
     return Geometry(np.array(starts), np.array(counts), np.array(lengths), np.vstack(centres), np.vstack(normals),
-                    np.vstack(binormals), np.vstack(tangents), np.concatenate(widths))
+                    np.vstack(binormals), np.concatenate(widths))
 
 
 def cell_free_layer(diameter, physiology: Physiology):
@@ -98,7 +96,6 @@ class Cells:
         # radius available to cell centres: the core inside the cell-free layer; zero in single-file capillaries
         self.core = np.clip(self.radius - cfl - 0.5 * physiology.rbc_thickness_um, 0.0, None)
         self.core[d < physiology.rbc_diameter_um + 1.0] = 0.0
-        self.single_file = self.core <= 0.0
         K = physiology.profile_bluntness
         rho_max = np.where(self.radius > 0, self.core / self.radius, 0.0)
         # mean of (1 - rho^K) over cells spread uniformly by area within rho_max
@@ -165,14 +162,14 @@ class Cells:
         self.inflow_scale = {key: 1.0 for key in self.inflow}
         # junctions whose drawn vessels do not conserve red-cell flux: in an eye's view, blood also leaves or joins
         # through vessels the view does not draw (the fine trees and the capillary plexus, when only the coarse
-        # level is drawn). Where more red-cell flux arrives than leaves, the excess cells leave with that blood
+        # level is drawn; the lumped beds), also at the end of a vessel that only such vessels feed. Where more red-cell flux arrives than leaves, the excess cells leave with that blood
         # (keep_share); where more leaves than arrives, the missing cells enter as at an inflow boundary. Without
         # this the cells of a vessel pile up past such a junction, or thin out, in blocks along the vessel.
         q, hd = flow.flow, flow.hd
         self.keep_share = {}
         self.keep_quota = {}
         for node, members in enumerate(self.incident):
-            if node in network.boundary or len(members) < 2:
+            if node in network.boundary:
                 continue
             f_in = f_out = 0.0
             for e in members:

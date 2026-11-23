@@ -392,9 +392,10 @@ def test_capillary_calibre_varies_along_the_plexus(eye):
 
 
 def test_view_keeps_the_eyes_inlets(eye):
-    """Blood enters a network only at a boundary (conservation holds at every other node), so in a view that holds
-    one of the eye's own inlets, every vessel end from which blood flows into the view is a boundary node - where
-    the red cells are supplied - whether the view cut the vessel there or the eye begins there."""
+    """In a view that holds one of the eye's own inlets, that inlet is an arterial boundary of the view, and red
+    cells are supplied at every vessel end from which blood flows into the view: where the view cut the vessel,
+    where the eye begins, and where the blood joins through a vessel the view does not draw (a lumped bed, the
+    fine level)."""
     from synth.eye import Pose, assemble_view
     inlet = next(k for k, role in eye.network.boundary.items() if role == "arterial")
     s, clock, _ = eye.globe.surface_coordinates(eye.network.nodes[inlet][None])
@@ -404,9 +405,24 @@ def test_view_keeps_the_eyes_inlets(eye):
     incident = net.incident()
     sources = [n for n, members in enumerate(incident) if len(members) == 1 and
                flow.flow[members[0]] * (1 if net.edges[members[0]].u == n else -1) > 0]
-    assert sources and all(n in net.boundary for n in sources)
+    supplied = {node for _, node in C.Cells(net, flow, scene.physiology, np.random.default_rng(0)).inflow}
+    assert sources and set(sources) <= supplied
     here = [n for n in net.boundary if np.linalg.norm(net.nodes[n][:2]) < 1.0]
     assert here and all(net.boundary[n] == "arterial" for n in here)
+
+
+def test_lumped_beds_are_not_drawn(eye):
+    """Outside the fine region the eye keeps lumped beds, equivalent resistances for vessels that are not drawn
+    (docs §11.6): they stay in the solved network but appear in no view, nor on the browser page."""
+    from synth.eye import Pose, assemble_view
+    from synth.eyeview import export
+    beds = [e for e in eye.network.edges if e.kind == "bed"]
+    assert beds
+    s, clock, _ = eye.globe.surface_coordinates(beds[0].points[:1])
+    scene = replace(eye.scene, width_px=256, height_px=192)
+    net, flow = assemble_view(eye, Pose(s_mm=float(s[0]) / 1000.0, clock_deg=float(clock[0])), scene, fine=False)
+    assert len(net.edges) > 0 and all(e.kind != "bed" for e in net.edges)
+    assert export(eye)["n_edges"] == sum(e.kind != "bed" and len(e.points) >= 2 for e in eye.network.edges)
 
 
 def test_every_perfused_vessel_flows_at_every_level(eye):

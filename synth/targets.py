@@ -346,7 +346,6 @@ def morphology_stats(od, mask, valid, um_per_px):
     area_mm2 = area_px * (um_per_px * 1e-3) ** 2
     lengths = np.array([_segment_length(s) for s in segments])
     diameters = 2 * distance[skeleton]
-    weights = np.ones_like(diameters)
     out = {
         "vessel area fraction": float(mask[valid].mean()),
         "length density (mm/mm2)": float(lengths.sum() * um_per_px * 1e-3 / area_mm2),
@@ -354,7 +353,7 @@ def morphology_stats(od, mask, valid, um_per_px):
         "segments per mm2": float(len(segments) / area_mm2),
     }
     for q in (5, 25, 50, 75, 95):
-        out[f"diameter p{q} (um)"] = float(np.percentile(np.repeat(diameters, weights.astype(int)), q) * um_per_px) if diameters.size else float("nan")
+        out[f"diameter p{q} (um)"] = float(np.percentile(diameters, q) * um_per_px) if diameters.size else float("nan")
     long_enough = lengths >= 10
     for q in (25, 50, 75, 95):
         out[f"segment length p{q} (um)"] = _pct(lengths[long_enough] * um_per_px, q)

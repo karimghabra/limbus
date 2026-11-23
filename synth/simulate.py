@@ -16,15 +16,19 @@ and a truth/ folder beside them:
 |                      | layer, vessel id, the arteriole a companion venule accompanies, mean flow (pl/s), blood and |
 |                      | red-cell velocity (mm/s), discharge and tube haematocrit, wall shear rate, and their        |
 |                      | direction (edges are stored oriented along the mean flow)                                 |
-| truth/frames.npz     | per frame: the tissue motion (dx, dy px, rotation rad), the focal depth (µm), the time (s) |
+| truth/frames.npz     | per frame: the tissue motion (dx, dy px, rotation rad), the focal depth (µm), the time (s, |
+|                      | the start of the exposure; cells and masks are half an exposure later)                     |
 |                      | and every edge's flow and red-cell velocity at that instant (the cardiac pulse), signed    |
 |                      | like the graph: positive from the edge's source to its target, so along the mean flow, and  |
 |                      | negative only while the pulse reverses it                                                   |
-| truth/cells.npz      | per frame: the 3D position of every red cell the camera can see (µm = origin_um +          |
-|                      | xyz_decimicron / 10, unsigned integers of 0.1 µm), its id (stable while it stays in the     |
-|                      | domain), its segment (edge index); frame k's cells are rows frame_offsets[k] to             |
-|                      | frame_offsets[k + 1]                                                                        |
-| truth/masks.npz      | per frame (unsigned integer/float16, compressed): the id of the shallowest segment at every |
+| truth/cells.npz      | per frame, at the middle of its exposure: the 3D position of every red cell the camera     |
+|                      | draws in or near the field (µm = origin_um + xyz_decimicron / 10, unsigned integers of      |
+|                      | 0.1 µm), its id (stable while it stays in the domain), its segment (edge index); frame k's  |
+|                      | cells are rows frame_offsets[k] to frame_offsets[k + 1]. Cells passing through the stretch  |
+|                      | of a narrower vessel that lies inside a wider one at a junction are not drawn (so that the  |
+|                      | junction is not darkened twice) and are left out until they come out of it                  |
+| truth/masks.npz      | per frame, at the middle of its exposure (unsigned integer/float16, compressed): the id of  |
+|                      | the shallowest segment at every                                                             |
 |                      | pixel (0 is none, else edge index + 1), its depth (µm), and its projected red-cell velocity |
 |                      | (px per frame, x and y); and, with every vessel at its frame-0 position, the id and depth   |
 |                      | maps and the projected velocity of the mean (cycle-averaged) flow                           |
@@ -208,10 +212,16 @@ def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6,
             return tube.points, tube.weights_at(t)
         while red_cells.t < t - 1e-9:
             red_cells.step(min(dt, t - red_cells.t))
-        return red_cells.positions()[red_cells.visible()]
+        xyz, seen = red_cells.positions(), red_cells.visible()
+        if record_cells:
+            keep = seen & (xyz[:, 0] > x0 - pad) & (xyz[:, 0] < x1 + pad) & (xyz[:, 1] > y0 - pad) & (xyz[:, 1] < y1 + pad)
+            exposed.append(dict(xyz=xyz[keep].astype(np.float32), id=red_cells.ids[keep].astype(np.uint32),
+                                edge=red_cells.edge[keep].astype(edge_dtype)))
+        return xyz[seen]
 
     start = time.perf_counter()
     for k in range(n_frames):
+        exposed = []                                   # the cells at each instant the exposure is sampled at
         irradiance, glint = renderer.expose(k, cells_at)
         if occluder is not None:
             mask, cover = occluder(k, renderer)
@@ -220,10 +230,7 @@ def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6,
         frames[k] = renderer.sensor(irradiance, glint, scale)
         mid = k + 0.5 * scene.optics.exposure_s / period
         if record_cells:
-            xyz = red_cells.positions()
-            inside = (xyz[:, 0] > x0 - pad) & (xyz[:, 0] < x1 + pad) & (xyz[:, 1] > y0 - pad) & (xyz[:, 1] < y1 + pad)
-            cell_frames.append(dict(xyz=xyz[inside].astype(np.float32), id=red_cells.ids[inside].astype(np.uint32),
-                                    edge=red_cells.edge[inside].astype(edge_dtype)))
+            cell_frames.append(exposed[len(exposed) // 2])           # the middle one: mid-exposure, as the masks
         if record_masks:
             edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, time_offset + k * period)
             masks["edge"].append(edge_map)

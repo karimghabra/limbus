@@ -1125,6 +1125,8 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
 
     for ei in np.flatnonzero(near):
         e = full.edges[ei]
+        if e.kind == "bed":                # a lumped resistance standing for vessels that are not drawn
+            continue
         local = g.to_local(e.points, frame)
         keep = (local[:, 0] > domain[0]) & (local[:, 0] < domain[1]) & (local[:, 1] > domain[2]) & (local[:, 1] < domain[3])
         keep &= np.hypot(local[:, 0], local[:, 1]) < g.R * math.pi / 2          # the half of the globe that faces the camera
@@ -1220,7 +1222,8 @@ def simulate_view(eye: Eye, pose: Pose, n_frames=60, scene: Scene | None = None,
 def overview(eye: Eye, um_per_px=20.0, size_px=(1300, 1000)):
     """The whole visible anterior eye at low magnification, seen from in front: the coarse network as tubes of mean
     red-cell density, one frame. Returns (frame uint16, extent in mm (left, right, bottom, top), outlines dict with
-    the limbus and the lid margins in mm)."""
+    the limbus and the lid margins in mm). The frame's first row is the bottom (inferior) one: show it with
+    imshow(frame, extent=extent, origin="lower")."""
     from .camera import burst_motion
     from .simulate import render_network
     a = eye.anatomy

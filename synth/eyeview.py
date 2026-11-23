@@ -46,7 +46,7 @@ def export(eye, harmonics=4):
     pts, dia, first, kind, level, ht, speed, pulse = [], [], [0], [], [], [], [], []
     K = min(harmonics, len(flow.pulse))
     for i, e in enumerate(net.edges):
-        if len(e.points) < 2:
+        if len(e.points) < 2 or e.kind == "bed":
             continue
         local = np.column_stack([e.points, e.local_diameter])
         sampled = resample(local, STEP_UM.get(e.level, 20.0))
