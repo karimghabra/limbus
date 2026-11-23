@@ -7,6 +7,9 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 - Synthetic data with exact ground truth: `synth/` (`synth.simulate`, `synth.write_burst`, `notebooks/synthetic.py`).
   Every anatomical or physiological constant lives in `synth/anatomy.py` with its source in
   docs/synthetic_conjunctiva_anatomy.md; `synth.check` must keep passing (`python -m pytest synth/tests`).
+- Whole eye: `synth.eye.Eye(seed)` grows and solves every level of detail as one network (~2-3 min, 0.4 GB); pickle
+  it for repeated renders, and use `Eye(seed, fine_region=...)` for a small sector in tests. Views, the browser page
+  (`synth.eyeview`), seeded patients at the slit lamp (`synth.gaze`) and mapping (`synth.mapping`) all build on it.
 - Notebooks are marimo files; `marimo check notebooks/<name>.py` catches names defined in two cells.
 
 ## Maintaining this file
