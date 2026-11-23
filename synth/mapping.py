@@ -70,8 +70,9 @@ def plan(lamp, clocks, s_mm, overlap=0.2, max_gaze_deg=35.0):
     camera cannot reach are left out. Returns [(h, v)]."""
     g = lamp.eye.globe
     sc = lamp.scene
-    fw = sc.width_px * sc.anatomy.um_per_px * (1 - overlap)
-    fh = sc.height_px * sc.anatomy.um_per_px * (1 - overlap)
+    # the camera's image may lie at any roll on the globe, so the fields are spaced by their shorter side
+    side = min(sc.width_px, sc.height_px) * sc.anatomy.um_per_px * (1 - overlap)
+    fw = fh = side
     targets = []
     rows = np.arange(s_mm[0] * 1000.0, s_mm[1] * 1000.0 + 1, fh)
     for r, s in enumerate(rows):
@@ -129,8 +130,12 @@ def _illumination(image, grid=(32, 24), rounds=4):
 class Mapper:
     """The map of one eye's surface over a region ((clock from, clock to), (s from, s to) mm), at um_per_px."""
 
-    def __init__(self, globe, region, um_per_px=4.0):
+    def __init__(self, globe, region, um_per_px=4.0, min_ncc=0.75):
         self.g = globe
+        self.min_ncc = min_ncc                    # least correlation for a registration to be trusted
+        self.levels = []                          # the sclera's brightness in the bursts accepted so far
+        self.corrections = []                     # accepted registrations: where the field was against the gaze's
+                                                  # prediction (eye coordinates, µm): the head's drift
         (c0, c1), (s0, s1) = region
         self.c0, self.span = c0, (c1 - c0) % 360.0
         self.s0, self.s1 = s0 * 1000.0, s1 * 1000.0
@@ -187,12 +192,13 @@ class Mapper:
 
     # one burst
     @staticmethod
-    def stabilise(frames):
-        """Drop covered frames and register the rest by phase correlation. Returns (od stack registered to the first
-        kept frame, kept indices, shifts px, valid mask of the field)."""
+    def stabilise(frames, reference=None):
+        """Drop covered frames and register the rest by phase correlation. reference: the sclera's usual brightness
+        (from earlier bursts), so that a burst the lids cover entirely is dropped too. Returns (od stack registered
+        to the first kept frame, kept indices, shifts px, valid mask of the field), or None."""
         f = frames.astype(np.float32)
         level = np.array([np.median(x) for x in f])
-        background = np.median(level)
+        background = np.median(level) if reference is None else min(np.median(level), reference)
         texture = np.array([np.std(cv2.GaussianBlur(x, (0, 0), 2) - cv2.GaussianBlur(x, (0, 0), 8)) for x in f])
         # a lid or blink brightens the frame and wipes out the vessels' fine structure
         kept = np.flatnonzero((level < 1.06 * background) & (texture > 0.6 * np.median(texture)))
@@ -227,29 +233,39 @@ class Mapper:
         """Add one burst, given only its frames, the commanded gaze and the camera. Returns its placement."""
         sc = lamp.scene
         um_cam, h, w = sc.anatomy.um_per_px, sc.height_px, sc.width_px
-        got = self.stabilise(frames)
+        got = self.stabilise(frames, np.median(self.levels) if len(self.levels) >= 2 else None)
         if got is None:
             self.placements.append(None)
             return None
         stack, kept, shifts, valid = got
+        self.levels.append(float(np.median([np.median(frames[k]) for k in kept])))
         mean = np.nanmean(stack, 0)
         flick = np.nanvar(stack - mean[None], 0) if len(stack) > 2 else np.zeros_like(mean)
         mean = np.nan_to_num(mean)
         flick = np.nan_to_num(flick)
         ves = vesselness(mean)
-        # where the field should be: the commanded gaze through the fixed camera (the first kept frame)
+        # where the field should be: the commanded gaze through the fixed camera (the first kept frame), moved by the
+        # head's slow drift on the chin rest as the last accepted registrations measured it
         pose, roll = lamp.field_pose(gaze)
         s_p, c_p = pose.s_mm * 1000.0, pose.clock_deg
+        predicted = self.g.point(s_p, c_p, 0.0)
+        if self.corrections:
+            moved_p = predicted + np.median(np.array(self.corrections[-3:]), 0)
+            s_n, c_n, _ = self.g.surface_coordinates((moved_p * self.g.R / np.linalg.norm(moved_p))[None])
+            s_p, c_p = float(s_n[0]), float(c_n[0])
+        start = self.g.point(s_p, c_p, 0.0)
         shift_um = np.zeros(2)
         diagnostics = dict(overlap=0.0, response=0.0, valid=float(valid.mean()))
         if refine and (self.weight > 0).any():
-            prior = self._map_in_field(self.od, s_p, c_p, roll, um_cam, w, h)
+            prior = self._map_in_field(self.vessel, s_p, c_p, roll, um_cam, w, h)
             overlap = np.isfinite(prior) & valid
             diagnostics["overlap"] = float(overlap.mean())
             if overlap.mean() > 0.08:
-                band = lambda x: (cv2.GaussianBlur(x, (0, 0), 1.5) - cv2.GaussianBlur(x, (0, 0), 12)).astype(np.float32)
-                a = band(np.where(np.isfinite(prior), prior, np.nanmean(prior)).astype(np.float32))
-                b = band(mean.astype(np.float32))
+                # registered on the vessels themselves (the vesselness, softly compressed), which the texture, focus
+                # and illumination of the two recordings change far less than they change the raw density
+                soft = lambda x: np.sqrt(np.clip(cv2.GaussianBlur(x, (0, 0), 1.0), 0, None)).astype(np.float32)
+                a = soft(np.where(np.isfinite(prior), prior, 0.0).astype(np.float32))
+                b = soft(ves.astype(np.float32))
                 # masked normalised cross-correlation over the shifts (Padfield's masked FFT registration): the
                 # shift that brings the burst onto the map where both hold data
                 shift = phase_cross_correlation(a, b, reference_mask=np.isfinite(prior), moving_mask=valid,
@@ -261,7 +277,10 @@ class Mapper:
                 if both.sum() > 500:
                     x, y = a[both], moved[both]
                     diagnostics["response"] = float(np.corrcoef(x, y)[0, 1])
-                if diagnostics["response"] > 0.3 and math.hypot(sx, sy) < 0.25 * w:
+                # a small correction of a well predicted field needs less evidence than a large jump
+                small = math.hypot(sx, sy) * um_cam < 120.0
+                if (diagnostics["response"] > self.min_ncc or (small and diagnostics["response"] > 0.5)) \
+                        and math.hypot(sx, sy) < 0.25 * w:
                     # the burst's content sits (sx, sy) px from where the map has it: move the field the other way
                     r = math.radians(roll)
                     dxl, dyl = -sx * um_cam, -sy * um_cam
@@ -270,6 +289,8 @@ class Mapper:
                     moved_c = self.g.from_local(np.array([[shift_um[0], shift_um[1], 0.0]]), frame)
                     s_n, c_n, _ = self.g.surface_coordinates(moved_c)
                     s_p, c_p = float(s_n[0]), float(c_n[0])
+                    self.corrections.append(self.g.point(s_p, c_p, 0.0) - predicted)
+                    shift_um = self.g.point(s_p, c_p, 0.0) - start
         px, py, inside = self._field_lookup(s_p, c_p, roll, um_cam, w, h)
         if not inside.any():
             self.placements.append(dict(pose=(s_p, c_p, roll), shift_um=shift_um, kept=len(kept), first=int(kept[0]), **diagnostics))
@@ -337,9 +358,18 @@ class Mapper:
         truth = self.truth_vessels(eye, max_depth_um=500.0)
         found = self.vessel_map()
         # the global shift of the map against the truth
-        a = cv2.GaussianBlur((truth & covered).astype(np.float32), (0, 0), 2)
-        b = cv2.GaussianBlur(found.astype(np.float32), (0, 0), 2)
-        (sx, sy), _ = cv2.phaseCorrelate(a, b)
+        offsets = []
+        for placed, t in zip(self.placements, true_poses or []):
+            if placed is not None and t is not None:
+                px, py = self.to_chart(placed["pose"][0], placed["pose"][1])
+                tx, ty = self.to_chart(t[0], t[1])
+                offsets.append((px - tx, py - ty))
+        if offsets:                                   # the map's common offset: the median placement error
+            sx, sy = np.median(np.array(offsets), 0)
+        else:
+            a = cv2.GaussianBlur((truth & covered).astype(np.float32), (0, 0), 2)
+            b = cv2.GaussianBlur(found.astype(np.float32), (0, 0), 2)
+            (sx, sy), _ = cv2.phaseCorrelate(a, b)
         out["global_offset_um"] = [float(sx * self.um), float(sy * self.um)]
         M = np.float32([[1, 0, -sx], [0, 1, -sy]])
         found = cv2.warpAffine(found.astype(np.uint8), M, found.shape[::-1], flags=cv2.INTER_NEAREST) > 0
@@ -358,14 +388,19 @@ class Mapper:
                 rel = np.linalg.norm(errs - np.median(errs, 0), axis=1)
                 out["relative_placement_error_um_median"] = float(np.median(rel))
                 out["relative_placement_error_um_p90"] = float(np.percentile(rel, 90))
+        # scored on centrelines: a mapped centreline counts if it lies within the tolerance of a true vessel, a true
+        # centreline counts as found if it lies within the tolerance of a mapped one
+        from skimage.morphology import skeletonize
         truth = truth & cov
         k = max(1, int(round(tolerance_um / self.um)))
         kernel = np.ones((2 * k + 1, 2 * k + 1), np.uint8)
         truth_d = cv2.dilate(truth.astype(np.uint8), kernel) > 0
-        found_d = cv2.dilate(found.astype(np.uint8), kernel) > 0
         found = found & cov
-        out["precision"] = float((found & truth_d).sum() / max(found.sum(), 1))
-        out["recall"] = float((truth & found_d).sum() / max(truth.sum(), 1))
-        large = self.truth_vessels(eye, min_diameter_um=15.0, max_depth_um=500.0) & cov
+        found_line = skeletonize(found)
+        found_d = cv2.dilate(found_line.astype(np.uint8), kernel) > 0
+        truth_line = skeletonize(truth)
+        out["precision"] = float((found_line & truth_d).sum() / max(found_line.sum(), 1))
+        out["recall"] = float((truth_line & found_d).sum() / max(truth_line.sum(), 1))
+        large = skeletonize(self.truth_vessels(eye, min_diameter_um=15.0, max_depth_um=500.0) & cov)
         out["recall_15um_and_wider"] = float((large & found_d).sum() / max(large.sum(), 1))
         return out
