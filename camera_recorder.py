@@ -32,6 +32,8 @@ import numpy as np
 import cv2
 from PyQt5 import QtCore, QtGui, QtWidgets
 
+import foot_pedal
+
 try:
     import tifffile
     HAVE_TIFFFILE = True
@@ -3233,9 +3235,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.output_dir = DEFAULT_OUTPUT_DIR
         os.makedirs(self.output_dir, exist_ok=True)
 
+        # A USB foot pedal records for as long as it is held down, like
+        # holding the Record button, so both hands stay free
+        self.pedal = foot_pedal.FootPedal(self)
+        self.pedal.pressed.connect(self._pedal_pressed)
+        self.pedal.released.connect(self._pedal_released)
+        self.pedal.present_changed.connect(
+            lambda _: self._record_mode_changed())
+        self._pedal_action = None
+
         self._build_ui()
         self._record_mode_changed()
         self._refresh_cameras(auto_connect=True)
+        # once the window exists: Windows delivers the pedal's input to it
+        QtCore.QTimer.singleShot(0, lambda: self.pedal.start(self))
 
         self.status_timer = QtCore.QTimer(self)
         self.status_timer.timeout.connect(self._update_status)
@@ -3312,7 +3325,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "QPushButton:disabled {background-color: #666666;}")
         self.record_btn.setToolTip(
             "Hold down to capture for as long as you hold.\n"
-            "Or tap once to start, and tap again to stop.")
+            "Or tap once to start, and tap again to stop.\n"
+            "A USB foot pedal works too: hold it down to capture.")
         self.record_btn.pressed.connect(self._record_pressed)
         self.record_btn.released.connect(self._record_released)
         self.record_btn.setEnabled(False)
@@ -4028,11 +4042,35 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._toggle_record()   # a hold: the clip ends on release
             # a quick tap latches instead — recording runs until tapped again
 
+    def _pedal_pressed(self):
+        """The foot pedal went down: capture for exactly as long as it is
+        held. Unlike the button, a short press doesn't latch — with your
+        foot off the pedal, nothing should still be recording."""
+        if not self.record_btn.isEnabled():
+            return                        # no camera yet, or still saving
+        self.record_btn.setDown(True)
+        if self.recording:
+            # a capture the button latched on: the pedal ends it
+            self._pedal_action = None
+            self._toggle_record()
+            return
+        self._toggle_record()
+        self._pedal_action = "started" if self.recording else None
+
+    def _pedal_released(self):
+        self.record_btn.setDown(False)
+        action, self._pedal_action = self._pedal_action, None
+        if action == "started" and self.recording:
+            self._toggle_record()
+
     def _record_mode_changed(self):
         burst = self.record_mode.currentData() == "burst"
-        self.record_hint.setText(
-            "Hold to capture a TIFF burst · tap to start/stop" if burst
-            else "Hold for a short clip · tap to start/stop")
+        hint = ("Hold to capture a TIFF burst · tap to start/stop" if burst
+                else "Hold for a short clip · tap to start/stop")
+        pedal = getattr(self, "pedal", None)
+        if pedal is not None and pedal.present:
+            hint += "\nor hold the foot pedal down"
+        self.record_hint.setText(hint)
         # Quality only shapes video files; bursts are lossless either way
         self.quality_combo.setEnabled(not burst and not self.recording)
         if not self.recording:
@@ -4755,6 +4793,7 @@ class MainWindow(QtWidgets.QMainWindow):
         dlg.close()
 
     def closeEvent(self, event):
+        self.pedal.stop()
         if self.bursting and self.cam_thread:
             self.cam_thread.stop_burst()  # flushes what was captured so far
             self._wait_for_burst()
