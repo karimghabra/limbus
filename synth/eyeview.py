@@ -44,7 +44,7 @@ def export(eye, harmonics=4):
     its flow relative to the mean, harmonic by harmonic (int8 pairs, 1/32)."""
     net, flow = eye.network, eye.flow
     pts, dia, first, kind, level, ht, speed, pulse = [], [], [0], [], [], [], [], []
-    K = 0 if flow.pulse is None else min(harmonics, len(flow.pulse))
+    K = min(harmonics, len(flow.pulse))
     for i, e in enumerate(net.edges):
         if len(e.points) < 2:
             continue

@@ -52,7 +52,7 @@ class Anatomy:
     av_pair_offset: tuple = (50.0, 110.0)            # lateral distance of an accompanying venule from its arteriole (about the measured pair spacing, 85 µm, docs §4)
     av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
-    episcleral_curvature: float = 0.0008             # rad/µm SD of their slow bend, correlation 800 µm: long straight runs
+    episcleral_curvature: float = 0.0008             # rad/µm SD of their slow bend, correlation 250 µm: long straight runs
     episcleral_heading_spread: float = 0.8           # rad about the radial direction: parallel radial trunks [Akagi2018, Kemenes2025]
     episcleral_vessels_per_mm: float = 2.2           # episcleral vessels per mm along the limbus (fitted to the measured diameters, docs §5)
     episcleral_avas_per_mm2: float = 0.75            # arteriovenous anastomoses, 0.5-1 per mm2 [Selbach2005]

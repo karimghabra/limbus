@@ -234,7 +234,7 @@ check on further seeds and on randomised scenes (`synth/tests`).
 | precapillary arteriolar pulsatility index | 0.577 | 0.3-1.3 |  | within | PI about 0.8, RI 53 % in 6-12 µm arterioles [Koutsiaris2010] |
 | episcleral vein flow (median) | 0.919 | 0-0.84 | µl/min | outside | 0.40 ± 0.22 µl/min in 61 µm episcleral veins [Kim2024], mean ± 2 SD |
 | companion venule calibre over its arteriole's (median) | 1.53 | 1.27-1.93 |  | within | artery:vein calibre 0.653 ± 0.068 [Yusufu2025], mean ± 2 SD |
-| calibre variation along segments >= 15 µm (CV, median) | 0.0987 | 0.05-0.4 |  | within | about 0.1 above 15 µm, up to 0.4 below [Kiani1993]; ~0.19 in conjunctiva [Shahidi2010] |
+| calibre variation along vessels >= 15 µm (CV, median) | 0.0987 | 0.05-0.4 |  | within | about 0.1 above 15 µm, up to 0.4 below [Kiani1993]; ~0.19 in conjunctiva [Shahidi2010] |
 | communicating vessel angle to the surface | 33.7-48.6 | 15-75 | deg | within | oblique course, no measured angle [Asanad2021, Li2011]; docs §2.4 |
 | red-cell velocity in arteriovenous anastomoses and communicating vessels (median) | 6.99 mm/s | no published value |  | reference | docs §2.4 |
 | venular velocity by diameter, 4-9 / 9-14 / 14-19 / 19-24 µm | - / 0.34 / 0.27 / 0.22 mm/s | 0.48 / 0.64 / 0.82 / 0.88 mm/s |  | reference | [Koutsiaris2015] |

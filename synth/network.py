@@ -921,16 +921,6 @@ def assign_calibres(edges, rng, anatomy):
             del e._s_abs, e._base
 
 
-def width_profile(rng, s, anatomy, step, scale=1.0):
-    """Relative calibre along one isolated vessel sampled at arclengths s (µm): a smooth random variation and a
-    gentle taper, mean 1 (assign_calibres does this for whole networks, continuous through the junctions)."""
-    cv, width_length = anatomy.width_variation
-    variation = 1.0 + scale * cv * _smooth_noise(rng, len(s), width_length / step)
-    variation *= 1.0 + rng.uniform(*anatomy.taper) * rng.choice([-1.0, 1.0]) * (0.5 - s / max(s[-1], 1e-9))
-    variation = np.clip(variation, 0.55, 1.45)
-    return variation / variation.mean()
-
-
 def _vessel_chains(builder, kind):
     """The edges of every named vessel of a kind, in order from its first edge to its last."""
     by_vessel = {}

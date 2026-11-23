@@ -87,7 +87,6 @@ class EyeAnatomy:
     coarse_max_terminal_um: float = 1500.0           # the patch level, docs §5, at trunk scale)
     conjunctival_artery_diameter: tuple = (25.0, 40.0)   # within the 5.9-61 µm of conjunctival arterioles [Khansari2017]
     companion_offset_um: tuple = (75.0, 120.0)       # vein beside artery, centre to centre (measured 85 µm, docs §4)
-    watershed_mm: float = 4.0                        # lid branches supply the conjunctiva from 4 mm on [Sun2022]
     fornix_mm: dict = field(default_factory=lambda: {"superior": 15.0, "temporal": 12.0, "inferior": 10.5,
                                                      "nasal": 8.0})   # fornix depths 15.3-16.1 / 10.1-10.9 mm [Jutley2016, Khan2014]; horizontal assumed
     episcleral_veins_per_mm: float = 0.6             # radial episcleral veins per mm of limbus (fitted, docs §5)
@@ -198,14 +197,6 @@ class Globe:
         w = position - int(position)
         return (1 - w) * values[order[k]] + w * values[order[k + 1]]
 
-    def exposed(self, xyz):
-        """Whether points lie in the palpebral fissure (not under the lids), seen from in front."""
-        a = self.a
-        x, y = xyz[..., 0] * 1e-3, xyz[..., 1] * 1e-3
-        half = a.fissure_half_width_mm
-        shape = np.clip(1 - (x / half) ** 2, 0, None)
-        return (np.abs(x) <= half) & (y <= a.upper_lid_mm * shape ** 0.5) & (y >= a.lower_lid_mm * shape ** 0.5) & (xyz[..., 2] > 0)
-
 
 # ----------------------------------------------------------------------------------------------- the coarse level
 
@@ -287,7 +278,7 @@ class Eye:
         self.scene = replace(self.scene, optics=replace(self.scene.optics, eye_radius_um=self.anatomy.radius_um))
         self.seconds = {}
         start = _time.perf_counter()
-        self.coarse, self.trunks = build_coarse(self)
+        self.coarse = build_coarse(self)
         self.seconds["coarse"] = _time.perf_counter() - start
         start = _time.perf_counter()
         self.network = build_whole(self)
@@ -299,7 +290,6 @@ class Eye:
         self.flow = solve(self.network, self.scene.physiology, max_iterations=100)
         self.seconds["flow"] = _time.perf_counter() - start
         self._bounds = None
-        self._tile_index = None
 
     def in_fine_region(self, s_um, clock_deg, margin=0.0):
         """Whether a surface point (s µm from the limbus, clock °) lies in the conjunctiva of the fine region."""
@@ -339,21 +329,14 @@ class Eye:
         n = self.tiles_around(i)
         return (i + 0.5) * t, (j + 0.5) * 360.0 / n
 
-    def tile_edges(self, key):
-        """Indices of the fine edges (trees and plexus) whose middle lies in a tile."""
-        if self._tile_index is None:
-            self._tile_index = edge_tile_index(self)
-        return self._tile_index.get(tuple(key), [])
-
 
 def build_coarse(eye: Eye):
-    """The coarse network of the whole globe. Returns (network in eye coordinates, trunk registry)."""
+    """The coarse network of the whole globe, in eye coordinates."""
     a, g = eye.anatomy, eye.globe
     A = eye.scene.anatomy                            # the patch level's shape parameters
     rng = np.random.default_rng([eye.seed, 11])
     b = _Builder()
     pressure = {}
-    trunks = []
     epi = a.episcleral_depth_um
     conj = a.conjunctival_trunk_depth_um
 
@@ -699,7 +682,7 @@ def build_coarse(eye: Eye):
     # (build_whole), so they run on continuously through every split
     net = Network(np.asarray(b.nodes), b.edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = {k: v for k, v in pressure.items()}
-    return net, trunks
+    return net
 
 
 def _attach_beds(b, beds, a):
@@ -957,7 +940,7 @@ def build_whole(eye: Eye):
     """The eye's network at every level of detail in one piece: the coarse vessels, the trees of every tile of the
     fine region rooted on them, and the capillary plexus joining the trees' terminals; the coarse level's lumped beds
     remain only where no fine vessels are drawn. Returns the network (eye coordinates; every edge has .level 0, 1 or
-    2 and .tile, the tile key of its middle or None)."""
+    2)."""
     g, A = eye.globe, eye.scene.anatomy
     coarse = eye.coarse
     keys = fine_tile_keys(eye)
@@ -1001,7 +984,6 @@ def build_whole(eye: Eye):
     leaves = []
     for tile in tiles:
         net = tile["network"]
-        base = len(b.nodes)
         remap = {node: split_node[(ei, k)] for ei, k, node in tile["roots"]}
         index = {}
         for k in range(len(net.nodes)):
@@ -1024,7 +1006,6 @@ def build_whole(eye: Eye):
             c.level = 1
             b.edges.append(c)
         leaves += [index[k] for k in tile["leaves"]]
-        del base
     # the capillary plexus
     plexus_nodes, plexus_edges = build_plexus(eye, keys)
     base = len(b.nodes)
@@ -1070,15 +1051,13 @@ def build_whole(eye: Eye):
     for e in trunks:
         e.width = None
     assign_calibres([e for e in trunks if e.kind in TRUNK_KINDS], np.random.default_rng([eye.seed, 27]), A)
+    # and the calibre along every other drawn vessel: the remaining coarse kinds and the capillary plexus
+    assign_calibres([e for e in trunks if e.kind not in TRUNK_KINDS and e.kind != "bed"] +
+                    [e for e in b.edges if e.level == 2], np.random.default_rng([eye.seed, 28]), A)
     edges = [e for i, e in enumerate(b.edges) if i not in drop]
     net = Network(np.asarray(b.nodes), edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = dict(coarse.boundary_pressure)
-    net = _keep_perfusable(net)
-    for e in net.edges:
-        mid = e.points[len(e.points) // 2]
-        s, c, _ = g.surface_coordinates(mid[None])
-        e.tile = eye.tile_key(float(s[0]), float(c[0])) if e.level > 0 else None
-    return net
+    return _keep_perfusable(net)
 
 
 def _keep_perfusable(net):
@@ -1126,15 +1105,6 @@ def perfusion(eye: Eye, threshold_mm_s=0.005):
     return out
 
 
-def edge_tile_index(eye):
-    """tile key -> indices of the fine edges whose middle lies in it."""
-    index = {}
-    for i, e in enumerate(eye.network.edges):
-        if e.level > 0:
-            index.setdefault(e.tile, []).append(i)
-    return index
-
-
 # ----------------------------------------------------------------------------------------------- the view
 
 @dataclass
@@ -1163,8 +1133,9 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
     half_h = scene.height_px * um / 2 + scene.margin_um
     domain = (-half_w, half_w, -half_h, half_h)
     b = _Builder()
-    props = []                         # per view edge: (flow, eye edge index, source)
-    boundary, bpressure = {}, {}
+    index = []                         # per view edge: the eye's edge it is a piece of
+    anchors = []                       # per view node: the eye's two nodes it lies between, and how far along
+    boundary = {}
     node_map = {}
     full = eye.network
     flow = eye.flow
@@ -1174,12 +1145,10 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
     if not fine:
         near &= levels == 0
 
-    def pressure_at(ei, k):
-        e = full.edges[ei]
-        seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
+    def share(ei, k):
+        seg = np.linalg.norm(np.diff(full.edges[ei].points, axis=0), axis=1)
         s = np.r_[0, np.cumsum(seg)]
-        f = s[k] / max(s[-1], 1e-9)
-        return float((1 - f) * flow.pressure[e.u] + f * flow.pressure[e.v])
+        return float(s[k] / max(s[-1], 1e-9))
 
     for ei in np.flatnonzero(near):
         e = full.edges[ei]
@@ -1196,46 +1165,45 @@ def assemble_view(eye: Eye, pose: Pose, scene: Scene, fine=True, roll_deg=0.0):
                 if node is not None:
                     if node not in node_map:
                         node_map[node] = b.node(local[end])
+                        anchors.append((node, node, 0.0))
                     ends.append(node_map[node])
                 else:
                     nn = b.node(local[end])
                     boundary[nn] = "arterial" if "arter" in e.kind else ("venous" if "vein" in e.kind or "venule" in e.kind else "capillary")
-                    bpressure[nn] = pressure_at(ei, end)
+                    anchors.append((e.u, e.v, share(ei, end)))
                     ends.append(nn)
             b.edge(ends[0], ends[1], local[run].copy(), e.diameter, e.kind, e.layer, e.vessel)
             b.edges[-1].width = e.width[run] if e.width is not None and len(e.width) == len(local) else None
             b.edges[-1].paired_with = e.paired_with
-            props.append((flow, int(ei), "eye"))
+            index.append(int(ei))
     # where only part of a node's vessels are drawn (the coarse level alone), the node is where blood leaves or joins
     # through vessels the view leaves out; the cells handle that (synth.cells keep_share)
     net = Network(np.asarray(b.nodes) if b.nodes else np.zeros((0, 3)), b.edges, boundary, domain,
                   (-scene.width_px * um / 2, scene.width_px * um / 2, -scene.height_px * um / 2, scene.height_px * um / 2),
                   dict(b.vessel_kind))
-    net.boundary_pressure = bpressure
-    net.origins = [(source, ei) for (_, ei, source) in props]   # where every view edge came from
-    return net, _inherit_flow(net, props, scene)
+    net.origins = [("eye", ei) for ei in index]                # where every view edge came from
+    view_flow = _inherit_flow(net, flow, np.array(index, int), anchors, scene)
+    net.boundary_pressure = {node: float(view_flow.pressure[node]) for node in boundary}
+    return net, view_flow
 
 
-def _inherit_flow(net, props, scene):
-    """The view's Flow: every piece takes the flow, haematocrit, velocity and pulse of the edge it came from; node
-    pressures at the cut ends are interpolated likewise."""
-    E = len(net.edges)
-    source = props[0][0] if props else None
-    index = np.array([ei for (_, ei, _) in props], int)
-    fields = {}
-    for k in ("flow", "flow_arterial", "flow_rest", "hd", "ht", "viscosity", "velocity", "rbc_velocity", "shear_rate"):
-        fields[k] = getattr(source, k)[index] if E else np.zeros(0)
+def _inherit_flow(net, source, index, anchors, scene):
+    """The view's Flow: every piece takes the flow, haematocrit, velocity and pulse of the eye's edge it came from
+    (index); every node takes the pressure and its pulse of the eye's node it is, or, at a cut end, interpolated
+    along the cut edge (anchors). The volume the distending vessels store stays with the eye's own nodes: a cut end
+    stores none."""
+    a = np.array([k[0] for k in anchors], int)
+    c = np.array([k[1] for k in anchors], int)
+    f = np.array([k[2] for k in anchors], float)
+    pressure = (1 - f) * source.pressure[a] + f * source.pressure[c]
+    pulse_pressure = (1 - f) * source.pulse_pressure[:, a] + f * source.pulse_pressure[:, c]
+    compliance = np.where(a == c, source.compliance[a], 0.0)
+    fields = [getattr(source, k)[index] for k in ("flow", "hd", "ht", "viscosity", "velocity", "rbc_velocity",
+                                                  "shear_rate")]
     length = np.array([e.length for e in net.edges])
     diameter = np.array([e.diameter for e in net.edges])
-    pressure = np.zeros(len(net.nodes))
-    for node, p in net.boundary_pressure.items():
-        pressure[node] = p
-    out = Flow(pressure, fields["flow"], fields["flow_arterial"], fields["flow_rest"], fields["hd"], fields["ht"],
-               fields["viscosity"], fields["velocity"], fields["rbc_velocity"], fields["shear_rate"], length, diameter,
-               0, scene.physiology)
-    if E and getattr(source, "pulse", None) is not None:
-        out.pulse = source.pulse[:, index]
-    return out
+    return Flow(pressure, *fields, length, diameter, 0, scene.physiology, source.pulse[:, index], pulse_pressure,
+                compliance)
 
 
 def view_scene(eye: Eye, pose: Pose, scene: Scene | None = None) -> Scene:

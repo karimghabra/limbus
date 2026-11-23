@@ -72,11 +72,13 @@ specification, with the source of every number, is
 |---|---|
 | `scene.json` | every parameter of the scene |
 | `graph.json` | the directed graph: nodes (3D position in µm, pressure), edges oriented along the flow (3D centreline, diameter, length, depth, kind, layer, vessel id, flow, blood and red-cell velocity, haematocrits, viscosity, wall shear rate) |
-| `frames.npz` | per frame: tissue motion, rotation, focal depth, time, every edge's flow and red-cell velocity (the cardiac pulse) |
+| `frames.npz` | per frame: tissue motion, rotation, focal depth, time, every edge's flow and red-cell velocity (the cardiac pulse), positive from the edge's source to its target as in `graph.json` |
 | `cells.npz` | per frame: every visible red cell's 3D position, id and segment |
 | `masks.npz` | per frame: the shallowest vessel's id, depth and projected velocity at every pixel; and the frame-0 maps with the mean flow |
 
-Coordinates and conventions are in the `synth.simulate` docstring. A 120-frame 768 × 512 burst takes about 500 MB
+Coordinates and conventions are in the `synth.simulate` docstring, with the camera's projection of the curved globe
+that takes a tissue point to its pixel (it is not a plain division by the pixel scale: the globe curves away from
+the camera and deeper vessels sit nearer the eye's centre). A 120-frame 768 × 512 burst takes about 500 MB
 with its truth, most of it `cells.npz`; `simulate(..., record_cells=False)` drops it.
 
 ## Tests

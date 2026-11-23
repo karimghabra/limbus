@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from .cells import Cells
 from .network import Network, _vessel_runs
 
 # name: (low, high, unit, source)
@@ -94,7 +93,7 @@ def _angles(network: Network, kind_prefix):
     return np.array(out)
 
 
-def measure(scene, network: Network, flow, cells: Cells | None = None) -> dict:
+def measure(scene, network: Network, flow) -> dict:
     """The checked quantities of one network (ground truth)."""
     kind = np.array([e.kind for e in network.edges])
     layer = np.array([e.layer for e in network.edges])
@@ -200,9 +199,9 @@ def measure(scene, network: Network, flow, cells: Cells | None = None) -> dict:
     return m
 
 
-def anatomy_report(scene, network: Network, flow, cells: Cells | None = None) -> list:
+def anatomy_report(scene, network: Network, flow) -> list:
     """Rows: quantity, value, range, unit, source, status."""
-    values = measure(scene, network, flow, cells)
+    values = measure(scene, network, flow)
     rows = []
     for name, (low, high, unit, source) in RANGES.items():
         value = values.get(name)

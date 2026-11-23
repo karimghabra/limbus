@@ -11,7 +11,7 @@
         burst = lamp.record(gaze, n_frames=16, previous=previous)      # the camera sees what the eye shows it now
         mapper.add(burst.result.frames, gaze, lamp)                    # the map grows from the frames alone
         previous = gaze
-    report = mapper.evaluate(eye, bursts=...)                          # coverage and accuracy against the truth
+    report = mapper.evaluate(eye, true_poses=...)                      # coverage and accuracy against the truth
 
 The mapper never sees the truth: it is given each burst's frames as they come, the gaze that was asked of the
 patient and the camera's fixed geometry. For each burst it
@@ -190,6 +190,11 @@ class Mapper:
     def to_chart(self, s_um, clock):
         return ((clock - self.c0) % 360.0) * math.pi / 180 * self.r_ref / self.um - 0.5, (s_um - self.s0) / self.um - 0.5
 
+    def um_per_column(self, s_um):
+        """The arc along the limbus (µm) that one chart column spans at s_um from the limbus: the chart gives every
+        row the columns of its widest one, so a column is um_per_px there and narrower on the shorter circles."""
+        return self.um * self.g.R * math.sin(float(self.g.theta(s_um))) / self.r_ref
+
     def _field_lookup(self, pose_s, pose_clock, roll_deg, um_cam, w, h):
         """For every chart pixel, its pixel in a camera field at that pose (float maps), and which fall inside."""
         u = self.chart_xyz() / self.g.R
@@ -338,7 +343,6 @@ class Mapper:
                     shift_um = self.g.point(s_p, c_p, 0.0) - start
         index = len(self.bursts)
         # every trusted pairwise measurement, as the chart offset between this burst and the earlier one
-        frame_p = self.g.frame(s_p, c_p)
         if refine and self.bursts:
             r = math.radians(roll)
             for j, sx, sy, ncc in measured:
@@ -353,7 +357,6 @@ class Mapper:
                 xi, yi = self.to_chart(float(si[0]), float(ci[0]))
                 xj, yj = self.to_chart(*self.bursts[j]["pose"][:2])
                 self.links.append((index, j, (xi - xj) * self.um, (yi - yj) * self.um, ncc))
-        del frame_p
         yy, xx = np.mgrid[0:h, 0:w]
         centre = (np.minimum.reduce([xx, w - 1 - xx, yy, h - 1 - yy]) / (0.15 * min(w, h))).clip(0, 1)
         self.bursts.append(dict(index=index, pose=(s_p, c_p, roll), ves=ves.astype(np.float32), valid=valid,
@@ -461,43 +464,35 @@ class Mapper:
         A map built without an absolute reference sits on the globe as a whole within the first burst's placement
         error; as is usual for mosaics, it is scored after one global shift that best aligns it with the truth
         (reported as global_offset_um), and the placement errors are given both as they are and relative to that
-        common offset."""
+        common offset. Offsets and errors are micrometres on the globe: along the limbus a chart column counts for
+        the arc it spans at that distance from the limbus (um_per_column; the common offset found without true
+        poses is given at the region's middle row). The tolerance is applied in chart pixels, so it is tolerance_um
+        away from the limbus and no more than that along it."""
         covered = self.weight > 0
         region = np.ones_like(covered) if exposed is None else exposed
         out = dict(coverage=float((covered & region).sum() / max(region.sum(), 1)))
         truth = self.truth_vessels(eye, max_depth_um=500.0)
         found = self.vessel_map()
         # the global shift of the map against the truth
-        offsets = []
-        for placed, t in zip(self.placements, true_poses or []):
-            if placed is not None and t is not None:
-                px, py = self.to_chart(placed["pose"][0], placed["pose"][1])
-                tx, ty = self.to_chart(t[0], t[1])
-                offsets.append((px - tx, py - ty))
-        if offsets:                                   # the map's common offset: the median placement error
-            sx, sy = np.median(np.array(offsets), 0)
+        pairs = [(placed["pose"], t) for placed, t in zip(self.placements, true_poses or [])
+                 if placed is not None and t is not None]
+        if pairs:                                     # the map's common offset: the median placement error
+            offsets = np.array([np.subtract(self.to_chart(p[0], p[1]), self.to_chart(t[0], t[1])) for p, t in pairs])
+            sx, sy = np.median(offsets, 0)
+            errs = offsets * np.array([[self.um_per_column(t[0]), self.um] for _, t in pairs])
+            out["global_offset_um"] = np.median(errs, 0).tolist()
+            out["placement_error_um_median"] = float(np.median(np.linalg.norm(errs, axis=1)))
+            rel = np.linalg.norm(errs - np.median(errs, 0), axis=1)
+            out["relative_placement_error_um_median"] = float(np.median(rel))
+            out["relative_placement_error_um_p90"] = float(np.percentile(rel, 90))
         else:
             a = cv2.GaussianBlur((truth & covered).astype(np.float32), (0, 0), 2)
             b = cv2.GaussianBlur(found.astype(np.float32), (0, 0), 2)
             (sx, sy), _ = cv2.phaseCorrelate(a, b)
-        out["global_offset_um"] = [float(sx * self.um), float(sy * self.um)]
+            out["global_offset_um"] = [float(sx * self.um_per_column(0.5 * (self.s0 + self.s1))), float(sy * self.um)]
         M = np.float32([[1, 0, -sx], [0, 1, -sy]])
         found = cv2.warpAffine(found.astype(np.uint8), M, found.shape[::-1], flags=cv2.INTER_NEAREST) > 0
         cov = cv2.warpAffine(covered.astype(np.uint8), M, covered.shape[::-1], flags=cv2.INTER_NEAREST) > 0
-        if true_poses is not None:
-            errs, rel = [], []
-            for placed, t in zip(self.placements, true_poses):
-                if placed is None or t is None:
-                    continue
-                px, py = self.to_chart(placed["pose"][0], placed["pose"][1])
-                tx, ty = self.to_chart(t[0], t[1])
-                errs.append(np.array([px - tx, py - ty]) * self.um)
-            if errs:
-                errs = np.array(errs)
-                out["placement_error_um_median"] = float(np.median(np.linalg.norm(errs, axis=1)))
-                rel = np.linalg.norm(errs - np.median(errs, 0), axis=1)
-                out["relative_placement_error_um_median"] = float(np.median(rel))
-                out["relative_placement_error_um_p90"] = float(np.percentile(rel, 90))
         # scored on centrelines: a mapped centreline counts if it lies within the tolerance of a true vessel, a true
         # centreline counts as found if it lies within the tolerance of a mapped one
         from skimage.morphology import skeletonize

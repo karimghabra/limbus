@@ -17,19 +17,32 @@ and a truth/ folder beside them:
 |                      | red-cell velocity (mm/s), discharge and tube haematocrit, wall shear rate, and their        |
 |                      | direction (edges are stored oriented along the mean flow)                                 |
 | truth/frames.npz     | per frame: the tissue motion (dx, dy px, rotation rad), the focal depth (µm), the time (s) |
-|                      | and every edge's flow and red-cell velocity at that instant (the cardiac pulse)             |
+|                      | and every edge's flow and red-cell velocity at that instant (the cardiac pulse), signed    |
+|                      | like the graph: positive from the edge's source to its target, so along the mean flow, and  |
+|                      | negative only while the pulse reverses it                                                   |
 | truth/cells.npz      | per frame: the 3D position of every red cell the camera can see (µm = origin_um +          |
-|                      | xyz_decimicron / 10, uint16 in 0.1 µm), its id (stable while it stays in the domain), its   |
-|                      | segment                                                                                     |
-|                      | (edge index); frame k's cells are rows frame_offsets[k] to frame_offsets[k + 1]          |
-| truth/masks.npz      | per frame (uint16/float16, compressed): the id of the shallowest segment at every pixel (0 |
-|                      | is none, else edge index + 1), its depth (µm), and its projected red-cell velocity (px per |
-|                      | frame, x and y); and, with every vessel at its frame-0 position, the id and depth maps and   |
-|                      | the projected velocity of the mean (cycle-averaged) flow                                    |
+|                      | xyz_decimicron / 10, unsigned integers of 0.1 µm), its id (stable while it stays in the     |
+|                      | domain), its segment (edge index); frame k's cells are rows frame_offsets[k] to             |
+|                      | frame_offsets[k + 1]                                                                        |
+| truth/masks.npz      | per frame (unsigned integer/float16, compressed): the id of the shallowest segment at every |
+|                      | pixel (0 is none, else edge index + 1), its depth (µm), and its projected red-cell velocity |
+|                      | (px per frame, x and y); and, with every vessel at its frame-0 position, the id and depth   |
+|                      | maps and the projected velocity of the mean (cycle-averaged) flow                           |
 
-Coordinates: graph and cells in tissue µm (x along the limbus, y away from it, z depth); a tissue point (x, y)
-appears in frame 0 at pixel ((x - field_x0) / um_per_px, (y - field_y0) / um_per_px), and in frame t after the
-rotation about the image centre and the translation recorded in frames.npz.
+The integers are uint16, or uint32 where a scene is too large for them (more than 65 535 segments, or cells spread
+over more than 6.5 mm).
+
+Coordinates: graph and cells in tissue µm (x along the limbus, y away from it, z depth below the surface), x and y
+being arc lengths along the curved surface of the globe. The camera looks along the globe's normal at the centre
+(cx, cy) of field_of_view_um, so a tissue point (x, y, z) at arc distance r = hypot(x - cx, y - cy) from it appears
+in frame 0 at pixel
+
+    (W / 2 + (x - cx) k / um_per_px, H / 2 + (y - cy) k / um_per_px),   k = (R - z) sin(r / R) / r
+
+with R = optics.eye_radius_um and W, H the frame's size (integers at the pixels' centres); k is 1 at the centre of
+a flat field and falls with the distance from the centre and with depth (0.97 for an episcleral vessel 1.25 mm
+out). In frame t that pixel is turned about the image centre (W / 2, H / 2) by rotation_rad and moved by (dx_px,
+dy_px), as recorded in frames.npz. optics.camera_tilt_deg changes the focus across the field, not the positions.
 """
 from __future__ import annotations
 
@@ -121,7 +134,7 @@ class TubeSampler:
         f = self.flow
         v = f.rbc_velocity * 1e3                                          # µm/s, signed along u -> v
         travel = v * t
-        if getattr(f, "pulse", None) is not None and len(f.pulse):
+        if len(f.pulse):
             w = 2 * np.pi * f.physiology.heart_rate_hz
             k = np.arange(1, len(f.pulse) + 1)[:, None]
             ratio = np.where(np.abs(f.flow) > 1e-12, f.pulse / np.where(np.abs(f.flow) > 1e-12, f.flow, 1.0), 0.0)
@@ -181,6 +194,7 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
     # rotation's reach at the corners
     reach = np.hypot(motion.dx, motion.dy).max() + np.abs(motion.rotation).max() * np.hypot(scene.width_px, scene.height_px) / 2
     pad = (reach + 8.0) * scene.anatomy.um_per_px
+    edge_dtype = _unsigned(len(net.edges))
 
     def cells_at(t):
         t = t + time_offset
@@ -203,7 +217,7 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
             xyz = red_cells.positions()
             inside = (xyz[:, 0] > x0 - pad) & (xyz[:, 0] < x1 + pad) & (xyz[:, 1] > y0 - pad) & (xyz[:, 1] < y1 + pad)
             cell_frames.append(dict(xyz=xyz[inside].astype(np.float32), id=red_cells.ids[inside].astype(np.uint32),
-                                    edge=red_cells.edge[inside].astype(np.uint16)))
+                                    edge=red_cells.edge[inside].astype(edge_dtype)))
         if record_masks:
             edge_map, depth_map, velocity_map = truth_maps(net, flow, renderer, mid, time_offset + k * period)
             masks["edge"].append(edge_map)
@@ -268,8 +282,13 @@ def truth_maps(net, flow, renderer, frame_time, t_seconds=None):
             cv2.line(vx, a, b, float(speed[j] * direction[j, 0]), thickness)
             cv2.line(vy, a, b, float(speed[j] * direction[j, 1]), thickness)
     pick = (slice(ss // 2, None, ss), slice(ss // 2, None, ss))
-    return (edge_map[pick].astype(np.uint16), depth_map[pick].astype(np.float16),
+    return (edge_map[pick].astype(_unsigned(len(net.edges))), depth_map[pick].astype(np.float16),
             np.stack([vx[pick], vy[pick]]).astype(np.float16))
+
+
+def _unsigned(largest):
+    """The unsigned integer type that holds values up to largest: uint16 where it does, else wider."""
+    return np.promote_types(np.uint16, np.min_scalar_type(int(largest)))
 
 
 def graph_dict(net: network.Network, flow: haemodynamics.Flow):
@@ -298,7 +317,7 @@ def graph_dict(net: network.Network, flow: haemodynamics.Flow):
                             "edges oriented along the mean flow, velocities positive from source to target")
 
 
-def write_burst(result: Result, folder, name=None):
+def write_burst(result: Result, folder):
     """Write the frames in the recorder's format and the ground truth under truth/. Returns the folder."""
     import tifffile
 
@@ -336,18 +355,20 @@ def write_burst(result: Result, folder, name=None):
     truth.mkdir(exist_ok=True)
     (truth / "scene.json").write_text(json.dumps(_jsonable(asdict(scene)), indent=1), encoding="utf-8")
     (truth / "graph.json").write_text(json.dumps(graph_dict(result.network, result.flow)), encoding="utf-8")
+    along = np.where(result.flow.flow >= 0, 1.0, -1.0)       # the graph's edges run along the mean flow
     flows = np.stack([result.flow.flow_at(t) for t in result.times])
     scale = flows / np.where(np.abs(result.flow.flow) > 1e-12, result.flow.flow, 1.0)
     m = result.motion
     np.savez_compressed(truth / "frames.npz", time_s=result.times, dx_px=m.dx, dy_px=m.dy, rotation_rad=m.rotation,
-                        focus_um=m.focus, saccade_frames=m.saccades, edge_flow_pl_s=flows.astype(np.float32),
-                        edge_rbc_velocity_mm_s=(result.flow.rbc_velocity[None] * scale).astype(np.float32))
+                        focus_um=m.focus, saccade_frames=m.saccades, edge_flow_pl_s=(along * flows).astype(np.float32),
+                        edge_rbc_velocity_mm_s=(along * result.flow.rbc_velocity * scale).astype(np.float32))
     if result.cell_frames:
         counts = np.array([len(c["id"]) for c in result.cell_frames])
         xyz = np.concatenate([c["xyz"] for c in result.cell_frames])
         origin = np.floor(xyz.min(axis=0)) - 1.0 if len(xyz) else np.zeros(3)
+        decimicron = np.round((xyz - origin) * 10.0)
         np.savez_compressed(truth / "cells.npz", frame_offsets=np.r_[0, np.cumsum(counts)], origin_um=origin,
-                            xyz_decimicron=np.clip(np.round((xyz - origin) * 10.0), 0, 65535).astype(np.uint16),
+                            xyz_decimicron=decimicron.astype(_unsigned(decimicron.max(initial=0.0))),
                             id=np.concatenate([c["id"] for c in result.cell_frames]),
                             edge=np.concatenate([c["edge"] for c in result.cell_frames]))
     if result.masks:

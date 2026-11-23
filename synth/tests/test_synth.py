@@ -208,6 +208,32 @@ def test_truth_export(burst):
     assert frames["edge_rbc_velocity_mm_s"].shape == (len(result.frames), len(result.network.edges))
 
 
+def test_frame_truth_is_signed_like_the_graph(burst):
+    """graph.json orients every edge along its mean flow (flow_pl_s >= 0, velocities positive from source to
+    target); the per-frame columns of frames.npz index the same edges, so over a burst their flow runs the same
+    way (the pulse, 12 % of the arterial pressure, reverses hardly any)."""
+    result, folder = burst
+    graph = json.loads((folder / "truth" / "graph.json").read_text())
+    frames = np.load(folder / "truth" / "frames.npz")
+    mean_flow = np.array([e["flow_pl_s"] for e in graph["edges"]])
+    velocity = np.array([e["rbc_velocity_mm_s"] for e in graph["edges"]])
+    flowing = mean_flow > 1e-3
+    assert flowing.sum() > 20 and np.any(result.flow.flow[flowing] < 0)
+    assert np.mean(frames["edge_flow_pl_s"].mean(0)[flowing] > 0) > 0.95
+    assert np.mean(frames["edge_rbc_velocity_mm_s"].mean(0)[flowing] * velocity[flowing] > 0) > 0.95
+
+
+def test_cell_truth_keeps_positions_in_a_wide_scene(burst, tmp_path):
+    """Cells written to cells.npz come back where they were, also when they span more than 6.5 mm (the reach of
+    16-bit tenths of a micrometre)."""
+    result, _ = burst
+    xyz = np.array([[0.0, 0.0, 60.0], [9000.25, 10.0, 80.0], [20.0, 7000.5, 400.0]], np.float32)
+    wide = replace(result, cell_frames=[dict(xyz=xyz, id=np.arange(3, dtype=np.uint32),
+                                             edge=np.zeros(3, np.uint16))], masks={})
+    cells = np.load(write_burst(wide, tmp_path / "wide") / "truth" / "cells.npz")
+    assert np.allclose(cells["origin_um"] + cells["xyz_decimicron"] / 10.0, xyz, atol=0.06)
+
+
 def test_random_scenes_stay_anatomical():
     from synth.randomize import random_scene
     for seed in (11, 12):
@@ -267,6 +293,14 @@ def test_plexus_is_continuous(eye):
     assert crossing > 0.1 * len(cap)
 
 
+def test_capillary_calibre_varies_along_the_plexus(eye):
+    """The whole eye's capillaries vary in calibre along their length as the patch level's do: a CV up to 0.4 in
+    vessels below 15 µm [Kiani1993], about 0.19 in the conjunctiva [Shahidi2010]."""
+    cv = [np.std(e.local_diameter) / np.mean(e.local_diameter) for e in eye.network.edges
+          if e.level == 2 and e.length > 100.0]
+    assert len(cv) > 100 and 0.05 < np.median(cv) < 0.4
+
+
 def test_every_perfused_vessel_flows_at_every_level(eye):
     """Every vessel the network perfuses carries red cells in every view that draws it, at every magnification
     (the views are selections of the eye's one solved network), and a view draws every vessel in its field."""
@@ -295,6 +329,12 @@ def test_every_perfused_vessel_flows_at_every_level(eye):
             if ((local[:, 0] > x0) & (local[:, 0] < x1) & (local[:, 1] > y0) & (local[:, 1] < y1)).sum() >= 2:
                 expected.add(ei)
         assert expected <= set(drawn)
+        # the view's truth carries the eye's pressures: blood runs down them in every piece (Poiseuille), which
+        # pressures left at zero inside the view would not show
+        drop = np.array([flow.pressure[e.u] - flow.pressure[e.v] for e in net.edges])
+        assert np.all(flow.flow * drop >= -1e-9) and np.mean(np.abs(drop) > 0) > 0.9
+        assert flow.pressure.min() >= eye.flow.pressure.min() - 1e-9
+        assert flow.pressure_at(0.2).shape == flow.pressure.shape and flow.storage_at(0.2).shape == flow.pressure.shape
         length = np.array([e.length for e in net.edges])
         moving = np.abs(flow.rbc_velocity) > 0.005
         assert length[moving].sum() > 0.9 * length.sum()

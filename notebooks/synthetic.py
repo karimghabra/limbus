@@ -596,8 +596,9 @@ def _(OUTPUT_DIR, media, mo, scene, time, whole_eye):
                                     record_masks=False)
     _path = media.webp(media.od_to_gray(media.optical_density(_view.frames.astype("float32"))),
                        OUTPUT_DIR / f"eye_view_temporal_3mm_seed{scene.seed}.webp", scene.optics.fps)
-    mo.output.append(mo.md(f"The temporal conjunctiva 3 mm from the limbus, {len(_view.network.edges)} segments from "
-                           f"the coarse level and {_view.seconds.get('tiles cached', 0)} tiles, in "
+    _levels = [whole_eye.network.edges[_ei].level for _, _ei in _view.network.origins]
+    mo.output.append(mo.md(f"The temporal conjunctiva 3 mm from the limbus, {len(_levels)} pieces of the eye's vessels "
+                           f"({', '.join(f'{_levels.count(_k)} {_name}' for _k, _name in _eye_view.LEVEL_NAMES.items())}), in "
                            f"{time.perf_counter() - _start:.0f} s ({', '.join(f'{k} {v:.1f}' for k, v in _view.seconds.items())})"))
     mo.output.append(mo.image(_path.read_bytes()))
     return

@@ -111,8 +111,6 @@ def boundary_pressure(role, diameter, physiology: Physiology):
 class Flow:
     pressure: np.ndarray            # (N,) mmHg at the nodes
     flow: np.ndarray                # (E,) pl/s, positive from edge.u to edge.v
-    flow_arterial: np.ndarray       # (E,) the part driven by the arterial boundary pressures
-    flow_rest: np.ndarray           # (E,) the rest
     hd: np.ndarray                  # (E,) discharge haematocrit
     ht: np.ndarray                  # (E,) tube haematocrit
     viscosity: np.ndarray           # (E,) relative apparent viscosity
@@ -123,10 +121,9 @@ class Flow:
     diameter: np.ndarray            # (E,) µm
     iterations: int
     physiology: Physiology
-
-    pulse: np.ndarray | None = None          # (K, E) complex pl/s: harmonic k + 1 of every edge's flow
-    pulse_pressure: np.ndarray | None = None  # (K, N) complex mmHg: of every node's pressure
-    compliance: np.ndarray | None = None     # (N,) µm^3 / mmHg stored at every node
+    pulse: np.ndarray               # (K, E) complex pl/s: harmonic k + 1 of every edge's flow
+    pulse_pressure: np.ndarray      # (K, N) complex mmHg: of every node's pressure
+    compliance: np.ndarray          # (N,) µm^3 / mmHg stored at every node
 
     def _phasors(self, t):
         k = np.arange(1, len(self.pulse) + 1)
@@ -134,22 +131,14 @@ class Flow:
 
     def flow_at(self, t):
         """Flow (pl/s) of every edge at time t (s), with the cardiac pulse."""
-        if self.pulse is None:
-            p = self.physiology
-            pulse = 1.0 + p.arterial_pulsatility * np.sin(2 * np.pi * p.heart_rate_hz * t)
-            return self.flow_arterial * pulse + self.flow_rest
         return self.flow + np.real(self._phasors(t) @ self.pulse)
 
     def pressure_at(self, t):
         """Pressure (mmHg) of every node at time t (s)."""
-        if self.pulse_pressure is None:
-            return self.pressure
         return self.pressure + np.real(self._phasors(t) @ self.pulse_pressure)
 
     def storage_at(self, t):
         """Rate (pl/s) at which every node's distending vessels take up volume at time t (s)."""
-        if self.pulse_pressure is None:
-            return np.zeros(len(self.pressure))
         k = np.arange(1, len(self.pulse) + 1)[:, None]
         w = 2 * np.pi * self.physiology.heart_rate_hz
         rate = 1j * k * w * self.pulse_pressure * self.compliance[None, :]          # µm^3/s
@@ -251,20 +240,13 @@ def solve(network: Network, physiology: Physiology, max_iterations=400, toleranc
     q = g * np.array([pressure[e.u] - pressure[e.v] for e in edges])
     q[dangling] = 0.0
     hd = _propagate_haematocrit(network, q, diameter, pressure, physiology.inflow_discharge_haematocrit, incident, hd)
-    # the arterial and the remaining part of the flow, for the pulse (viscosities frozen)
-    p_art = _solve(network, g, {k: (v if k in arterial_nodes else 0.0) for k, v in p_boundary.items()})
-    q_art = g * np.array([p_art[e.u] - p_art[e.v] for e in edges])
-    q_art[dangling] = 0.0
     ht = tube_haematocrit(diameter, hd)
     area = np.pi * diameter ** 2 / 4
     velocity = q / area * 1e-3                                   # µm/s -> mm/s
     rbc_velocity = np.where(ht > 1e-6, velocity * hd / np.maximum(ht, 1e-6), velocity)
     shear = 8 * np.abs(velocity * 1e3) / diameter
-    flow = Flow(pressure / MMHG, q * 1e-3, q_art * 1e-3, (q - q_art) * 1e-3, hd, ht, mu_rel, velocity, rbc_velocity,
-                shear, length, diameter, iterations, physiology)
-    flow.pulse, flow.pulse_pressure, flow.compliance = _pulse(network, g, p_boundary, arterial_nodes, length,
-                                                              diameter, dangling, physiology)
-    return flow
+    return Flow(pressure / MMHG, q * 1e-3, hd, ht, mu_rel, velocity, rbc_velocity, shear, length, diameter, iterations,
+                physiology, *_pulse(network, g, p_boundary, arterial_nodes, length, diameter, dangling, physiology))
 
 
 def pulse_wave(physiology: Physiology):

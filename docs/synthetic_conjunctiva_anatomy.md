@@ -607,7 +607,7 @@ sits at the inferior limbus, so the exposed bulbar conjunctiva is mostly nasal a
 from a reference the abstracts do not state; canthal fornix depths 3.0 mm medially and 5.2 mm laterally
 [Kawakita2009]. The model ends the bulbar conjunctiva at 15 mm superiorly, 10.5 mm inferiorly and (assumed) 12 mm
 temporally and 8 mm nasally, and marks the palpebral fissure (`fissure_half_width_mm`, `upper_lid_mm`,
-`lower_lid_mm`); `Globe.exposed` tells whether a point can be seen.
+`lower_lid_mm`); the lids that cover the eye at a given gaze are drawn by `synth.gaze` (§12).
 
 ### 11.8 Regional variation
 
@@ -750,14 +750,14 @@ tortuosity, the diameter distribution and vessel density, contrast by calibre, s
 | conjunctival–episcleral communicating vessels per mm² | not counted in any source [Akagi2018] | 1.2 per mm², fitted so that a typical field holds a few |
 | angle of communicating vessels | oblique course reported, no angle measured [Asanad2021, Li2011] | 20–60° to the surface |
 | arteriole–venule pairing frequency in the conjunctiva | not found | every arteriole of 25 µm or more accompanied, fitted to the measured paired share and by eye (companions of smaller arterioles drew crisp double tracks the fine net of the recordings does not show); gap fitted to the measured pair spacing (the mesentery definition, within 15 µm [NelloreHarris2002], drew them touching) |
-| episcleral vessel count per mm of limbus | not found | 3.0 per mm, fitted to the measured diameter distribution |
+| episcleral vessel count per mm of limbus | not found | 2.2 per mm, fitted to the measured diameter distribution |
 | episcleral and ACA velocities and pressures | not found | radial pressure gradient fitted to keep large-vessel speeds within the measured range |
 | conjunctival tortuosity in healthy eyes | not found (only diabetic sets) | meander, jitter and kinks fitted to the measured tortuosity, curvature and jitter |
 | illumination spectrum | not recorded | spectral weights fitted to the measured contrast by calibre |
 | visible-wavelength optics of human conjunctiva and sclera | not found | veil length and scattering blur fitted to measured contrast and sharpness |
 | depth of focus and focal wander | not recorded | defocus 0.06 µm/µm, focus 250 µm, wander ±25 µm |
 | fractal dimension and bifurcation angles | published for slit lamp and retina | not imposed; measured on the images |
-| geometric drawing details | no anatomical counterpart | episcleral and deep curvature (0.0003 and 0.0004 rad/µm, correlation 600 µm), side-branch angles (30-70°), depth undulation of centrelines (5-10 µm), mesh lattice jitter (0.3 of the spacing) and stretch (1.0-1.3), anastomosis lengths (60-350 µm), conjunctival depth by calibre (`network._conjunctival_depth`), the renderer's nine depth slabs and three sub-exposures, glint sizes (1.2-3 px); all set by eye against the recordings and the measured targets |
+| geometric drawing details | no anatomical counterpart | episcleral and deep curvature (0.0008 rad/µm, correlation 250 µm), side-branch angles (20-45° off the episcleral and deep vessels, 20-70° in the conjunctival trees), depth undulation of centrelines (5-10 µm), mesh lattice jitter (0.3 of the spacing) and stretch (1.0-1.3), anastomosis lengths (60-350 µm), conjunctival depth by calibre (`network._conjunctival_depth`), the renderer's nine depth slabs and three sub-exposures, glint sizes (1.2-3 px); all set by eye against the recordings and the measured targets |
 
 ## 10. Parameter table
 
@@ -785,15 +785,15 @@ this document.
 | murray_exponent_venous | 2.7 | within 1.95–3.14 [Luo2017, Murray1926a], §4 |
 | capillary_mesh_spacing | 285 µm | fitted to capillary length density [Kvernebo2022], §5 |
 | capillary_edge_drop | 0.18 | assumed (open polygons), §5 |
-| radial_bias | 0.25 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
-| arterial_trees_per_mm2, venous_trees_per_mm2 | 0.5, 0.55 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
-| av_pair_offset, av_pair_fraction | 25–70 µm, 0.2 | assumed, §4.1 and §9 |
+| radial_bias | 0.15 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
+| arterial_trees_per_mm2, venous_trees_per_mm2 | 0.4, 0.4 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
+| av_pair_offset, av_pair_fraction | 50–110 µm, 0.2 | assumed, §4.1 and §9 |
 | pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 20–60 µm, 1.3–1.5, 40 µm | fitted; fitted; fitted to the measured pair spacing; within [Yusufu2025]; fitted, §4.1 |
 | fine_jitter, large_jitter, bend_wiggle, kinks, width_variation, width_variation_large, wall_irregularity, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 0.03 / 0.5 per µm of calibre; 5 µm / 70 µm; off; CV 0.18 / 100 µm; CV 0.08 / 300 µm; 3 % / 14 µm; 5–25 % per vessel; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
 | anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
-| episcleral_vessels_per_mm | 3.0 | fitted to the measured diameters, §5 |
+| episcleral_vessels_per_mm | 2.2 | fitted to the measured diameters, §5 |
 | episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
-| deep_vessels_per_mm | 1.0 | assumed, §2.2 |
+| deep_vessels_per_mm | 0.6 | assumed, §2.2 |
 | communicating_per_mm2, communicating_angle_deg | 1.2, 20–60° | fitted / assumed, §2.4 and §9 |
 | perforator_per_mm2, perforator_angle_deg | 0.25, 30–70° | assumed, §2.4 and §9 |
 | wiggle | per kind | fitted to the measured tortuosity, §5 |
@@ -815,7 +815,7 @@ this document.
 | scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 16 µm | fitted to contrast and edge steepness, §7.2 |
 | psf_sigma_px | 0.9 | measured bound ≤ 1.2 px, §7.2 |
 | defocus_um_per_um, focus_depth_um, focus_wander_um | 0.06, 250 µm, 25 µm | fitted to the fine vessels' edge steepness; assumed; §7.2 and §7.6 |
-| illumination_p5_p95, background_dn | fitted to measured 0.73, 2650 DN | measured, §7.3 and §7.5 |
+| illumination_p5_p95, background_dn | 0.64 (fitted to the measured 0.73), 2650 DN | measured, §7.3 and §7.5 |
 | flicker_hz, flicker_amplitude, flicker_white | 8.77 Hz, 1.11 %, 0.12 % | measured (amplitude converted to linear light); white fitted, §7.3 |
 | texture_band_sd, texture_amplitudes | measured bands; fitted amplitudes | measured, §7.3 |
 | exposure_s, fps | 12.838 ms, 32.19 | measured (manifest), §7.4 |
