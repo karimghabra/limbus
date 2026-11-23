@@ -545,12 +545,15 @@ def _(mo):
 
     `synth.eye` grows the network of the whole anterior eye from where its blood comes from (the anterior ciliary
     arteries leaving the rectus insertions, the palpebral arcades through the fornices) and where it goes (the
-    episcleral and palpebral veins at the episcleral venous pressure), over the curved globe, with levels of detail
-    (docs §11): the coarse vessels of the whole globe are generated and solved once; the fine vessels are generated
-    per 1 mm tile from the tile's position and the coarse pressures at their roots; a camera at any pose assembles
-    what is in its field with every vessel's flow inherited from its own level, and draws discrete red cells at high
-    magnification or tubes of mean density at low magnification. Below: the coarse level seen from in front, with
-    the lid margins (the conjunctiva outside them is covered), a burst at one pose, and the coarse network in 3D.
+    episcleral and palpebral veins at the episcleral venous pressure), over the curved globe, as one network with
+    three levels of detail (docs §11): the coarse vessels of the globe; the conjunctival trees of every 1 mm tile,
+    rooted on them; and one capillary plexus over the whole conjunctiva, into which every tree opens. The flow is
+    solved once for the whole network, with the cardiac pulse damped from the arterioles to the veins. A camera at
+    any pose draws the vessels in its field with the flow of the eye's own edges, so zooming never changes a vessel
+    or its flow: discrete red cells at high magnification, tubes whose red-cell texture flows at low magnification.
+    Below: the eye seen from in front, a burst at one pose, the coarse network in 3D, the page that shows the whole
+    eye as the camera would see it, and two bursts of a patient asked to look in two directions (`synth.gaze`), with
+    the lids and the eye's fixational movements, placed on a map by `synth.mapping` from their frames alone.
     """)
     return
 
@@ -562,8 +565,10 @@ def _(OUTPUT_DIR, mo, plt, scene, show_figure, time):
 
     _start = time.perf_counter()
     whole_eye = _eye_module.Eye(seed=scene.seed)
-    print(f"Coarse network of the whole eye: {len(whole_eye.network.edges)} segments, solved in "
-          f"{time.perf_counter() - _start:.0f} s")
+    print(f"The whole eye: {len(whole_eye.network.edges)} segments at every level of detail, grown and solved in "
+          f"{time.perf_counter() - _start:.0f} s ({', '.join(f'{k} {v:.0f} s' for k, v in whole_eye.seconds.items())})")
+    for _level, _row in _eye_module.perfusion(whole_eye).items():
+        print(f"  {_level:18s} {_row['edges']:6d} segments, {100 * _row['perfused_length_share']:.1f} % of the length carries moving red cells")
     for _kind, _row in _eye_module.summary(whole_eye).items():
         print(f"  {_kind:28s} {_row}")
     _frame, _extent, _outlines = _eye_module.overview(whole_eye)
@@ -595,6 +600,47 @@ def _(OUTPUT_DIR, media, mo, scene, time, whole_eye):
                            f"the coarse level and {_view.seconds.get('tiles cached', 0)} tiles, in "
                            f"{time.perf_counter() - _start:.0f} s ({', '.join(f'{k} {v:.1f}' for k, v in _view.seconds.items())})"))
     mo.output.append(mo.image(_path.read_bytes()))
+    return
+
+
+@app.cell
+def _(OUTPUT_DIR, mo, scene, whole_eye):
+    from synth import eyeview as _eyeview
+
+    _page = _eyeview.write_viewer(whole_eye, OUTPUT_DIR / f"eye_seed{scene.seed}.html")
+    mo.md(f"The whole eye as the camera would see it, from the globe down to single capillaries, with its blood "
+          f"flowing: open `{_page}` in a browser ({_page.stat().st_size / 1e6:.0f} MB; it loads three.js from a CDN).")
+    return
+
+
+@app.cell
+def _(media, mo, np, plt, show_figure, whole_eye):
+    from dataclasses import replace as _replace
+
+    from synth import gaze as _gaze
+    from synth import mapping as _mapping
+
+    _small = _replace(whole_eye.scene, width_px=384, height_px=256, margin_um=250.0)
+    _lamp = _gaze.SlitLamp(whole_eye, aim=(40.0, 0.0), scene=_small, seed=1)
+    _mapper = _mapping.Mapper(whole_eye.globe, region=((80.0, 100.0), (1.5, 4.5)), um_per_px=4.0)
+    _targets = [_mapping.gaze_for(_lamp, _s, _c)[0] for _s, _c in ((3000.0, 88.0), (3000.0, 91.0))]
+    _figure, _axes = plt.subplots(1, 3, figsize=(15, 4))
+    _previous = None
+    for _k, _target in enumerate(_targets):
+        _burst = _lamp.record(_target, n_frames=8, previous=_previous)
+        _mapper.add(_burst.result.frames, _target, _lamp)
+        _axes[_k].imshow(media.od_to_gray(media.optical_density(_burst.result.frames[:1].astype("float32")))[0],
+                         cmap="gray")
+        _axes[_k].set_title(f"gaze ({_target[0]:.1f}°, {_target[1]:.1f}°): lids cover "
+                            f"{100 * _burst.occlusion.mean():.0f} %")
+        _previous = _target
+    _axes[2].imshow(np.nan_to_num(_mapper.layer("od")), cmap="gray_r")
+    _axes[2].set_title("the map from the two bursts")
+    for _a in _axes:
+        _a.axis("off")
+    show_figure(_figure, "gaze_and_mapping")
+    mo.md(f"Placed by registration from the frames alone: {[p['shift_um'].round(0).tolist() for p in _mapper.placements if p]} "
+          "µm of correction to the commanded gaze.")
     return
 
 

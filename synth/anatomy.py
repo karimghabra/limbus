@@ -73,9 +73,16 @@ class Anatomy:
     # variation of the calibre along a vessel (coefficient of variation, correlation µm)
     bend_wiggle: tuple = (5.0, 70.0)                 # gentle bends of 100-300 µm on vessels above capillary size (fitted to the curvature spectrum)
     fine_jitter: tuple = (0.3, 6.0)
+    large_jitter: tuple = (0.03, 0.5)                # extra jitter per µm of calibre: (amplitude, correlation) (fitted by eye, docs §5)
     kinks: tuple = (0.0, 2.0, 8.0)
-    taper: tuple = (0.15, 0.6)                       # smooth change of calibre along a segment, relative (fitted to the measured taper)
-    width_variation: tuple = (0.28, 150.0)           # CV 0.1-0.4 [Kiani1993], ~0.19 conjunctiva [Shahidi2010]
+    taper: tuple = (0.05, 0.25)                      # smooth change of calibre end to end along a whole vessel, relative
+    # the calibre along a vessel varies smoothly over the whole vessel, continuous through every junction it passes:
+    # (coefficient of variation, correlation µm) for small (<= 12 µm) and large (>= 30 µm) vessels, interpolated
+    # between; CV about 0.1 above 15 µm and up to 0.4 below [Kiani1993], ~0.19 in 9-24 µm conjunctival vessels
+    # [Shahidi2010]; correlation lengths fitted to the real bursts (docs §5)
+    width_variation: tuple = (0.18, 100.0)
+    width_variation_large: tuple = (0.08, 300.0)
+    wall_irregularity: tuple = (0.03, 14.0)          # fine relative unevenness of the lumen (fitted by eye, docs §5)
     # companion venules beside arterioles (docs §4)
     pair_fraction: float = 1.0                       # share of the larger arterioles that have one (fitted to the measured paired share, docs §4)
     pair_min_diameter: float = 25.0                  # µm: only arterioles reaching this calibre are accompanied
@@ -111,7 +118,16 @@ class Physiology:
     capillary_boundary_pressure: float = 15.0        # 13-16 mmHg [Williams1990, Hahn2004]; unused while the mesh is closed
     radial_pressure_gradient_mmhg_per_mm: float = 0.15   # along episcleral and deep vessels (fitted, docs §6.2)
     heart_rate_hz: float = 1.1                       # cardiac period 909 ± 86 ms [Neriyanuri2023]
-    arterial_pulsatility: float = 0.22               # relative pulse of the arterial boundary pressure (docs §6.3)
+    arterial_pulsatility: float = 0.12               # half the pulse pressure over the mean at the arterial inlets (fitted, docs §6.3)
+    # the shape of the arterial pressure wave over one cycle: a systolic peak and a dicrotic wave, as (time, width,
+    # height) of two Gaussian waves in fractions of the period (a generic arterial wave, docs §6.3)
+    pulse_shape: tuple = ((0.17, 0.07, 1.0), (0.42, 0.10, 0.32))
+    pulse_harmonics: int = 4
+    # volume distensibility of the vessels, 1/mmHg (relative change of volume per mmHg), on the arterial side,
+    # in the capillaries and on the venous side: it damps the pulse and delays it downstream (fitted to the
+    # arteriolar pulsatility [Koutsiaris2010], the capillary pulse pressure [Zweifach1974] and the far smaller
+    # venous pulsatility [Puyo2019]; veins several times more distensible than arteries, docs §6.3)
+    distensibility_per_mmhg: tuple = (0.002, 0.03, 0.3)
     cell_free_layer_um: tuple = (0.8, 3.1)           # 0.8 µm at 10 µm to 3.1 µm at 50 µm [Kim2007]
     profile_bluntness: float = 4.0                   # v_centre / v_mean = (K + 2) / K = 1.5 [Tangelder1986]
     aggregation_cv: float = 0.42                     # inter-cell distance 20.5 ± 8.6 µm [Ding2025]

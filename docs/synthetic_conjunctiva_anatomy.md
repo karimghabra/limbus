@@ -281,11 +281,20 @@ In the generator:
   and capillaries get neither jitter nor bends, so the mesh is a soft polygon of slightly bowed sides. The settings are fitted so that the straightness, tortuosity and curvature
   distributions, the curvature spectrum and the centreline jitter measured on the real bursts are reproduced
   through the same estimator, and by eye against the real frames (section 8).
-- Each segment's calibre varies smoothly along it (`width_variation`: coefficient of variation 0.28, correlation
-  150 µm) on a linear taper of 15–60 % end to end (`taper`), fitted so that the width variation and taper measured
-  through the estimator (which smooths the width) match the real bursts; the measured variation, 0.14, is inside
-  the cited 0.1–0.4 [Kiani1993] and close to the conjunctival 0.19 [Shahidi2010]. The red cells follow it: they sit within the local lumen and speed up as
-  the square of its narrowing, so the flux is the same all along (the flow model uses the nominal diameter).
+- The calibre varies along each named vessel as one smooth profile, continuous through every junction it passes
+  (`network.assign_calibres`): the nominal diameters of its successive segments are joined by interpolation, so a
+  vessel narrows gradually past each branch instead of in a step; a gentle taper of 5–25 % end to end (`taper`);
+  a smooth random variation whose amplitude and wavelength depend on the calibre - coefficient of variation 0.18
+  over 100 µm up to 12 µm (`width_variation`), 0.08 over 300 µm from 30 µm (`width_variation_large`),
+  log-interpolated between - and, on vessels above capillary size, a fine unevenness of the lumen (3 % over 14 µm,
+  `wall_irregularity`). Measured along whole vessels the variation is about 0.08 above 15 µm, inside the cited
+  0.1–0.4 [Kiani1993] range at its low end and below the conjunctival 0.19 [Shahidi2010], which includes
+  measurement noise. An earlier version drew the profile per segment, normalised each segment to its own mean and
+  tapered each by 15–60 %, which made the widest vessels look like chains of wedges, so the large-vessel setting
+  is deliberately low and long. The course of every vessel also carries a lateral jitter that grows with its
+  calibre (`large_jitter`: 0.03 µm per µm of calibre over 0.5 µm per µm, on top of `fine_jitter`), so wide vessels
+  are not perfectly smooth. The red cells follow the local lumen: they sit within it and speed up as the square of
+  its narrowing, so the flux is the same all along (the flow model uses the nominal diameter).
 
 ## 6. Haemodynamics
 
@@ -346,11 +355,22 @@ measured by erythrocyte-mediated angiography [Kim2024]; the anatomy check holds 
   point (damped, typically 50–300 iterations to a change below 10⁻⁵).
 - Measured capillary haematocrits: tube haematocrit 10–18 % in hamster muscle [Klitzman1979]; a length-fraction
   of 0.41 in human retinal capillaries [Neriyanuri2023].
-- The cardiac pulse: heart rate 1.1 Hz (cardiac period 909 ± 86 ms [Neriyanuri2023]). With the viscosities
-  frozen at their mean values the system is linear, so Q(t) = Q_arterial (1 + m sin 2πft) + Q_rest, where
-  Q_arterial is the part driven by the arterial boundary pressures. m = 0.22 (fitted) gives a pulsatility index of
-  about 0.4–0.6 in 6–12 µm arterioles, against the published 0.8 (resistive index 53 %) [Koutsiaris2010];
-  capillary pulse pressure is 1.5–4 mmHg [Zweifach1974, Hahn2004].
+- The cardiac pulse: heart rate 1.1 Hz (cardiac period 909 ± 86 ms [Neriyanuri2023]). The arterial inlets carry
+  a pressure wave of a generic arterial shape (a systolic peak at 17 % of the period and a dicrotic wave at 42 %,
+  `pulse_shape`, expanded in four harmonics) whose half pulse pressure is 12 % of the mean (`arterial_pulsatility`,
+  fitted). The vessels are distensible: every node stores a volume C dp/dt, C being half the volume of the vessels
+  meeting there times their volume distensibility - 0.002 per mmHg on the arterial side, 0.03 in the capillaries
+  and 0.3 on the venous side (`distensibility_per_mmhg`, fitted; veins are far more distensible than arteries). With
+  the viscosities frozen at their mean values the system is linear, and each harmonic k solves
+  Σ_j g_ij (P_i − P_j) + i k ω C_i P_i = 0 with the inlet wave at the arterial boundaries. The pulse is therefore
+  strongest in the arterioles, damped and delayed through the capillaries, and small in the venules; volume is
+  conserved at every node with the stored volume included, and exactly over the cycle (tested). Six default scenes
+  give a pulsatility index of 0.5–1.3 in 6–12 µm arterioles against the published 0.8 (resistive index 53 %)
+  [Koutsiaris2010], 0.04–0.10 in venules of 15 µm and more (venous flow pulses far less than arterial: retinal
+  veins against arteries by laser Doppler holography [Puyo2019]), and a capillary pulse pressure of 0.9–3.9 mmHg
+  against 1.5–4 mmHg [Zweifach1974, Hahn2004]. The venous peak follows the arteriolar one by about a tenth of the
+  period. An earlier version modulated only the arterially driven part of the flow, in phase everywhere, which
+  pulsed the venules as much as the arterioles.
 
 ### 6.4 Red cells
 
@@ -558,14 +578,19 @@ Ophthalmic artery systolic pressure is 0.68 ± 0.04 times brachial [StraussKedra
 [daSilvaKrieglstein1980]); mean central retinal artery pressure is about 0.73 of mean arterial pressure seated
 [Kostic2021]; intraocular pressure about 14 mmHg [Pakravan2017, Kawase2008]; episcleral venous pressure 7.6 ± 1.3
 [Zeimer1983] to 9.1–9.5 mmHg [Selbach2005b]. No anterior ciliary artery pressure was found. The model sets the
-inlets of the anterior ciliary arteries at 65 mmHg (0.7 of a mean brachial pressure of 93 mmHg), the palpebral
-inlets of the posterior conjunctival arteries at 60 mmHg (assumed), and every venous outlet at 9 mmHg; the coarse
-network's flows and velocities then follow from the anatomy. The fine vessels each coarse artery feeds are lumped
-into one equivalent resistance every 0.5 mm, joining it to the nearest conjunctival vein, and every trunk tip
-drains through such a bed of its own (a tip past its trunk's last bed would carry no flow while tiles root fine
-trees on it) (`bed_conductance_scale`,
-fitted so that the coarse conjunctival vessels carry the cited velocities), and episcleral arteries open into
-episcleral veins through 0.75 arteriovenous anastomoses per mm² (§2.4). Result (seed 0): conjunctival arteries
+inlets of the anterior ciliary arteries at 55 mmHg (0.6 of a mean brachial pressure of 93 mmHg: they lie downstream
+of the ophthalmic artery through the muscular arteries; fitted so that the conjunctival red-cell velocities fall
+within the cited ranges once the fine vessels and the capillary plexus carry the flow - at 65 mmHg, 0.7 of
+brachial, the arterioles ran at about twice the cited speed), the palpebral inlets of the posterior conjunctival
+arteries at 50 mmHg (assumed), and every venous outlet at 9 mmHg; the network's flows and velocities then follow
+from the anatomy. Each anterior conjunctival artery leaves the circle at the calibre of these arteries (25–40 µm),
+and the conjunctival trunks are held below 40 µm (arteries) and 48 µm (veins), the widest sharp conjunctival
+vessels of the recordings (`coarse_artery_max_um`, `coarse_vein_max_um`; reported ranges reach 61 and 75 µm
+[Khansari2017], but wider trunks at conjunctival depth rendered far darker than any real vessel). Episcleral arteries open into episcleral veins through 0.75 arteriovenous anastomoses per mm² (§2.4). Where
+the fine level is grown (the whole conjunctiva by default, §11.9) the conjunctival trunks drain through the fine
+trees and the capillary plexus; elsewhere the fine vessels each coarse artery feeds are lumped into one equivalent
+resistance every 0.5 mm, joining it to the nearest conjunctival vein, and every trunk tip drains through such a bed
+of its own (`bed_conductance_scale`, fitted so that the coarse conjunctival vessels carry the cited velocities). Result (seed 0): conjunctival arteries
 0.3–0.4 mm/s and veins 0.2–0.6 mm/s (cited §6.5), episcleral vein flow 0.15–0.37 µl/min against 0.40 ± 0.22
 µl/min [Kim2024].
 
@@ -592,29 +617,89 @@ superior and inferior, interpolated around the clock).
 
 ### 11.9 Levels of detail
 
-- **Coarse** (whole globe, once per eye, about 12 s and 0.5 GB): §11.3–11.6, about 1.8 m of conjunctival and 0.4 m of episcleral vessel in some 5 000 segments, solved as one network.
-- **Fine** (per tile of about 1 mm × 1 mm on the globe, on demand): conjunctival arteriolar and venular trees, the
-  capillary mesh and anastomoses (§4–5), grown from roots placed along the coarse conjunctival vessels that cross
-  the tile (leaving them at 30–85°) and, as at the patch level, from communicating vessels rising obliquely from
-  the episcleral vessels beneath it (`communicating_per_mm2`, §2.4; at least one of each side of the circulation
-  wherever such a vessel passes beneath, so every tile carries flow), from a seed made of the eye's seed and the
-  tile's position only, with the tile's flow solved from the coarse pressures at its roots; a tile generated again
-  is identical (tested). Branches that dangle (end in a node that is no junction) carry exactly no flow.
-- **The view** (the camera's field and a margin): the coarse pieces and tiles in it, assembled with the flow of
-  every piece inherited from its own level, so a vessel's path and flow do not depend on the magnification or the
-  extent of the view (tested: the same spot at 3.26 and 6.5 µm/px). Blood that leaves a drawn vessel through a
-  vessel the view does not draw (a lumped bed, a region without tiles) takes its red cells with it, and where
-  blood joins through one, its red cells enter as at an inflow boundary (`synth.cells`): at every junction the
-  red-cell flux of the drawn vessels then matches their flow solution, so cells neither pile up nor thin out in
-  blocks along a vessel. A vessel without red-cell flux never takes cells (they would stand still in it).
+The eye is one network, generated and solved once from its seed; the levels of detail are selections of it, so a
+vessel has the same path and the same flow at every magnification and in every view.
+
+- **Coarse** (§11.3–11.6): the anterior ciliary arteries, the episcleral circle and veins, the conjunctival trunks
+  and the limbal rings, about 8 500 segments.
+- **Fine trees** (per tile of about 1 mm × 1 mm on the globe): the conjunctival arteriolar and venular trees and
+  their anastomoses (§4–5), grown from roots placed along the coarse conjunctival vessels that cross the tile
+  (leaving them at 30–85°) and, as at the patch level, from communicating vessels rising obliquely from the
+  episcleral vessels beneath it (`communicating_per_mm2`, §2.4), from a seed made of the eye's seed and the tile's
+  position only; about 18 000 segments over the whole conjunctiva.
+- **Capillary plexus**: one mesh over the whole conjunctiva, from the limbus to the fornices - the Voronoi
+  tessellation, on the sphere, of a jittered lattice of sites laid tile by tile (§5) - into which every terminal
+  arteriole and post-capillary venule opens (one or two links each), and every coarse trunk that ends there (three
+  links); about 31 000 segments. Earlier versions grew a separate capillary mesh inside each tile, closed at the
+  tile's edge, and solved each tile on its own from the coarse pressures at its roots: the mesh shrank away from
+  every tile border when its dangling ridges were pruned, which drew the capillaries as isolated clusters with
+  empty gutters between them (a construction artefact, not anatomy), and trees hanging from a single root carried
+  no flow (about a fifth of the fine vessel length). The coarse level's lumped beds (§11.6) now stand only for the
+  part of the conjunctiva without fine vessels (`Eye(fine_region=...)` grows the fine level over part of the eye,
+  for tests); over the whole eye there are none.
+- **The flow** is solved once over the whole network (about 58 000 segments) from the true inlets and outlets
+  (§11.6); the haematocrit iteration stops after 100 rounds, when the flows of all but a few near-stagnant loops have
+  settled (they differ from 400 rounds by 0.04 % median, 0.7 % at the 99th percentile), and the final pass conserves
+  flow and red cells exactly. Seed 0: 98.7 % of the coarse, 98.8 % of the fine-tree and 98.2 % of the capillary
+  length carries red cells moving at 5 µm/s or more; the rest are dead ends and plasma-only capillaries (phase
+  separation, §6.3). Generating and solving a whole eye takes about 2 minutes and 0.4 GB.
+- **The view** (the camera's field and a margin): every edge of the eye that falls in it, cut at the field's edge,
+  each piece carrying the flow, haematocrit and pulse of the edge it came from (tested at 1, 3.26, 6.5 and 12 µm/px:
+  every piece's flow equals its edge's, and a view draws every edge in its field). At low magnification only the
+  coarse level may be drawn; blood that leaves a drawn vessel through one the view does not draw takes its red
+  cells with it, and where blood joins through one, its red cells enter as at an inflow boundary (`synth.cells`), so
+  cells neither pile up nor thin out in blocks along a vessel. A vessel without red-cell flux never takes cells.
 - **Rendering by magnification**: below `tube_um_per_px` (6 µm/px) every red cell is transported and drawn; at
-  coarser magnification each vessel is a tube carrying its mean red-cell density across its cross-section (no
-  flicker), and tiles are left out above 8 µm/px. Measured on this machine: a 2.5 × 1.7 mm view at 3.26 µm/px with
-  39 tiles assembles in about 13 s and renders at about 1.5 s per frame (0.5 GB); a 7.7 × 5 mm view at 12 µm/px in
-  about 1 s per frame; the whole visible eye at 20 µm/px in 6 s (0.9 GB).
+  coarser magnification each vessel is a tube of its red-cell density, modulated along its length by the axial
+  structure of the red cells (aggregates and plasma gaps) carried downstream at the vessel's pulsatile red-cell
+  speed, so flow shows at every magnification at which that structure spans a pixel.
+- **Interactive view**: `synth.eyeview.write_viewer` writes a page that draws the whole eye in the browser as the
+  camera sees it (Beer-Lambert absorption of every vessel over the scleral texture, its calibre along its length,
+  the scattering veil and blur by depth, the red cells as a texture moving at each vessel's pulsatile speed), at
+  any magnification from the whole eye to single capillaries.
 - **Pose**: the camera's position on the globe (`Pose`: s and clock angle), magnification (`um_per_px`), field size,
   focus (`focus_depth_um`) and tilt (`camera_tilt_deg`) are explicit parameters, so the same eye can be recorded
   from any position.
+
+## 12. The patient, the eye in the head, and mapping
+
+`synth.gaze` and `synth.mapping` simulate imaging a patient's eye the way the vasculature would be mapped in the
+clinic: the patient rests on a chin rest, the camera is fixed, and the patient is asked to look at a sequence of
+targets so that different parts of the conjunctiva come under the camera.
+
+- **A patient from a seed** (`patient`): the globe radius (12.2 ± 0.6 mm, within 11.2–13.1 mm [Jesus2017,
+  Choi2014]), limbal radius (white to white 11.80 ± 0.42 mm [GaneshLin2023]), the palpebral fissure (25.6 mm wide,
+  lid margins about 4.1 mm above and 5.9 mm below the corneal centre [Rana2023], spread assumed), the heart rate
+  (cardiac period 909 ± 86 ms [Neriyanuri2023]) and the discharge haematocrit (0.40 ± 0.025, assumed) are drawn from
+  the seed, and the whole network is grown from the same seed: the same seed is always the same eye (tested).
+- **Gaze**: the eye turns about the globe's centre (which stands for its centre of rotation) by Listing's law - from
+  the primary position about the axis perpendicular to the primary and the new direction - so a gaze carries no
+  torsion of its own. The camera's axis meets the globe at a fixed head direction (`SlitLamp.aim`); for a gaze, the
+  field's centre on the eye and the roll of the image about it follow from the rotation.
+- **Fixational movements** (in every frame of a burst): drift as a random walk of mean speed 52′/s (head fixed
+  [Cherici2012]); microsaccades at 1.3 per second of 20′ ± 7′ [Cherici2012] (1–2 per second [MartinezConde2004]),
+  directed back towards the fixation target (they correct the drift); the landing point of each fixation scattered
+  by 0.25° about its target (assumed); the head on the chin rest moving as a mean-reverting random walk with an SD of
+  176 µm and a 2 s correlation time (SD over 5 s on a chin rest [Felder2016]; time assumed). 1′ of rotation is about
+  3.5 µm at the conjunctiva, so a microsaccade moves the image by some 20 pixels at 3.26 µm/px.
+- **Saccades** between targets take the main-sequence duration, 2.7 ms per degree [Baloh1975] plus 22 ms (assumed),
+  and the recording starts once the eye has settled (0.2 s, assumed).
+- **The lids**: the upper lid follows the eye's vertical rotation, one to one downwards and somewhat less upwards
+  [BeckerFuchs1988] (0.8, assumed), the lower lid less (0.3, assumed); the fissure keeps its shape across the face.
+  Where a lid covers the field the camera sees skin (brighter than sclera, with its own texture) and, at its edge,
+  the dark lid margin and lashes over about 0.6 mm (assumed). Blinks come at 14 per minute (primary gaze 8.0–21.0
+  per minute [Doughty2001]) and close the lids over 0.3 s (assumed).
+- **A burst** (`SlitLamp.record`): the view assembled at the field's pose in frame 0, the frames rendered with the
+  image motion that the fixational movements and the head produce (`camera.Motion`), the lids drawn over the frames
+  they cover, and the cardiac phase carried on from burst to burst; its truth is every frame's gaze, field pose,
+  lid cover and blink state, on top of the usual truth of the burst.
+- **Mapping** (`synth.mapping`, a proof of concept): `plan` turns a region of the conjunctiva into fixation targets
+  whose fields tile it; `Mapper.add` builds the map from each burst's frames, the commanded gaze and the camera's
+  fixed geometry only (never the truth): it drops frames a lid or blink covers, registers the rest by phase
+  correlation, averages them into optical density, measures vesselness and red-cell flicker, predicts the field's
+  place on the globe from the commanded gaze, refines it by registering against the map built so far, and adds the
+  burst into a chart of the globe's surface. `Mapper.evaluate` scores the map against the eye's network: coverage
+  of the region, the error of every burst's placement, and the precision and recall of the vessel map.
 
 ## 8. Targets measured on the real bursts
 
@@ -678,7 +763,7 @@ this document.
 | arterial_trees_per_mm2, venous_trees_per_mm2 | 0.5, 0.55 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
 | av_pair_offset, av_pair_fraction | 25–70 µm, 0.2 | assumed, §4.1 and §9 |
 | pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 20–60 µm, 1.3–1.5, 40 µm | fitted; fitted; fitted to the measured pair spacing; within [Yusufu2025]; fitted, §4.1 |
-| fine_jitter, bend_wiggle, kinks, width_variation, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 5 µm / 70 µm; off; CV 0.28 / 150 µm; 15–60 %; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
+| fine_jitter, large_jitter, bend_wiggle, kinks, width_variation, width_variation_large, wall_irregularity, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 0.03 / 0.5 per µm of calibre; 5 µm / 70 µm; off; CV 0.18 / 100 µm; CV 0.08 / 300 µm; 3 % / 14 µm; 5–25 % per vessel; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
 | anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
 | episcleral_vessels_per_mm | 3.0 | fitted to the measured diameters, §5 |
 | episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
@@ -694,7 +779,7 @@ this document.
 | venous_pressure_at_10um, _at_100um | 14, 8 mmHg | [Williams1990, Hahn2004, Zeimer1983, Sit2011, Arora2017], §6.2 |
 | capillary_boundary_pressure | 15 mmHg | used only if a capillary leaves the domain, which the closed mesh prevents, §6.2 |
 | radial_pressure_gradient_mmhg_per_mm | 0.15 | direction [Meyer1988], value fitted, §6.2 |
-| heart_rate_hz, arterial_pulsatility | 1.1 Hz, 0.22 | [Neriyanuri2023]; fitted to [Koutsiaris2010], §6.3 |
+| heart_rate_hz, arterial_pulsatility, pulse_shape, distensibility_per_mmhg | 1.1 Hz, 0.12, systolic + dicrotic wave, 0.002 / 0.03 / 0.3 per mmHg | [Neriyanuri2023]; fitted to [Koutsiaris2010, Zweifach1974, Hahn2004, Puyo2019], §6.3 |
 | cell_free_layer_um | 0.8–3.1 µm | [Kim2007], §6.4 |
 | profile_bluntness | 4 | [Tangelder1986], §6.4 |
 | aggregation_cv | 0.42 | [Ding2025], §6.4 |
@@ -726,6 +811,8 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Asanad2021] Asanad S, Park A, Pottenburgh J, et al. Erythrocyte-mediated angiography: quantifying absolute episcleral blood flow in humans. Ophthalmology 2021;128:799-801. doi:10.1016/j.ophtha.2020.09.010.
 - [AshtonSmith1953] Ashton N, Smith R. Anatomical study of Schlemm's canal and aqueous veins by means of neoprene casts. III. Arterial relations of Schlemm's canal. Br J Ophthalmol 1953;37:577-586. doi:10.1136/bjo.37.10.577.
 - [Atchison2005] Atchison DA, Pritchard N, Schmid KL, et al. Shape of the retinal surface in emmetropia and myopia. Invest Ophthalmol Vis Sci 2005;46:2698-2707. doi:10.1167/iovs.04-1506.
+- [Baloh1975] Baloh RW, Sills AW, Kumley WE, Honrubia V. Quantitative measurement of saccade amplitude, duration, and velocity. Neurology 1975;25:1065-1070. doi:10.1212/wnl.25.11.1065.
+- [BeckerFuchs1988] Becker W, Fuchs AF. Lid-eye coordination during vertical gaze changes in man and monkey. J Neurophysiol 1988;60:1227-1252. doi:10.1152/jn.1988.60.4.1227.
 - [Bizheva2011] Bizheva K, Hutchings N, Sorbara L, Moayed AA, Simpson T. In vivo volumetric imaging of the human corneo-scleral limbus with spectral domain OCT. Biomed Opt Express 2011;2:1794-1802. doi:10.1364/BOE.2.001794.
 - [Bosschaart2014] Bosschaart N, Edelman GJ, Aalders MC, van Leeuwen TG, Faber DJ. A literature review and novel theoretical approach on the optical properties of whole blood. Lasers Med Sci 2014;29:453-79. doi:10.1007/s10103-013-1446-7.
 - [Bulut2024] Bulut O, Kaplan A, Furundaoturan O, Kose T, Barut Selver O. Identification of normal fornix depth dataset generated with a validated fornix meter in healthy Turkish population. Ocul Immunol Inflamm 2024;32:713-717. doi:10.1080/09273948.2023.2199055.
@@ -735,6 +822,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Choi2014] Choi HJ, Lee SM, Lee JY, et al. Measurement of anterior scleral curvature using anterior segment OCT. Optom Vis Sci 2014;91:793-802. doi:10.1097/OPX.0000000000000298.
 - [daSilvaKrieglstein1980] da Silva FA, Krieglstein GK. [Measurement of ophthalmic blood pressure with the Mikuni dynamometer]. Klin Monbl Augenheilkd 1980;176:764-772. doi:10.1055/s-2008-1057550.
 - [Ding2025] Ding Y, Metha A, Bedggood P. Red Blood Cell Distribution and Volume Changes at Capillary Junctions in the Living Human Retina. Invest Ophthalmol Vis Sci 2025;66(14):65. doi:10.1167/iovs.66.14.65.
+- [Doughty2001] Doughty MJ. Consideration of three types of spontaneous eyeblink activity in normal humans: during reading and video display terminal use, in primary gaze, and while in conversation. Optom Vis Sci 2001;78:712-725. doi:10.1097/00006324-200110000-00011.
 - [Fedosov2010] Fedosov DA, Caswell B, Popel AS, Karniadakis GE. Blood flow and cell-free layer in microvessels. Microcirculation 2010;17:615-28. doi:10.1111/j.1549-8719.2010.00056.x.
 - [Felder2016] Felder AE, Mercurio C, Wanek J, Ansari R, Shahidi M. Automated Real-Time Conjunctival Microvasculature Image Stabilization. IEEE Trans Med Imaging 2016;35:1670-5. doi:10.1109/TMI.2016.2522918.
 - [FengSimpson2008] Feng Y, Simpson TL. Corneal, limbal, and conjunctival epithelial thickness from optical coherence tomography. Optom Vis Sci 2008;85:E880-E883. doi:10.1097/OPX.0b013e318185272d.
@@ -781,6 +869,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Liu2019] Liu Z, Wang H, Jiang H, et al. Quantitative analysis of conjunctival microvasculature imaged using optical coherence tomography angiography. Eye Vis (Lond) 2019;6:5. doi:10.1186/s40662-019-0130-9.
 - [Luo2017] Luo T, Gast TJ, Vermeer TJ, Burns SA. Retinal vascular branching in healthy and diabetic subjects. Invest Ophthalmol Vis Sci 2017;58:2685-2694. doi:10.1167/iovs.17-21653.
 - [MacKenzie2016] MacKenzie LE, Choudhary TR, McNaught AI, Harvey AR. In vivo oximetry of human bulbar conjunctival and episcleral microvasculature using snapshot multispectral imaging. Exp Eye Res 2016;149:48-58. doi:10.1016/j.exer.2016.06.008.
+- [MartinezConde2004] Martinez-Conde S, Macknik SL, Hubel DH. The role of fixational eye movements in visual perception. Nat Rev Neurosci 2004;5:229-240. doi:10.1038/nrn1348.
 - [MayrovitzRoy1983] Mayrovitz HN, Roy J. Microvascular blood flow: evidence indicating a cubic dependence on arteriolar diameter. Am J Physiol 1983;245:H1031-H1038. doi:10.1152/ajpheart.1983.245.6.H1031.
 - [Meyer1988] Meyer PA. Patterns of blood flow in episcleral vessels studied by low-dose fluorescein videoangiography. Eye (Lond) 1988;2(Pt 5):533-546. doi:10.1038/eye.1988.104.
 - [MeyerWatson1987] Meyer PA, Watson PG. Low dose fluorescein angiography of the conjunctiva and episclera. Br J Ophthalmol 1987;71:2-10. doi:10.1136/bjo.71.1.2.
@@ -802,6 +891,7 @@ separation parameters of PriesSecomb2005 as reproduced by later network studies.
 - [Pries1992] Pries AR, Neuhaus D, Gaehtgens P. Blood viscosity in tube flow: dependence on diameter and hematocrit. Am J Physiol 1992;263:H1770-8. doi:10.1152/ajpheart.1992.263.6.H1770.
 - [Pries1994] Pries AR, Secomb TW, Gessner T, Sperandio MB, Gross JF, et al. Resistance to blood flow in microvessels in vivo. Circ Res 1994;75:904-15. doi:10.1161/01.res.75.5.904.
 - [PriesSecomb2005] Pries AR, Secomb TW. Microvascular blood viscosity in vivo and the endothelial surface layer. Am J Physiol Heart Circ Physiol 2005;289:H2657-64. doi:10.1152/ajpheart.00297.2005.
+- [Puyo2019] Puyo L, Paques M, Fink M, Sahel JA, Atlan M. Waveform analysis of human retinal and choroidal blood flow with laser Doppler holography. Biomed Opt Express 2019;10:4942-4963. doi:10.1364/BOE.10.004942.
 - [Rana2023] Rana K, Beecher MB, Caltabiano C, Zhao Y, Verjans J, Selva D. Normal periocular anthropometric measurements in an Australian population. Int Ophthalmol 2023;43:2695-2701. doi:10.1007/s10792-023-02669-3.
 - [Ritzmann2018] Ritzmann M, Caroline PJ, Börret R, Korszen E. An analysis of anterior scleral shape and its role in the design and fitting of scleral contact lenses. Cont Lens Anterior Eye 2018;41:205-213. doi:10.1016/j.clae.2017.10.010.
 - [RohenFunk1994] Rohen JW, Funk RH. Functional morphology of the episcleral vasculature in rabbits and dogs: presence of arteriovenous anastomoses. J Glaucoma 1994;3:51-57. doi:10.1097/00061198-199400310-00010.

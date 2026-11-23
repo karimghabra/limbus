@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+  :root { --bg:#0e1114; --panel:rgba(14,17,20,.86); --fg:#e8ecef; --muted:#9aa6b0; --accent:#d9534f; --line:#2b333b; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg); font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif; overflow:hidden; }
+  #c { display:block; width:100vw; height:100vh; touch-action:none; }
+  .panel { position:absolute; background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }
+  #ui { top:12px; left:12px; width:300px; max-height:calc(100vh - 24px); overflow:auto; }
+  #ui h1 { font-size:15px; margin:0 0 4px; }
+  #ui p { margin:4px 0 8px; color:var(--muted); }
+  #ui label { display:flex; justify-content:space-between; gap:8px; align-items:center; margin:6px 0; }
+  #ui input[type=range] { width:130px; }
+  .btns { display:flex; flex-wrap:wrap; gap:4px; margin:6px 0; }
+  button { background:#1b2229; color:var(--fg); border:1px solid #3a4651; border-radius:5px; padding:4px 8px; cursor:pointer; font:inherit; }
+  button:hover { border-color:var(--accent); }
+  button.on { background:#3a1f22; border-color:var(--accent); }
+  #hud { bottom:12px; left:12px; font-variant-numeric:tabular-nums; }
+  #pulse { bottom:12px; right:12px; padding:6px 8px; }
+  #pulse canvas { display:block; }
+  #scalebar { position:absolute; bottom:110px; right:24px; color:#fff; text-shadow:0 0 3px #000; font-variant-numeric:tabular-nums; text-align:center; }
+  #scalebar div { height:4px; background:#fff; box-shadow:0 0 3px #000; margin-bottom:2px; }
+  @media (max-width:700px) { #ui { width:calc(100vw - 48px); max-height:42vh; } #pulse { display:none; } }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui" class="panel">
+  <h1>__TITLE__</h1>
+  <p>Every vessel of this eye, as the slit-lamp camera sees it: each absorbs light by its calibre, haematocrit and depth over the scleral texture, and its red cells move at their simulated speed, pulsing with the heart. All levels of detail are one solved network; zooming in reveals the finer vessels as a finer camera would. Drag to rotate, scroll to zoom toward the cursor, right-drag to pan.</p>
+  <label>time <span><input id="ts" type="range" min="-3" max="1" step="0.25" value="0"> <b id="tsv">1x</b></span></label>
+  <label>depth exaggeration <span><input id="dz" type="range" min="1" max="8" step="0.5" value="1"> <b id="dzv">1x</b></span></label>
+  <div class="btns"><button id="pause">pause</button><button id="colour">artery / vein colour</button><button id="lids" class="on">lids</button></div>
+  <p style="margin-top:10px">Go to:</p>
+  <div class="btns" id="goto"></div>
+</div>
+<div id="hud" class="panel"></div>
+<div id="pulse" class="panel"><canvas id="pc" width="220" height="70"></canvas></div>
+<div id="scalebar"><div id="sbbar"></div><span id="sbtext"></span></div>
+<script type="application/json" id="eyedata">__DATA__</script>
+<script type="importmap">__IMPORTMAP__</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/OrbitControls.js';
+
+const D = JSON.parse(document.getElementById('eyedata').textContent);
+function dec(b64, T) { const s = atob(b64); const u = new Uint8Array(s.length); for (let i=0;i<s.length;i++) u[i]=s.charCodeAt(i); return new T(u.buffer); }
+const P = dec(D.points, Float32Array), DIA = dec(D.diameter, Uint16Array), FIRST = dec(D.first, Int32Array);
+const KIND = dec(D.kind, Uint8Array), LEVEL = dec(D.level, Uint8Array), HT = dec(D.ht, Uint8Array), SPEED = dec(D.speed, Float32Array);
+const K = D.harmonics, PULSE = K ? dec(D.pulse, Int8Array) : null;
+const E = D.n_edges, R = D.R;
+const W_TEX = 1024, H_TEX = Math.ceil(E / W_TEX);
+const PERIOD = 4096.0;            // µm: the red-cell texture repeats along a vessel every 4 mm
+
+// ---------------------------------------------------------------- geometry: one ribbon per vessel
+const nP = D.n_points;
+const pos = new Float32Array(nP * 2 * 3), tan = new Float32Array(nP * 2 * 3);
+const aS = new Float32Array(nP * 2), aD = new Float32Array(nP * 2), aSide = new Float32Array(nP * 2), aEdge = new Float32Array(nP * 2);
+let nIdx = 0; for (let e=0; e<E; e++) nIdx += 6 * (FIRST[e+1] - FIRST[e] - 1);
+const index = new Uint32Array(nIdx); let ii = 0;
+for (let e=0; e<E; e++) {
+  const a = FIRST[e], b = FIRST[e+1]; let s = 0;
+  for (let k=a; k<b; k++) {
+    if (k > a) s += 1000 * Math.hypot(P[3*k]-P[3*k-3], P[3*k+1]-P[3*k-2], P[3*k+2]-P[3*k-1]);
+    const k0 = Math.max(k-1, a), k1 = Math.min(k+1, b-1);
+    let tx = P[3*k1]-P[3*k0], ty = P[3*k1+1]-P[3*k0+1], tz = P[3*k1+2]-P[3*k0+2]; const tl = Math.hypot(tx,ty,tz) || 1;
+    tx/=tl; ty/=tl; tz/=tl;
+    for (let side=0; side<2; side++) {
+      const v = 2*k + side;
+      pos[3*v] = P[3*k]; pos[3*v+1] = P[3*k+1]; pos[3*v+2] = P[3*k+2];
+      tan[3*v] = tx; tan[3*v+1] = ty; tan[3*v+2] = tz;
+      aS[v] = s; aD[v] = DIA[k] * 0.25; aSide[v] = side ? 1 : -1; aEdge[v] = e;
+    }
+    if (k < b-1) { const v = 2*k; index[ii++]=v; index[ii++]=v+1; index[ii++]=v+2; index[ii++]=v+1; index[ii++]=v+3; index[ii++]=v+2; }
+  }
+}
+// where one vessel continues into the next at a node, both ribbons take the same direction there, so the joint is
+// seamless
+{
+  const ends = new Map();
+  for (let e=0; e<E; e++) for (const k of [FIRST[e], FIRST[e+1]-1]) {
+    const key = Math.round(P[3*k]*1e4) + ',' + Math.round(P[3*k+1]*1e4) + ',' + Math.round(P[3*k+2]*1e4);
+    if (!ends.has(key)) ends.set(key, []); ends.get(key).push(k);
+  }
+  for (const ks of ends.values()) {
+    if (ks.length !== 2) continue;
+    const [a, b] = ks.map(k => 2 * k);
+    let sgn = tan[3*a]*tan[3*b] + tan[3*a+1]*tan[3*b+1] + tan[3*a+2]*tan[3*b+2] < 0 ? -1 : 1;
+    let x = tan[3*a] + sgn*tan[3*b], y = tan[3*a+1] + sgn*tan[3*b+1], z = tan[3*a+2] + sgn*tan[3*b+2]; const l = Math.hypot(x,y,z) || 1;
+    x/=l; y/=l; z/=l;
+    for (const [v, sg] of [[a, 1], [b, sgn]]) for (const w of [v, v+1]) { tan[3*w] = sg*x; tan[3*w+1] = sg*y; tan[3*w+2] = sg*z; }
+  }
+}
+const geo = new THREE.BufferGeometry();
+geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+geo.setAttribute('aTangent', new THREE.BufferAttribute(tan, 3));
+geo.setAttribute('aS', new THREE.BufferAttribute(aS, 1));
+geo.setAttribute('aD', new THREE.BufferAttribute(aD, 1));
+geo.setAttribute('aSide', new THREE.BufferAttribute(aSide, 1));
+geo.setAttribute('aEdge', new THREE.BufferAttribute(aEdge, 1));
+geo.setIndex(new THREE.BufferAttribute(index, 1));
+geo.boundingSphere = new THREE.Sphere(new THREE.Vector3(), R * 1.2);
+
+// per-vessel properties (fixed) and red-cell offsets (every frame)
+const props = new Float32Array(W_TEX * H_TEX * 4), offs = new Float32Array(W_TEX * H_TEX * 4);
+const ARTERIAL = new Set(D.kinds.map((k, i) => (k.includes('arter') ? i : -1)).filter(i => i >= 0));
+const VENOUS = new Set(D.kinds.map((k, i) => (k.includes('vein') || k.includes('venul') ? i : -1)).filter(i => i >= 0));
+for (let e=0; e<E; e++) {
+  props[4*e] = HT[e] / 255; props[4*e+1] = SPEED[e];
+  props[4*e+2] = ARTERIAL.has(KIND[e]) ? 1 : (VENOUS.has(KIND[e]) ? -1 : 0);
+  props[4*e+3] = (e * 0.6180339887) % 1.0;                 // a per-vessel seed for the cell texture
+}
+function dataTex(arr) { const t = new THREE.DataTexture(arr, W_TEX, H_TEX, THREE.RGBAFormat, THREE.FloatType);
+  t.minFilter = t.magFilter = THREE.NearestFilter; t.needsUpdate = true; return t; }
+const propTex = dataTex(props), offTex = dataTex(offs);
+
+const spectrum = D.spectrum;
+const uniforms = {
+  uProps: { value: propTex }, uOffs: { value: offTex }, uR: { value: R }, uZ: { value: 1.0 },
+  uViewH: { value: 800 }, uTanHalf: { value: Math.tan(THREE.MathUtils.degToRad(15)) }, uAspect: { value: 1 },
+  uVeil: { value: D.veil_um }, uBlur500: { value: D.blur_um_at_500 }, uColour: { value: 0 },
+  uW: { value: new Float32Array(9).map((_, i) => spectrum[i] ? spectrum[i][0] : 0) },
+  uMu: { value: new Float32Array(9).map((_, i) => spectrum[i] ? spectrum[i][1] : 0) },
+  uRbcVol: { value: D.rbc_volume }, uPeriod: { value: PERIOD },
+};
+const vesselMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3, uniforms, transparent: true, depthWrite: false, depthTest: true, side: THREE.DoubleSide,
+  blending: THREE.CustomBlending, blendEquation: THREE.AddEquation, blendSrc: THREE.DstColorFactor, blendDst: THREE.ZeroFactor,
+  vertexShader: `
+    uniform sampler2D uProps; uniform sampler2D uOffs; uniform float uR, uZ, uViewH, uTanHalf, uAspect, uBlur500;
+    in vec3 aTangent; in float aS, aD, aSide, aEdge;
+    out float vX, vHalf, vSig, vR, vDepth, vNarrow, vS, vHt, vOff, vSeed, vSide, vWpx;
+    void main() {
+      ivec2 tc = ivec2(int(mod(aEdge, 1024.0)), int(aEdge / 1024.0));
+      vec4 pr = texelFetch(uProps, tc, 0); vec4 of = texelFetch(uOffs, tc, 0);
+      float r = length(position); float depth = (uR - r) * 1000.0;           // µm below the surface
+      vec3 p = position * ((uR - uZ * (uR - r)) / r);
+      vec4 mv = modelViewMatrix * vec4(p, 1.0);
+      float dist = max(-mv.z, 1e-4);
+      float pxPerUm = uViewH / (2.0 * uTanHalf * dist) * 1e-3;
+      float radius = 0.5 * aD;
+      float sig = uBlur500 * pow(clamp(depth / 500.0, 0.0, 3.0), 1.5);         // scattering blur, µm (synth.camera)
+      float s = sqrt(0.25 * radius * radius + sig * sig);                    // spread of the absorption profile
+      float halfPx = (radius + 2.5 * sig + 1.0) * pxPerUm;
+      vNarrow = halfPx < 1.0 ? 1.0 : 0.0;
+      halfPx = max(halfPx, 1.0);
+      vec4 c1 = projectionMatrix * mv;
+      vec4 c2 = projectionMatrix * modelViewMatrix * vec4(p + aTangent * 0.005, 1.0);
+      vec2 d = (c2.xy / c2.w - c1.xy / c1.w) * vec2(uAspect, 1.0);
+      vec2 n = normalize(vec2(-d.y, d.x) + 1e-9);
+      c1.xy += n / vec2(uAspect, 1.0) * aSide * halfPx * 2.0 / uViewH * c1.w;
+      gl_Position = c1;
+      vX = aSide * halfPx / pxPerUm; vHalf = halfPx / pxPerUm; vSig = sig; vR = radius; vDepth = depth;
+      vS = aS; vHt = pr.x; vOff = of.x; vSeed = pr.w; vSide = pr.z; vWpx = 2.0 * radius * pxPerUm;
+    }`,
+  fragmentShader: `
+    precision highp float;
+    uniform float uVeil, uColour, uRbcVol, uPeriod; uniform float uW[9]; uniform float uMu[9];
+    in float vX, vHalf, vSig, vR, vDepth, vNarrow, vS, vHt, vOff, vSeed, vSide, vWpx;
+    out vec4 outColor;
+    float hash(float n) { return fract(sin(n * 127.1 + vSeed * 311.7) * 43758.5453); }
+    float hash2(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7)) + vSeed * 74.7) * 43758.5453); }
+    float vnoise(float x, float cells) { float i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+      return mix(hash(mod(i, cells)), hash(mod(i + 1.0, cells)), f); }
+    float vnoise2(vec2 x, float cells) { vec2 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+      float a = hash2(vec2(mod(i.x, cells), i.y)), b = hash2(vec2(mod(i.x + 1.0, cells), i.y));
+      float c = hash2(vec2(mod(i.x, cells), i.y + 1.0)), d = hash2(vec2(mod(i.x + 1.0, cells), i.y + 1.0));
+      return mix(mix(a, b, f.x), mix(c, d, f.x), f.y); }
+    void main() {
+      if (vHt <= 0.0) discard;                                       // plasma only: nothing absorbs
+      float s = mod(vS - vOff, uPeriod);                              // µm along the vessel, moving with the cells
+      float x = vX;
+      // the chord a ray crosses through the lumen, blurred by the scattering (a Gaussian of the same area and
+      // spread), or its mean over the pixel for a vessel narrower than a pixel
+      float area = 3.14159265 * vR * vR;
+      float chord;
+      if (vNarrow > 0.5) chord = area / (2.0 * vHalf);
+      else {
+        // the circular chord 2 sqrt(r^2 - x^2) blurred by a Gaussian of the scattering's width (Gauss-Hermite, 5 points)
+        float b = 1.41421356 * vSig;
+        chord = 0.0;
+        float xs[5] = float[5](0.0, 0.958572, -0.958572, 2.020183, -2.020183);
+        float ws[5] = float[5](0.945309, 0.393619, 0.393619, 0.019953, 0.019953);
+        for (int i = 0; i < 5; i++) { float xx = x + b * xs[i]; chord += ws[i] * 2.0 * sqrt(max(vR * vR - xx * xx, 0.0)); }
+        chord *= 0.5641896;                                          // 1 / sqrt(pi)
+      }
+      // red-cell density relative to the tube haematocrit, moving along the vessel
+      float density;
+      float clump = 1.0 + 0.5 * (vnoise(s / 25.0, uPeriod / 25.0) - 0.5);       // aggregates and plasma gaps (25 µm)
+      if (vR < 4.6) {
+        // single file: discrete cells
+        float gap = uRbcVol / (max(vHt, 0.02) * area);             // mean distance between cells, µm (N/L = H_T A / V)
+        float k = floor(s / gap);
+        float centre = (k + 0.5 + 0.6 * (hash(mod(k, 4096.0)) - 0.5)) * gap;
+        float present = step(0.25, hash(mod(k, 4096.0) + 17.0) * clump);
+        float dd = s - centre;
+        density = present * exp(-0.5 * dd * dd / 6.0) * gap / 6.14 / 0.75;
+      } else {
+        float g = vnoise2(vec2(s / 7.0, (x + 50.0) / 7.0), uPeriod / 7.0);   // cells overlapping across the lumen
+        density = clump * (0.65 + 0.7 * g);
+      }
+      float tauBase = 2.0 * 1e-3 * chord * (vHt / 0.45) * density;     // double pass, µm -> mm
+      float T = 0.0;
+      for (int b = 0; b < 9; b++) T += uW[b] * exp(-uMu[b] * tauBase);
+      float veil = 1.0 - exp(-max(vDepth, 0.0) / uVeil);              // light returned before reaching the vessel
+      float t = veil + (1.0 - veil) * T;
+      vec3 c = vec3(t);
+      if (uColour > 0.5) {
+        vec3 tint = vSide > 0.5 ? vec3(0.95, 0.15, 0.1) : (vSide < -0.5 ? vec3(0.15, 0.35, 0.95) : vec3(0.8, 0.3, 0.7));
+        c = vec3(1.0) - (1.0 - t) * (vec3(1.0) - tint);
+      }
+      outColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+    }`,
+});
+const vessels = new THREE.Mesh(geo, vesselMat); vessels.frustumCulled = false; vessels.renderOrder = 3;
+
+// ---------------------------------------------------------------- scene, globe and lids
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const scene = new THREE.Scene(); scene.background = new THREE.Color('#0e1114');
+const camera = new THREE.PerspectiveCamera(30, 1, 0.001, 400);
+camera.position.set(0, 0, 60);
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true; controls.zoomToCursor = true; controls.minDistance = 0.05; controls.maxDistance = 160;
+
+const SCLERA_MM = 1.2;
+const globeMat = new THREE.ShaderMaterial({
+  glslVersion: THREE.GLSL3, uniforms: { uR: { value: R }, uLimbus: { value: D.limbus }, uZ: uniforms.uZ, uSeed: { value: D.seed } },
+  vertexShader: `out vec3 vP; out vec3 vN; out vec3 vV;
+    void main() { vP = position; vN = normalize(normalMatrix * normal); vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+  fragmentShader: `precision highp float; uniform float uR, uLimbus, uSeed; in vec3 vP; in vec3 vN; in vec3 vV; out vec4 o;
+    float h(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7)) + uSeed) * 43758.5453); }
+    float n3(vec3 x) { vec3 i = floor(x), f = fract(x); f = f*f*(3.0-2.0*f);
+      return mix(mix(mix(h(i), h(i+vec3(1,0,0)), f.x), mix(h(i+vec3(0,1,0)), h(i+vec3(1,1,0)), f.x), f.y),
+                 mix(mix(h(i+vec3(0,0,1)), h(i+vec3(1,0,1)), f.x), mix(h(i+vec3(0,1,1)), h(i+vec3(1,1,1)), f.x), f.y), f.z); }
+    void main() {
+      vec3 u = normalize(vP);
+      float theta = acos(clamp(u.z, -1.0, 1.0));
+      float lim = asin(uLimbus / uR);
+      vec3 q = u * uR;                                                     // mm
+      float tex = 0.0, amp = 0.0, a = 1.0;
+      for (int k = 0; k < 6; k++) { float sc = 0.012 * pow(2.2, float(k)); tex += a * (n3(q / sc) - 0.5); amp += a; a *= 0.85; }
+      float sclera = 0.86 * exp(0.06 * tex / amp * 2.0);
+      float cornea = 0.22 + 0.05 * smoothstep(lim * 0.3, lim, theta);
+      float g = mix(cornea, sclera, smoothstep(lim - 0.012, lim + 0.03, theta));
+      float shade = 0.75 + 0.25 * max(dot(vN, vV), 0.0);
+      o = vec4(vec3(g * shade), 1.0);
+    }`,
+});
+let globe;
+function buildGlobe() {
+  if (globe) { scene.remove(globe); globe.geometry.dispose(); }
+  const g = new THREE.SphereGeometry(R - uniforms.uZ.value * SCLERA_MM, 256, 192); g.rotateX(Math.PI / 2);
+  globe = new THREE.Mesh(g, globeMat); globe.renderOrder = 1; scene.add(globe);
+}
+buildGlobe(); scene.add(vessels);
+
+// the lids: two skin-coloured shells over the globe in front, leaving the palpebral fissure open
+const lidMat = new THREE.MeshBasicMaterial({ color: '#a97e6e', side: THREE.DoubleSide });
+const lashMat = new THREE.MeshBasicMaterial({ color: '#2a1a14', side: THREE.DoubleSide });
+const lidGroup = new THREE.Group(); scene.add(lidGroup);
+scene.add(new THREE.AmbientLight(0xffffff, 0.6)); const sun = new THREE.DirectionalLight(0xffffff, 0.8); sun.position.set(0, 0.3, 1); scene.add(sun);
+function buildLids() {
+  lidGroup.clear();
+  const [half, upper, lower] = D.fissure; const rr = R + 0.25;
+  for (const sign of [1, -1]) {
+    const margin = sign > 0 ? upper : lower;
+    const verts = [], idx = [], lash = [];
+    const NX = 160, NY = 60;
+    for (let j=0; j<=NY; j++) for (let i=0; i<=NX; i++) {
+      const x = -3.0 * R + 6.0 * R * i / NX;
+      const shape = Math.sqrt(Math.max(0, 1 - (x / half) ** 2));
+      const y0 = margin * shape + (Math.abs(x) > half ? 0 : 0);
+      const y = y0 + sign * (3.0 * R) * Math.pow(j / NY, 1.5);
+      const zz = Math.sqrt(Math.max(0, rr * rr - x * x - y * y));
+      verts.push(x, y, zz);
+    }
+    for (let j=0; j<NY; j++) for (let i=0; i<NX; i++) { const a = j*(NX+1)+i; idx.push(a, a+1, a+NX+1, a+1, a+NX+2, a+NX+1); }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3)); g.setIndex(idx); g.computeVertexNormals();
+    lidGroup.add(new THREE.Mesh(g, lidMat));
+    for (let i=0; i<=NX; i++) { const x = -half + 2 * half * i / NX; const y = margin * Math.sqrt(Math.max(0, 1 - (x / half) ** 2));
+      const zz = Math.sqrt(Math.max(0, rr * rr - x * x - y * y)); lash.push(new THREE.Vector3(x, y, zz + 0.02)); }
+    const tube = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lash), 120, 0.12, 6, false);
+    lidGroup.add(new THREE.Mesh(tube, lashMat));
+  }
+  // the fornices and canthi behind the globe's rim: dark conjunctiva
+  const back = new THREE.Mesh(new THREE.CircleGeometry(2.5 * R, 64), new THREE.MeshBasicMaterial({ color: '#5a2f2c' }));
+  back.position.z = -1.0; lidGroup.add(back);
+}
+buildLids();
+
+// ---------------------------------------------------------------- red cells: offsets every frame
+let t = 0, timeScale = 1, paused = false;
+const omega = 2 * Math.PI * D.heart_rate_hz;
+function updateOffsets() {
+  const ck = [], sk = [];
+  for (let k=1; k<=K; k++) { ck.push(Math.cos(k * omega * t)); sk.push(Math.sin(k * omega * t)); }
+  for (let e=0; e<E; e++) {
+    // ∫ v dt = v̄ (t + Re Σ c_k e^{ikωt} / (ikω))
+    let integral = t;
+    for (let k=1; k<=K; k++) {
+      const re = PULSE[(e * K + k - 1) * 2] / 32, im = PULSE[(e * K + k - 1) * 2 + 1] / 32;
+      // Re[(re + i im)(cos + i sin) / (i k ω)] = (re sin + im cos) / (k ω)
+      integral += (re * sk[k-1] + im * ck[k-1]) / (k * omega);
+    }
+    const o = SPEED[e] * 1000 * integral;
+    offs[4*e] = ((o % PERIOD) + PERIOD) % PERIOD;
+  }
+  offTex.needsUpdate = true;
+}
+
+// ---------------------------------------------------------------- UI
+const tsEl = document.getElementById('ts'), dzEl = document.getElementById('dz');
+tsEl.oninput = () => { timeScale = Math.pow(2, +tsEl.value); document.getElementById('tsv').textContent = (timeScale < 1 ? timeScale.toFixed(2) : timeScale.toFixed(0)) + 'x'; };
+dzEl.oninput = () => { uniforms.uZ.value = +dzEl.value; document.getElementById('dzv').textContent = dzEl.value + 'x'; buildGlobe(); };
+document.getElementById('pause').onclick = (ev) => { paused = !paused; ev.target.classList.toggle('on', paused); };
+document.getElementById('colour').onclick = (ev) => { uniforms.uColour.value = 1 - uniforms.uColour.value; ev.target.classList.toggle('on', uniforms.uColour.value > 0.5); };
+document.getElementById('lids').onclick = (ev) => { lidGroup.visible = !lidGroup.visible; ev.target.classList.toggle('on', lidGroup.visible); };
+
+let fly = null;
+function surfacePoint(sMm, clockDeg) {
+  const th = Math.asin(D.limbus / R) + sMm / R, ps = THREE.MathUtils.degToRad(clockDeg);
+  return new THREE.Vector3(Math.sin(th) * Math.sin(ps), Math.sin(th) * Math.cos(ps), Math.cos(th)).multiplyScalar(R);
+}
+function distanceFor(umPerPx) { return umPerPx * 1e-3 * renderer.domElement.height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2))); }
+function goTo(target, umPerPx, dur = 1600) {
+  const n = target.clone().normalize();
+  fly = { t0: performance.now(), dur, p0: camera.position.clone(), q0: controls.target.clone(), q1: target.clone(), p1: target.clone().add(n.multiplyScalar(distanceFor(umPerPx))) };
+}
+const presets = [
+  ['whole eye', () => { fly = { t0: performance.now(), dur: 1600, p0: camera.position.clone(), q0: controls.target.clone(), q1: new THREE.Vector3(), p1: new THREE.Vector3(0, 0, distanceFor(34)) }; }],
+  ['temporal, 12 µm/px', () => goTo(surfacePoint(3.0, 90), 12)],
+  ['slit lamp, 3.26 µm/px', () => goTo(surfacePoint(3.0, 90), 3.26)],
+  ['capillaries, 1 µm/px', () => goTo(surfacePoint(3.0, 90), 1.0)],
+  ['nasal, 3.26 µm/px', () => goTo(surfacePoint(3.0, 270), 3.26)],
+  ['near the limbus, 3.26 µm/px', () => goTo(surfacePoint(0.8, 100), 3.26)],
+];
+const gotoEl = document.getElementById('goto');
+for (const [name, fn] of presets) { const b = document.createElement('button'); b.textContent = name; b.onclick = fn; gotoEl.appendChild(b); }
+
+// the pulse: mean red-cell speed of the arterial and venous vessels over the cardiac cycle, now
+const pc = document.getElementById('pc').getContext('2d');
+const meanPulse = { a: [], v: [] };
+(function () {
+  for (const side of ['a', 'v']) {
+    const re = new Float64Array(K), im = new Float64Array(K); let n = 0;
+    for (let e=0; e<E; e++) {
+      const isA = props[4*e+2] > 0.5, isV = props[4*e+2] < -0.5;
+      if ((side === 'a' && !isA) || (side === 'v' && !isV) || LEVEL[e] !== 1) continue;
+      for (let k=0; k<K; k++) { re[k] += PULSE[(e*K+k)*2] / 32; im[k] += PULSE[(e*K+k)*2+1] / 32; } n++;
+    }
+    for (let k=0; k<K; k++) { re[k] /= Math.max(n, 1); im[k] /= Math.max(n, 1); }
+    meanPulse[side] = [re, im];
+  }
+})();
+function pulseAt(side, tt) { const [re, im] = meanPulse[side]; let v = 1; for (let k=0; k<K; k++) v += re[k] * Math.cos((k+1)*omega*tt) - im[k] * Math.sin((k+1)*omega*tt); return v; }
+function drawPulse() {
+  const w = 220, h = 70, T = 2 / D.heart_rate_hz; pc.clearRect(0, 0, w, h);
+  pc.fillStyle = '#9aa6b0'; pc.font = '11px system-ui'; pc.fillText('red-cell speed / mean, last 2 beats', 4, 11);
+  for (const [side, col] of [['a', '#e2675f'], ['v', '#6aa5ec']]) {
+    pc.strokeStyle = col; pc.lineWidth = 1.5; pc.beginPath();
+    for (let i=0; i<=100; i++) { const tt = t - T + T * i / 100; const y = h - 6 - (pulseAt(side, tt) - 0.3) / 1.6 * (h - 20); i ? pc.lineTo(i * 2.1 + 4, y) : pc.moveTo(4, y); }
+    pc.stroke();
+  }
+  pc.fillStyle = '#e2675f'; pc.fillText('arterioles', 150, 24); pc.fillStyle = '#6aa5ec'; pc.fillText('venules', 150, 38);
+}
+
+const hud = document.getElementById('hud');
+function resize() {
+  const w = innerWidth, h = innerHeight; renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+  const sz = renderer.getDrawingBufferSize(new THREE.Vector2()); uniforms.uViewH.value = sz.y; uniforms.uAspect.value = sz.x / sz.y;
+}
+addEventListener('resize', resize); resize();
+let last = performance.now(), frames = 0, fpsT = last, fps = 0;
+function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.1); last = now;
+  if (fly) { const w = Math.min((now - fly.t0) / fly.dur, 1), e = w * w * (3 - 2 * w);
+    camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.q0, fly.q1, e); if (w >= 1) fly = null; }
+  if (window.__setViewNow) { const [a, b, c] = window.__setViewNow; window.__setViewNow = null; window.__setView(a, b, c); }
+  controls.update();
+  const dist = camera.position.distanceTo(controls.target);
+  camera.near = Math.max(dist * 0.01, 0.0005); camera.far = dist + 3 * R; camera.updateProjectionMatrix();
+  if (!paused) t += dt * timeScale;
+  updateOffsets();
+  renderer.render(scene, camera);
+  frames++; if (now - fpsT > 500) { fps = frames * 1000 / (now - fpsT); frames = 0; fpsT = now; }
+  const umPerPx = dist * 1000 * 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) / uniforms.uViewH.value * renderer.getPixelRatio();
+  hud.innerHTML = `${umPerPx < 10 ? umPerPx.toFixed(2) : umPerPx.toFixed(0)} µm per screen pixel · ${fps.toFixed(0)} fps · t = ${t.toFixed(2)} s<br>${E.toLocaleString()} vessels, every level of detail, all carrying their flow`;
+  // a scale bar of a round length about 120 px long
+  const target = 120 * umPerPx; const nice = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000].find(v => v >= target * 0.6) || 10000;
+  document.getElementById('sbbar').style.width = (nice / umPerPx) + 'px';
+  document.getElementById('sbtext').textContent = nice >= 1000 ? (nice / 1000) + ' mm' : nice + ' µm';
+  drawPulse();
+  requestAnimationFrame(loop);
+}
+camera.position.set(0, 0, distanceFor(34));
+// a link can open on a view: #s_mm,clock_deg,um_per_px[,t_s][,colour][,nolids]
+{ const h = location.hash.replace('#', '').split(',');
+  if (h.length >= 3 && !isNaN(+h[0])) { resize(); window.__setViewNow = [+h[0], +h[1], +h[2]]; if (h[3]) t = +h[3];
+    if (h.includes('colour')) uniforms.uColour.value = 1; if (h.includes('nolids')) lidGroup.visible = false; } }
+requestAnimationFrame(loop);
+window.__ready = true;
+window.__goto = (name) => { const p = presets.find(p => p[0] === name); if (p) { p[1](); } };
+window.__setView = (sMm, clockDeg, umPerPx) => { const q = surfacePoint(sMm, clockDeg); controls.target.copy(q); camera.position.copy(q.clone().add(q.clone().normalize().multiplyScalar(distanceFor(umPerPx)))); fly = null; };
+window.__setTime = (s) => { t = s; };
+</script>
+</body>
+</html>
