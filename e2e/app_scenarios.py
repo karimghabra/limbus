@@ -603,8 +603,8 @@ def review(panel):
 
 def run_job(tab, button):
     button.click()
+    started = tab.proc is not None      # before pumping: a quick job ends within it
     pump(0.5)
-    started = tab.proc is not None
     end = time.time() + JOB_TIMEOUT_S
     while tab.proc is not None and time.time() < end:
         pump(0.2)
