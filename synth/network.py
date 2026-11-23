@@ -66,7 +66,8 @@ class Edge:
 class Network:
     nodes: np.ndarray                                  # (N, 3) µm
     edges: list
-    boundary: dict = field(default_factory=dict)       # node -> role: 'arterial', 'venous' or 'capillary'
+    boundary: dict = field(default_factory=dict)       # node -> role: 'arterial', 'venous', or 'capillary' (a view's
+                                                       # cut capillary: it needs its own boundary_pressure)
     domain: tuple = (0.0, 0.0, 0.0, 0.0)               # x0, x1, y0, y1 of the generation domain, µm
     field_of_view: tuple = (0.0, 0.0, 0.0, 0.0)        # x0, x1, y0, y1 of the camera's field (frame 0), µm
     vessel_names: dict = field(default_factory=dict)   # vessel id -> kind of its first edge

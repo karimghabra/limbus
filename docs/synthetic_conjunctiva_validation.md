@@ -248,7 +248,8 @@ Over 25 seeds, every checked quantity is within its cited range in 19 of 25 defa
 18 of 25 randomised scenes (`synth.randomize`, whose appearance ranges are wide on purpose and whose
 anatomical ranges reach the edges of the cited ones); the failures are single quantities just past a bound (for
 example a median arteriolar speed of 1.7-2 mm/s, or a capillary length density of 12-13 mm/mm2). Training data can
-use `random_scene(seed, anatomical=True)`, which redraws until the check passes.
+use `random_scene(seed, anatomical=True, n_frames=...)`, which redraws until the check passes on the network that
+`simulate(scene, n_frames)` renders (the scene comes back with the margin its burst's eye motion needs, anatomy §1.2).
 
 
 ## 3. Flow detection against the truth

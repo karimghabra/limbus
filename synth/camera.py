@@ -97,12 +97,16 @@ def motion_reach_um(motion: Motion, scene: Scene):
 
 def cover_motion(scene: Scene, motion: Motion) -> Scene:
     """The scene with its margin widened, where the motion needs it, so that the network reaches MOTION_BUFFER_UM
-    past everything the frames show and no frame reveals the network's edge. The deepest vessels decide: on the
-    globe they are drawn nearer the field's centre than their surface coordinates (Renderer._globe)."""
-    a = scene.anatomy
-    half = max(scene.width_px, scene.height_px) * a.um_per_px / 2
-    drawn = 1.0 - a.deep_plexus[1] / scene.optics.eye_radius_um
-    needed = (half + motion_reach_um(motion, scene)) / drawn - half + MOTION_BUFFER_UM
+    past everything the frames show and no frame reveals the network's edge. The deepest vessels at the frame's
+    corner decide: a point at depth z and arc distance r from the field's centre is drawn at (R - z) sin(r / R)
+    from it (Renderer._globe), so what the camera sees at a distance rho lies at the arc R asin(rho / (R - z))."""
+    um = scene.anatomy.um_per_px
+    reach = motion_reach_um(motion, scene)
+    half = max(scene.width_px, scene.height_px) * um / 2
+    rho = np.hypot(scene.width_px, scene.height_px) * um / 2 + reach
+    R = scene.optics.eye_radius_um
+    stretch = R * np.arcsin(min(rho / (R - scene.anatomy.deep_plexus[1]), 1.0)) / rho
+    needed = float((half + reach) * stretch - half + MOTION_BUFFER_UM)
     return replace(scene, margin_um=max(scene.margin_um, needed))
 
 

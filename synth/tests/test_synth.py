@@ -179,29 +179,55 @@ def burst(tmp_path_factory):
     return result, folder
 
 
+def _frames_stay_inside(scene, motion, field, domain, depth):
+    """Whether the tissue seen at every corner of every frame lies inside the domain, at a depth: on the globe a
+    point at depth z and arc distance r from the field's centre is drawn at (R - z) sin(r / R) from it (docs §1.4),
+    so the camera's point at distance rho shows the tissue at the arc R asin(rho / (R - z))."""
+    um, R = scene.anatomy.um_per_px, scene.optics.eye_radius_um
+    x0, x1, y0, y1 = field
+    corners = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]])
+    centre = corners.mean(0)
+    inside = True
+    for k in range(len(motion.dx)):
+        c, s = np.cos(-motion.rotation[k]), np.sin(-motion.rotation[k])
+        q = (corners - centre) - np.array([motion.dx[k], motion.dy[k]]) * um
+        q = np.stack([c * q[:, 0] - s * q[:, 1], s * q[:, 0] + c * q[:, 1]], 1)
+        rho = np.linalg.norm(q, axis=1)
+        seen = q * (R * np.arcsin(rho / (R - depth)) / rho)[:, None] + centre
+        inside &= bool(seen[:, 0].min() > domain[0] and seen[:, 0].max() < domain[1] and
+                       seen[:, 1].min() > domain[2] and seen[:, 1].max() < domain[3])
+    return inside
+
+
 def test_eye_motion_never_shows_the_networks_edge():
     """A burst's network reaches past everything its frames show: with saccades far larger than the scene's own
     margin, the tissue at every corner of every frame still lies inside the generated domain, at the depth of the
-    deepest vessel too (on the globe a point at depth z and arc distance r from the field's centre is drawn at
-    (R - z) sin(r / R) from it, docs §1.4)."""
+    deepest vessel too."""
     scene = small_scene(5)
     scene = replace(scene, optics=replace(scene.optics, saccade_rate_hz=8.0, saccade_px=(150.0, 200.0)), margin_um=60.0)
     result = simulate(scene, n_frames=12, warm_up_s=0.05, record_cells=False, record_masks=False)
-    um, m = scene.anatomy.um_per_px, result.motion
-    assert np.hypot(m.dx, m.dy).max() * um > 3 * scene.margin_um
-    x0, x1, y0, y1 = result.network.field_of_view
-    dx0, dx1, dy0, dy1 = result.network.domain
-    corners = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]])
-    centre = corners.mean(0)
-    for k in range(len(m.dx)):
-        c, s = np.cos(-m.rotation[k]), np.sin(-m.rotation[k])
-        q = (corners - centre) - np.array([m.dx[k], m.dy[k]]) * um          # the tissue seen at the frame's corners
-        q = np.stack([c * q[:, 0] - s * q[:, 1], s * q[:, 0] + c * q[:, 1]], 1)
-        rho = np.linalg.norm(q, axis=1)
-        R = scene.optics.eye_radius_um
-        arc = R * np.arcsin(rho / (R - result.network.nodes[:, 2].max()))
-        seen = q * (arc / rho)[:, None] + centre
-        assert seen[:, 0].min() > dx0 and seen[:, 0].max() < dx1 and seen[:, 1].min() > dy0 and seen[:, 1].max() < dy1
+    m = result.motion
+    assert np.hypot(m.dx, m.dy).max() * scene.anatomy.um_per_px > 3 * scene.margin_um
+    net = result.network
+    assert _frames_stay_inside(scene, m, net.field_of_view, net.domain, net.nodes[:, 2].max())
+
+
+@pytest.mark.parametrize("width, height, um", [(1920, 1200, 3.26), (768, 512, 12.0)])
+def test_margin_covers_motion_in_large_and_coarse_fields(width, height, um):
+    """The margin a motion needs holds on the curved globe where the field is large against the eye's radius (the
+    camera's full frame, a low-magnification view): the tissue at the corners of frames moved along the diagonal,
+    and turned, stays within the field plus the margin at the depth of the deepest plexus."""
+    from synth import camera
+    base = Scene(width_px=width, height_px=height)
+    scene = replace(base, anatomy=replace(base.anatomy, um_per_px=um))
+    d = 190.0 * np.array([width, height]) / np.hypot(width, height)
+    motion = camera.Motion(np.array([0.0, d[0], -d[0], d[0]]), np.array([0.0, d[1], -d[1], -d[1]]),
+                           np.radians([0.0, 0.4, -0.4, 0.0]), np.full(4, 250.0), np.zeros(0, int))
+    margin = camera.cover_motion(scene, motion).margin_um
+    w, h = width * um, height * um
+    field = (0.0, w, 0.0, h)
+    domain = (-margin, w + margin, -margin, h + margin)
+    assert _frames_stay_inside(scene, motion, field, domain, scene.anatomy.deep_plexus[1])
 
 
 def test_tubes_carry_each_vessels_cells_once(solved):
@@ -280,6 +306,14 @@ def test_random_scenes_stay_anatomical():
         report = check.anatomy_report(*_solve(scene))
         failing = [row for row in report if row["status"] == "outside"]
         assert not failing, (seed, failing)
+    # the scene that passed is the one a burst renders: simulate grows the network that was checked, also when the
+    # burst's eye motion needs more margin than the scene started with
+    base = Scene(width_px=256, height_px=192, margin_um=40.0)
+    scene = random_scene(11, base=base, anatomical=True, n_frames=4)
+    result = simulate(scene, n_frames=4, warm_up_s=0.05, record_cells=False, record_masks=False)
+    assert result.scene.margin_um == scene.margin_um > base.margin_um
+    report = check.anatomy_report(result.scene, result.network, result.flow)
+    assert not [row for row in report if row["status"] == "outside"]
     assert random_scene(3).optics.psf_sigma_px == random_scene(3).optics.psf_sigma_px
 
 

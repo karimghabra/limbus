@@ -7,8 +7,8 @@
 Anatomy and physiology are drawn within their cited ranges (docs/synthetic_conjunctiva_anatomy.md); the appearance - blur, focus, motion, noise, gain, texture,
 illumination, flicker - is drawn from wider domain-randomisation ranges around the values measured on the real
 bursts, so a network trained on the output does not learn one camera's settings. Most draws pass the anatomy check
-(docs/synthetic_conjunctiva_validation.md gives the rate); random_scene(seed, anatomical=True) keeps only those
-that do. A range is (low, high), drawn
+(docs/synthetic_conjunctiva_validation.md gives the rate); random_scene(seed, anatomical=True, n_frames=...) keeps only those
+that do, checked on the network a burst of n_frames renders. A range is (low, high), drawn
 uniformly; ("log", low, high) draws log-uniformly; a scalar fixes the value. Parameters not listed keep their
 defaults.
 """
@@ -72,16 +72,19 @@ def _draw(rng, spec):
     return spec
 
 
-def random_scene(seed, config=None, base: Scene | None = None, anatomical=False, tries=20) -> Scene:
+def random_scene(seed, config=None, base: Scene | None = None, anatomical=False, tries=20, n_frames=120) -> Scene:
     """A Scene with every parameter in the ranges drawn from seed (config overrides or adds ranges).
 
     With anatomical=True the network and its flow are generated and checked (synth.check), and the draw is repeated
     with derived seeds until every checked quantity is within its cited range; the returned scene's seed is the one
-    that passed."""
+    that passed. The network checked is the one simulate(scene, n_frames) renders: the scene comes back with its
+    margin already widened to the eye motion of a burst of n_frames (synth.camera.cover_motion), so a burst of
+    another length may grow another network."""
     if anatomical:
-        from . import check, haemodynamics, network
+        from . import camera, check, haemodynamics, network
         for attempt in range(tries):
             scene = random_scene(seed * 1000 + attempt if attempt else seed, config, base)
+            scene = camera.cover_motion(scene, camera.burst_motion(n_frames, scene))
             net = network.generate(scene)
             flow = haemodynamics.solve(net, scene.physiology)
             if all(row["status"] != "outside" for row in check.anatomy_report(scene, net, flow)):
