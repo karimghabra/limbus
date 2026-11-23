@@ -94,13 +94,15 @@ class TubeSampler:
             tangent = np.gradient(pts[:, :2], axis=0)
             tangent /= np.maximum(np.linalg.norm(tangent, axis=1, keepdims=True), 1e-9)
             normal = np.stack([-tangent[:, 1], tangent[:, 0]], 1)
-            s = np.r_[0.0, np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))]
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            s = np.r_[0.0, np.cumsum(seg)]
+            span = 0.5 * (np.r_[seg, 0.0] + np.r_[0.0, seg])                # the length of vessel each sample stands for
             radius = diam / 2
             k = max(1, int(np.ceil(float(diam.max()) / step)))
             offsets = (np.arange(k) + 0.5) / k * 2 - 1                      # across the diameter, -1..1
             chord = np.sqrt(np.clip(1 - offsets ** 2, 0, None))
             chord /= chord.sum()
-            cells_per_sample = flow.ht[i] * np.pi * radius ** 2 * step / scene.physiology.rbc_volume_um3
+            cells_per_sample = flow.ht[i] * np.pi * radius ** 2 * span / scene.physiology.rbc_volume_um3
             for o, w in zip(offsets, chord):
                 p = pts.copy()
                 p[:, :2] += (o * radius)[:, None] * normal
@@ -145,7 +147,11 @@ class TubeSampler:
 
 
 def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True, progress=None) -> Result:
-    """Generate the network, solve the flow, run the cells and render n_frames."""
+    """Generate the network, solve the flow, run the cells and render n_frames. The burst's eye motion is drawn
+    first and the scene's margin widened to hold it (Result.scene has the margin used), so no frame shows the edge
+    of the network."""
+    motion = camera.burst_motion(n_frames, scene)
+    scene = camera.cover_motion(scene, motion)
     timings = {}
     start = time.perf_counter()
     net = network.generate(scene)
@@ -153,16 +159,18 @@ def simulate(scene: Scene, n_frames=120, warm_up_s=0.6, record_cells=True, recor
     start = time.perf_counter()
     flow = haemodynamics.solve(net, scene.physiology)
     timings["flow"] = time.perf_counter() - start
-    return render_network(scene, net, flow, n_frames, warm_up_s, record_cells, record_masks, progress, timings)
+    return render_network(scene, net, flow, motion, n_frames, warm_up_s, record_cells, record_masks, progress, timings)
 
 
-def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True,
-                   progress=None, timings=None, tubes=None, motion=None, occluder=None, time_offset=0.0) -> Result:
+def render_network(scene: Scene, net, flow, motion, n_frames=120, warm_up_s=0.6, record_cells=True, record_masks=True,
+                   progress=None, timings=None, tubes=None, occluder=None, time_offset=0.0) -> Result:
     """Run the red cells of a given network and flow and render n_frames of it.
+
+    motion: the camera's motion over the burst (camera.Motion); the network must reach as far as it shows
+    (camera.cover_motion).
 
     tubes: draw every vessel as a tube carrying its mean red-cell density instead of discrete cells (no flicker,
     no cell transport, far cheaper); by default when the magnification is low (Optics.tube_um_per_px or coarser).
-    motion: the camera's motion over the burst (camera.Motion), by default drawn from the measured statistics.
     occluder: callable(frame index, renderer) -> (mask, irradiance) that covers part of each frame (the lids).
     time_offset: the time (s) of the first frame, for the phase of the cardiac cycle."""
     timings = dict(timings or {})
@@ -181,7 +189,6 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
         red_cells.warm_up(warm_up_s, dt)
         red_cells.t = time_offset
     timings["cells warm-up"] = time.perf_counter() - start
-    motion = motion if motion is not None else camera.eye_motion(n_frames, scene, rng)
     renderer = camera.Renderer(scene, net, rng, motion)
     scale = camera.background_scale(scene)
     period = 1.0 / scene.optics.fps
@@ -192,8 +199,7 @@ def render_network(scene: Scene, net, flow, n_frames=120, warm_up_s=0.6, record_
     x0, x1, y0, y1 = net.field_of_view
     # cells are recorded where the camera can see them: the field plus the furthest the tissue moves, plus the
     # rotation's reach at the corners
-    reach = np.hypot(motion.dx, motion.dy).max() + np.abs(motion.rotation).max() * np.hypot(scene.width_px, scene.height_px) / 2
-    pad = (reach + 8.0) * scene.anatomy.um_per_px
+    pad = camera.motion_reach_um(motion, scene) + 8.0 * scene.anatomy.um_per_px
     edge_dtype = _unsigned(len(net.edges))
 
     def cells_at(t):
@@ -384,8 +390,3 @@ def _jsonable(value):
     if isinstance(value, (np.floating, np.integer)):
         return value.item()
     return value
-
-
-def load_graph(folder):
-    """The truth graph of a written burst as a dict (see graph_dict)."""
-    return json.loads((Path(folder) / "truth" / "graph.json").read_text(encoding="utf-8"))

@@ -9,7 +9,7 @@ used and docs §9 lists them. The cited ranges the generated networks are held t
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, fields, replace
+from dataclasses import dataclass, field, fields
 
 
 @dataclass
@@ -20,8 +20,6 @@ class Anatomy:
 
     # imaging scale: measured, the millimetre ruler imaged through the camera (docs §1.3)
     um_per_px: float = 3.26
-    # the field: x along the limbus, y away from it (radial), z depth below the epithelial surface
-    limbus_distance_mm: float = 3.0
     # layer depths below the epithelial surface, µm (docs §2)
     epithelium: float = 45.0                         # 42 ± 7 µm [Zhang2013]; 45-52 µm [Zhang2011, FengSimpson2008]
     conjunctival_plexus: tuple = (50.0, 230.0)       # in the 198 µm stroma under the epithelium [Zhang2013, Akagi2018]
@@ -47,8 +45,8 @@ class Anatomy:
     capillary_mesh_spacing: float = 285.0            # µm between mesh cell centres (fitted to ~8 mm/mm2 of capillary, docs §5)
     capillary_edge_drop: float = 0.18                # share of mesh ridges absent (open polygons)
     radial_bias: float = 0.15                        # conjunctival vessels run radially from the limbus [Akagi2018]
-    arterial_trees_per_mm2: float = 0.4              # arterioles fewer than venules, about 1:2 to 1:4 [Cheung2001, Khansari2017]
-    venous_trees_per_mm2: float = 0.4 
+    arterial_trees_per_mm2: float = 0.4              # roots per mm2, equal on both sides (fitted, docs §5)
+    venous_trees_per_mm2: float = 0.4
     av_pair_offset: tuple = (50.0, 110.0)            # lateral distance of an accompanying venule from its arteriole (about the measured pair spacing, 85 µm, docs §4)
     av_pair_fraction: float = 0.2                    # share of venular attractors placed along arterioles (assumed)
     anastomoses_per_mm2: float = 2.0                 # arteriolar and venular loops between trees (fitted, docs §5)
@@ -69,12 +67,11 @@ class Anatomy:
         "episcleral": (8.0, 220.0), "deep": (8.0, 260.0), "communicating": (2.0, 40.0),
     })
     # multi-scale irregularity on top of the meander (fitted to the measured curvature, jitter and width variation,
-    # docs §5): fine jitter (amplitude µm, correlation µm), kinks (per mm, amplitude µm, width µm), and the
+    # docs §5): fine jitter (amplitude µm, correlation µm), and the
     # variation of the calibre along a vessel (coefficient of variation, correlation µm)
     bend_wiggle: tuple = (5.0, 70.0)                 # gentle bends of 100-300 µm on vessels above capillary size (fitted to the curvature spectrum)
     fine_jitter: tuple = (0.3, 6.0)
     large_jitter: tuple = (0.03, 0.5)                # extra jitter per µm of calibre: (amplitude, correlation) (fitted by eye, docs §5)
-    kinks: tuple = (0.0, 2.0, 8.0)
     taper: tuple = (0.05, 0.25)                      # smooth change of calibre end to end along a whole vessel, relative
     # the calibre along a vessel varies smoothly over the whole vessel, continuous through every junction it passes:
     # (coefficient of variation, correlation µm) for small (<= 12 µm) and large (>= 30 µm) vessels, interpolated
@@ -93,7 +90,6 @@ class Anatomy:
     growth_step: float = 18.0
     growth_influence: float = 400.0
     growth_kill: float = 210.0                       # sets the spacing of branches (fitted, docs §5)
-    venous_kill_ratio: float = 1.0                   # venules are more numerous than arterioles [Khansari2017]
     attractors_per_mm2: float = 120.0
     growth_persistence: float = 0.8
     branch_spacing_um: float = 160.0                 # least distance between branch points of a tree (fitted to segment lengths, docs §5)
@@ -114,7 +110,6 @@ class Physiology:
     arterial_pressure_at_10um: float = 30.0          # 30-35 mmHg after the precapillary branches [Zweifach1974]
     venous_pressure_at_10um: float = 14.0            # just above capillary pressure, 13-16 mmHg [Williams1990, Hahn2004]
     venous_pressure_at_100um: float = 8.0            # episcleral venous pressure 6.3-9.6 mmHg [Zeimer1983, Sit2011, Arora2017]
-    capillary_boundary_pressure: float = 15.0        # 13-16 mmHg [Williams1990, Hahn2004]; unused while the mesh is closed
     radial_pressure_gradient_mmhg_per_mm: float = 0.15   # along episcleral and deep vessels (fitted, docs §6.2)
     heart_rate_hz: float = 1.1                       # cardiac period 909 ± 86 ms [Neriyanuri2023]
     arterial_pulsatility: float = 0.12               # half the pulse pressure over the mean at the arterial inlets (fitted, docs §6.3)
@@ -158,7 +153,6 @@ class Optics:
     flicker_hz: float = 8.77                        # |120 Hz mains - 4 x 32.19 fps|; measured 8.78 Hz
     flicker_amplitude: float = 0.0111               # 0.89 % measured after the gamma 0.8 LUT, so 0.89 / 0.8 % in linear light
     flicker_white: float = 0.0012                   # fitted: the measured 0.21 % residual also holds motion
-    texture_band_sd: tuple = (0.94, 0.91, 1.58, 2.70, 4.55)   # measured, x1e-3 ln units, at the TEXTURE_SIGMAS bands
     texture_amplitudes: tuple = (2.32, 0.0, 2.15, 3.21, 4.98, 12.89)   # generator components, fitted (camera.calibrate_texture)
     exposure_s: float = 0.012838
     fps: float = 32.1926
@@ -185,9 +179,6 @@ class Scene:
     height_px: int = 512
     margin_um: float = 350.0
     seed: int = 0
-
-    def with_(self, **changes):
-        return replace(self, **changes)
 
 
 def describe(obj):

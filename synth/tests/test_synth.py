@@ -35,13 +35,12 @@ def solved():
 # ------------------------------------------------------------------------------------------- rheology laws
 
 def test_viscosity_laws():
-    # plasma alone has relative viscosity 1; whole blood is more viscous in large tubes than in ~7 µm tubes
-    assert np.isclose(H.viscosity_in_vitro(50.0, 0.0), 1.0)
-    assert H.viscosity_in_vitro(300.0, 0.45) > H.viscosity_in_vitro(7.0, 0.45)       # Fahraeus-Lindqvist
-    # in vitro at H 0.45 tends to 3.2 in wide tubes [Pries1992]
-    assert abs(H.viscosity_in_vitro(5000.0, 0.45) - 3.2) < 0.05
-    # in vivo exceeds in vitro in small vessels (the endothelial surface layer) [Pries1994]
-    assert H.viscosity_in_vivo(8.0, 0.45) > H.viscosity_in_vitro(8.0, 0.45)
+    # whole blood at H 0.45 tends to a relative viscosity of 3.2 in wide vessels [Pries1994]
+    assert abs(H.viscosity_in_vivo(5000.0, 0.45) - 3.2) < 0.05
+    # it is thinner in vessels of a few tens of micrometres (Fahraeus-Lindqvist) and thick again in capillaries,
+    # where the endothelial surface layer takes much of the lumen [Pries1994]
+    assert H.viscosity_in_vivo(30.0, 0.45) < H.viscosity_in_vivo(300.0, 0.45)
+    assert H.viscosity_in_vivo(8.0, 0.45) > H.viscosity_in_vivo(30.0, 0.45)
     assert np.all(np.diff(H.viscosity_in_vivo(20.0, np.linspace(0, 0.6, 7))) > 0)
 
 
@@ -178,6 +177,46 @@ def burst(tmp_path_factory):
     result = simulate(scene, n_frames=6, warm_up_s=0.1)
     folder = write_burst(result, tmp_path_factory.mktemp("synthetic") / "burst_synthetic")
     return result, folder
+
+
+def test_eye_motion_never_shows_the_networks_edge():
+    """A burst's network reaches past everything its frames show: with saccades far larger than the scene's own
+    margin, the tissue at every corner of every frame still lies inside the generated domain, at the depth of the
+    deepest vessel too (on the globe a point at depth z and arc distance r from the field's centre is drawn at
+    (R - z) sin(r / R) from it, docs §1.4)."""
+    scene = small_scene(5)
+    scene = replace(scene, optics=replace(scene.optics, saccade_rate_hz=8.0, saccade_px=(150.0, 200.0)), margin_um=60.0)
+    result = simulate(scene, n_frames=12, warm_up_s=0.05, record_cells=False, record_masks=False)
+    um, m = scene.anatomy.um_per_px, result.motion
+    assert np.hypot(m.dx, m.dy).max() * um > 3 * scene.margin_um
+    x0, x1, y0, y1 = result.network.field_of_view
+    dx0, dx1, dy0, dy1 = result.network.domain
+    corners = np.array([[x0, y0], [x1, y0], [x0, y1], [x1, y1]])
+    centre = corners.mean(0)
+    for k in range(len(m.dx)):
+        c, s = np.cos(-m.rotation[k]), np.sin(-m.rotation[k])
+        q = (corners - centre) - np.array([m.dx[k], m.dy[k]]) * um          # the tissue seen at the frame's corners
+        q = np.stack([c * q[:, 0] - s * q[:, 1], s * q[:, 0] + c * q[:, 1]], 1)
+        rho = np.linalg.norm(q, axis=1)
+        R = scene.optics.eye_radius_um
+        arc = R * np.arcsin(rho / (R - result.network.nodes[:, 2].max()))
+        seen = q * (arc / rho)[:, None] + centre
+        assert seen[:, 0].min() > dx0 and seen[:, 0].max() < dx1 and seen[:, 1].min() > dy0 and seen[:, 1].max() < dy1
+
+
+def test_tubes_carry_each_vessels_cells_once(solved):
+    """Drawn as tubes, a vessel holds the red cells its volume and tube haematocrit give, H_T V / V_rbc, however
+    its centreline is sampled."""
+    from synth.simulate import TubeSampler
+    scene, net, flow = solved
+    tubes = TubeSampler(net, flow, scene)
+    held = np.bincount(tubes.edge, tubes.weights, len(net.edges))
+    for i in np.argsort([e.length for e in net.edges])[[0, len(net.edges) // 2, -1]]:
+        e = net.edges[i]
+        seg = np.linalg.norm(np.diff(e.points, axis=0), axis=1)
+        area = np.pi * (0.5 * (e.local_diameter[1:] + e.local_diameter[:-1]) / 2) ** 2
+        expected = flow.ht[i] * float((area * seg).sum()) / scene.physiology.rbc_volume_um3
+        assert held[i] == pytest.approx(expected, rel=0.08)
 
 
 def test_frames_look_like_the_recorder(burst):

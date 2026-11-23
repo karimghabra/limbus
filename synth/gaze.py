@@ -20,7 +20,7 @@ from dataclasses import dataclass, field, replace
 
 import numpy as np
 
-from .camera import Motion
+from .camera import Motion, cover_motion
 from .eye import Eye, EyeAnatomy, Pose, assemble_view, view_scene
 from .simulate import render_network
 
@@ -227,11 +227,11 @@ class SlitLamp:
         from .camera import _smooth
         focus = o.focus_depth_um + o.focus_wander_um * _smooth(rng, n_frames, 12.0)
         motion = Motion(dx, dy, rot, focus, np.zeros(0, int))
-        view = replace(scene, seed=int(rng.integers(2 ** 31)))
+        view = cover_motion(replace(scene, seed=int(rng.integers(2 ** 31))), motion)
         net, flow = assemble_view(self.eye, ref, view, fine=True, roll_deg=rolls[0])
         lids = _LidOccluder(self, net, view, frame, roll0, gazes, blink)
-        result = render_network(view, net, flow, n_frames, record_cells=record_cells, record_masks=record_masks,
-                                motion=motion, occluder=lids, time_offset=self.t)
+        result = render_network(view, net, flow, motion, n_frames, record_cells=record_cells, record_masks=record_masks,
+                                occluder=lids, time_offset=self.t)
         self.t += n_frames * dt
         return Burst(result, ref, gazes, tuple(gaze), lids.share, blink, list(poses))
 

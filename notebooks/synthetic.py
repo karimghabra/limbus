@@ -87,7 +87,11 @@ def _(Path):
     FLOW_OUTPUTS = os.environ.get("SYNTH_FLOW_OUTPUTS")
     OUTPUT_DIR = Path("synthetic_outputs")
     OUTPUT_DIR.mkdir(exist_ok=True)
-    scene = Scene(width_px=WIDTH_PX, height_px=HEIGHT_PX, seed=SEED)
+    from synth import camera as _camera
+
+    # the burst's eye motion decides how far the network must reach beyond the field (docs §1.2)
+    _scene = Scene(width_px=WIDTH_PX, height_px=HEIGHT_PX, seed=SEED)
+    scene = _camera.cover_motion(_scene, _camera.burst_motion(N_FRAMES, _scene))
     INK_MUTED = "#898781"
     SERIES = ("#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948")
     plt.rcParams.update({
@@ -176,8 +180,8 @@ def _(mo):
     mo.md(r"""
     ## 2 · The 3D network
 
-    `network.generate(scene)` grows the network in a domain larger than the field by `margin_um`, so that vessels
-    continue across the image border; the dashed box is the camera's field. Left: seen from the camera, coloured by
+    `network.generate(scene)` grows the network in a domain larger than the field by `margin_um` (widened to hold
+    the burst's eye motion), so that vessels continue across the image border; the dashed box is the camera's field. Left: seen from the camera, coloured by
     kind, line width proportional to diameter. Right: seen from the side, depth downwards; the oblique green lines
     are the communicating vessels between the conjunctival and episcleral plexuses.
     """)

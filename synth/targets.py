@@ -375,34 +375,20 @@ def morphology_stats(od, mask, valid, um_per_px):
     out.update(darkness_stats(od, mask, valid, skeleton, distance, um_per_px))
     out.update(shape_stats(segments, junctions, junction_segments, distance, um_per_px))
     # branch geometry at three-way junctions
-    angles, exponents = [], []
-    for centre, members in zip(junctions, junction_segments):
+    exponents = []
+    for members in junction_segments:
         if len(members) != 3:
             continue
-        directions, widths = [], []
+        widths = []
         for segment_index, which in members:
             points = segments[segment_index]
             if len(points) < 8:
                 break
             run = points[:15] if which == 0 else points[::-1][:15]
-            vector = run[-1] - centre
-            norm = np.hypot(*vector)
-            if norm == 0:
-                break
-            directions.append(vector / norm)
-            widths.append(float(np.median(2 * distance[run[4:15, 0], run[4:15, 1]])) if len(run) > 5 else np.nan)
-        if len(directions) != 3:
+            widths.append(float(np.median(2 * distance[run[4:15, 0], run[4:15, 1]])))
+        if len(widths) != 3:
             continue
-        pair = [float(np.degrees(np.arccos(np.clip(directions[i] @ directions[j], -1, 1))))
-                for i, j in ((0, 1), (0, 2), (1, 2))]
-        widths = np.array(widths)
-        order = np.argsort(widths)[::-1]
-        parent = order[0]
-        # the angle between the two daughters (the pair not involving the widest segment)
-        daughters = [i for i in range(3) if i != parent]
-        index = {(0, 1): 0, (0, 2): 1, (1, 2): 2}[tuple(sorted(daughters))]
-        angles.append(pair[index])
-        d0, d1, d2 = widths[order]
+        d0, d1, d2 = np.sort(widths)[::-1]
         if d2 > 1.5 and d0 < d1 + d2:
             low, high = 1.0, 8.0
             for _ in range(40):
@@ -412,7 +398,6 @@ def morphology_stats(od, mask, valid, um_per_px):
                 else:
                     high = mid
             exponents.append(0.5 * (low + high))
-    out["daughter angle median (deg)"] = _pct(angles, 50)
     out["junction exponent median"] = _pct(exponents, 50)
     contrast = 1 - np.exp(-np.nan_to_num(od[skeleton]))
     diameter_px = 2 * distance[skeleton]

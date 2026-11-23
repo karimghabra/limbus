@@ -49,15 +49,6 @@ def _shape_c(d):
     return (0.8 + np.exp(-0.075 * d)) * (-1.0 + s) + s
 
 
-def viscosity_in_vitro(d, hd):
-    """Relative apparent viscosity of blood in glass tubes of diameter d µm at discharge haematocrit hd [Pries1992]."""
-    d = np.asarray(d, float)
-    hd = np.asarray(hd, float)
-    mu45 = 220.0 * np.exp(-1.3 * d) + 3.2 - 2.44 * np.exp(-0.06 * d ** 0.645)
-    c = _shape_c(d)
-    return 1.0 + (mu45 - 1.0) * ((1.0 - hd) ** c - 1.0) / ((1.0 - 0.45) ** c - 1.0)
-
-
 def viscosity_in_vivo(d, hd):
     """Relative apparent viscosity in microvessels in vivo [Pries1994], with the endothelial surface layer
     represented by the effective diameter d - 1.1 µm."""
@@ -100,11 +91,9 @@ def boundary_pressure(role, diameter, physiology: Physiology):
     log-linear in diameter between the two calibres given for each side of the circulation (docs §6.2)."""
     p = physiology
     t = np.clip(np.log(diameter / 10.0) / np.log(10.0), -0.5, 1.5)    # 0 at 10 µm, 1 at 100 µm
-    if role == "arterial":
-        return p.arterial_pressure_at_10um + t * (p.arterial_pressure_at_100um - p.arterial_pressure_at_10um)
-    if role == "venous":
-        return p.venous_pressure_at_10um + t * (p.venous_pressure_at_100um - p.venous_pressure_at_10um)
-    return p.capillary_boundary_pressure
+    at_10um, at_100um = {"arterial": (p.arterial_pressure_at_10um, p.arterial_pressure_at_100um),
+                         "venous": (p.venous_pressure_at_10um, p.venous_pressure_at_100um)}[role]
+    return at_10um + t * (at_100um - at_10um)
 
 
 @dataclass

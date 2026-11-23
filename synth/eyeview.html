@@ -401,7 +401,7 @@ function loop(now) {
 camera.position.set(0, 0, distanceFor(34));
 // a link can open on a view: #s_mm,clock_deg,um_per_px[,t_s][,colour][,nolids]
 { const h = location.hash.replace('#', '').split(',');
-  if (h.length >= 3 && !isNaN(+h[0])) { resize(); window.__setViewNow = [+h[0], +h[1], +h[2]]; if (h[3]) t = +h[3];
+  if (h.length >= 3 && !isNaN(+h[0])) { resize(); window.__setViewNow = [+h[0], +h[1], +h[2]]; if (isFinite(parseFloat(h[3]))) t = parseFloat(h[3]);
     if (h.includes('colour')) uniforms.uColour.value = 1; if (h.includes('nolids')) lidGroup.visible = false; } }
 requestAnimationFrame(loop);
 window.__ready = true;

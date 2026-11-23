@@ -130,10 +130,9 @@ def _illumination(image, grid=(32, 24), rounds=4):
 class Mapper:
     """The map of one eye's surface over a region ((clock from, clock to), (s from, s to) mm), at um_per_px."""
 
-    def __init__(self, globe, region, um_per_px=4.0, min_ncc=0.75, adjust=True, z_reg_um=150.0):
+    def __init__(self, globe, region, um_per_px=4.0, min_ncc=0.75, z_reg_um=150.0):
         self.g = globe
         self.z_reg = z_reg_um                     # the depth at which fields are matched (the vessels' typical depth)
-        self.adjust = adjust                      # re-solve all places after each burst (False: place once)
         self.links = []                           # pairwise measurements (i, j, chart dx, dy um, correlation)
         self.min_ncc = min_ncc                    # least correlation for a registration to be trusted
         self.levels = []                          # the sclera's brightness in the bursts accepted so far
@@ -259,7 +258,7 @@ class Mapper:
         valid &= ~lid
         return stack, kept, np.array(shifts), valid
 
-    def add(self, frames, gaze, lamp, refine=True):
+    def add(self, frames, gaze, lamp):
         """Add one burst, given only its frames, the commanded gaze and the camera. Returns its placement."""
         sc = lamp.scene
         um_cam, h, w = sc.anatomy.um_per_px, sc.height_px, sc.width_px
@@ -287,7 +286,7 @@ class Mapper:
         self._predicted = (s_p, c_p)
         shift_um = np.zeros(2)
         diagnostics = dict(overlap=0.0, response=0.0, valid=float(valid.mean()))
-        if refine and self.bursts:
+        if self.bursts:
             # registered against every earlier burst whose field overlaps, one at a time (not the blended map, which
             # one misplaced burst would ghost), on the vessels themselves (the vesselness, softly compressed), which
             # the texture, focus and illumination of two recordings change far less than the raw density; the
@@ -334,7 +333,7 @@ class Mapper:
                     shift_um = self.g.point(s_p, c_p, 0.0) - start
         index = len(self.bursts)
         # every trusted pairwise measurement, as the chart offset between this burst and the earlier one
-        if refine and self.bursts:
+        if self.bursts:
             r = math.radians(roll)
             for j, sx, sy, ncc in measured:
                 if ncc <= 0.6:
@@ -355,7 +354,7 @@ class Mapper:
                                 weight=(centre * valid).astype(np.float32) * len(kept), size=(w, h)))
         self.placements.append(dict(pose=(s_p, c_p, roll), shift_um=shift_um, kept=len(kept), first=int(kept[0]),
                                     **diagnostics))
-        if self.adjust and len(self.links) > 0:
+        if self.links:
             self._adjust()
         else:
             self._accumulate(self.bursts[-1])

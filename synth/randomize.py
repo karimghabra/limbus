@@ -4,8 +4,7 @@
     scene = random_scene(seed=17)                                  # the default ranges
     scene = random_scene(seed=17, config={"optics.psf_sigma_px": (0.6, 2.5)})   # one range overridden
 
-Anatomy and physiology are drawn within their cited ranges (docs/synthetic_conjunctiva_anatomy.md), so every
-random network still passes the anatomy check; the appearance - blur, focus, motion, noise, gain, texture,
+Anatomy and physiology are drawn within their cited ranges (docs/synthetic_conjunctiva_anatomy.md); the appearance - blur, focus, motion, noise, gain, texture,
 illumination, flicker - is drawn from wider domain-randomisation ranges around the values measured on the real
 bursts, so a network trained on the output does not learn one camera's settings. Most draws pass the anatomy check
 (docs/synthetic_conjunctiva_validation.md gives the rate); random_scene(seed, anatomical=True) keeps only those

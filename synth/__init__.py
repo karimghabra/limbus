@@ -9,6 +9,6 @@ Every parameter traces to docs/synthetic_conjunctiva_anatomy.md or to a measurem
 (synth.targets); synth.anatomy holds them with their sources.
 """
 from .anatomy import Anatomy, Optics, Physiology, Scene
-from .simulate import Result, load_graph, simulate, write_burst
+from .simulate import Result, simulate, write_burst
 
-__all__ = ["Anatomy", "Optics", "Physiology", "Scene", "Result", "simulate", "write_burst", "load_graph"]
+__all__ = ["Anatomy", "Optics", "Physiology", "Scene", "Result", "simulate", "write_burst"]

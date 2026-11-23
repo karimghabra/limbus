@@ -6,6 +6,9 @@ anatomical, and how the flow analysis performs on synthetic data whose answer is
 
 **Data.** Real: burst 2026-09-16_15-50-52 (reference burst 1), cropped to rows 240-960 and columns 384-1536 (720 × 1152 px), 140 frames at 32.19 fps. Synthetic: the
 default scene with seeds 1 and 2, 768 × 512 px, 120 frames each. Both at 3.26 µm/px (the ruler, anatomy §1.3).
+The synthetic figures below were computed with the fixed 350 µm margin and the earlier draw of the eye motion; a
+burst now draws its motion first and widens the margin to hold it (anatomy §1.2), so seeds 1 and 2 grow other
+networks of the same statistics and a re-run gives figures that differ within the seed-to-seed spread shown here.
 
 **Reproduce.** `notebooks/synthetic.py` with `SYNTH_SEED=1` and `LIMBUS_BURST` set to the real burst produces every
 table below and the side-by-side clip; section 3 additionally needs the flow notebook run on the synthetic burst
@@ -79,7 +82,6 @@ diameters) therefore apply to both columns. Lengths and diameters in µm, at 3.2
 | segment length p50 (um) | 95.6 | 99.6 | 93.1 | 1.04 | 0.974 |
 | segment length p75 (um) | 163 | 165 | 146 | 1.01 | 0.891 |
 | segment length p95 (um) | 328 | 305 | 311 | 0.929 | 0.95 |
-| daughter angle median (deg) | 92.9 | 89.2 | 83.6 | 0.961 | 0.901 |
 | junction exponent median | 1.99 | 2.08 | 1.56 | 1.05 | 0.786 |
 
 ### Vessel shape: straightness, curvature spectrum, orientation, branching

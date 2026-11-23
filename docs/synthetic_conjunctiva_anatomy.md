@@ -18,7 +18,7 @@ Every number carries one of four tags:
 
 Contents: 1 imaging geometry and the globe · 2 layers in depth · 3 calibres · 4 branching · 5 density and tortuosity ·
 6 haemodynamics · 7 optics and the camera · 8 targets measured on the real bursts · 9 assumptions and gaps ·
-10 parameter table · 11 the whole anterior eye · references.
+10 parameter table · 11 the whole anterior eye · 12 the patient, the eye in the head, and mapping · references.
 
 ## 1. Imaging geometry
 
@@ -32,10 +32,18 @@ later frames add the eye's motion (section 7.6).
 
 ### 1.2 The field
 
-The default field is 768 × 512 pixels (2.50 × 1.67 mm at s = 3.26 µm/px), generated inside a domain 350 µm larger
-on every side, so that vessels at the image border continue naturally and eye motion never reveals an edge.
-`Scene.width_px`, `height_px` and `margin_um` change it. The field sits `limbus_distance_mm` = 3 mm from the limbus,
-in the bulbar conjunctiva behind the palisade zone (section 2.3).
+The default field is 768 × 512 pixels (2.50 × 1.67 mm at s = 3.26 µm/px), generated inside a domain at least 350 µm
+larger on every side, so that vessels at the image border continue naturally and eye motion never reveals an edge.
+`Scene.width_px`, `height_px` and `margin_um` change it. A burst draws its eye motion first (from the scene's seed
+and the number of frames) and widens the margin where the motion needs more than `margin_um`: to the largest
+excursion, saccades and rotation included, as the deepest vessels show it on the globe (they are drawn nearer the
+field's centre, section 1.4), plus 30 µm (`synth.camera.cover_motion`; the whole eye's views and the slit lamp's
+bursts do the same). At the default size a burst that moves more than about 60 px needs more than 350 µm, which
+most 120-frame bursts do, so for those seeds `simulate(scene)` grows a different (larger) network than
+`network.generate(scene)` with the default margin, and the same seed recorded for a different number of frames
+may too; `Result.scene` and `truth/scene.json` hold the margin used. The statistics inside the field do not depend
+on the margin. The field models bulbar conjunctiva about 3 mm from the limbus, behind
+the palisade zone (section 2.3).
 
 ### 1.3 Pixel scale (measured)
 
@@ -122,7 +130,7 @@ These structures bound the field rather than appear in it, but they set its plum
   arcade about 2 mm behind the limbus, and merge into the marginal corneal arcade [Kemenes2025]; capillary loops
   occur only in the limbal arcades [Selbach2005].
 
-The generator models the bulbar field behind the palisade zone (`limbus_distance_mm` = 3 mm by default), so it
+The generator models the bulbar field behind the palisade zone (about 3 mm from the limbus), so it
 draws no palisade loops or marginal arcade; the whole eye (section 11) adds the limbal arcade, the palisade hairpins
 and the limbal venous ring at its coarse level.
 
@@ -263,9 +271,9 @@ In the generator:
   (120 per mm²), fitted so that the capillary red-cell velocity and the arteriolar flow come out at the cited
   values (section 6.5): the number of terminal arterioles per capillary decides how long the capillary paths
   are, and hence how fast blood crosses them.
-- `arterial_trees_per_mm2` = 0.4 and `venous_trees_per_mm2` = 0.4 roots per mm² follow the arteriole-to-venule
-  ratio of section 3; their absolute number (fitted) sets how large each tree grows, and so the calibre of its
-  largest vessels, which the anatomy check holds within the cited ranges.
+- `arterial_trees_per_mm2` = 0.4 and `venous_trees_per_mm2` = 0.4 roots per mm² (fitted): as many arteriolar as
+  venular trees, not the arteriole-to-venule ratio of section 3. Their number sets how large each tree grows, and
+  so the calibre of its largest vessels, which the anatomy check holds within the cited ranges.
 - Episcleral vessels: `episcleral_vessels_per_mm` = 2.2 vessels per mm along the limbus (fitted to the measured
   length density and diameter distribution, section 8; the literature gives no count), running radially [Akagi2018,
   Kemenes2025] with a heading spread of 0.8 rad (`episcleral_heading_spread`) and a random curvature of SD
@@ -278,8 +286,8 @@ In the generator:
 - Tortuosity is multi-scale: the colonisation paths and a smooth lateral wiggle give each vessel its meander
   (`Anatomy.wiggle`: arterioles 36 µm and venules 40 µm over 220 µm, capillaries a 4 µm bow over 110 µm); on top
   of it vessels above capillary size get gentle bends of 100–300 µm (`bend_wiggle`, 5 µm over 70 µm) and a slight
-  lateral jitter (`fine_jitter`, 0.3 µm over 6 µm), tapered to nothing at the junctions; kinks (`kinks`) are off,
-  and capillaries get neither jitter nor bends, so the mesh is a soft polygon of slightly bowed sides. The settings are fitted so that the straightness, tortuosity and curvature
+  lateral jitter (`fine_jitter`, 0.3 µm over 6 µm), tapered to nothing at the junctions;
+  capillaries get neither jitter nor bends, so the mesh is a soft polygon of slightly bowed sides. The settings are fitted so that the straightness, tortuosity and curvature
   distributions, the curvature spectrum and the centreline jitter measured on the real bursts are reproduced
   through the same estimator, and by eye against the real frames (section 8).
 - The calibre varies along each named vessel as one smooth profile, continuous through every junction it passes
@@ -312,9 +320,6 @@ Relative apparent viscosity, D in µm [Pries1994, as written in SecombPries2013]
     μ_rel = [1 + (μ*₀.₄₅ − 1) ((1 − H_D)^C − 1) / ((1 − 0.45)^C − 1) (D / (D − 1.1))²] (D / (D − 1.1))²
     μ*₀.₄₅ = 6 e^(−0.085 D) + 3.2 − 2.44 e^(−0.06 D^0.645)
     C = (0.8 + e^(−0.075 D)) (−1 + 1 / (1 + 10⁻¹¹ D¹²)) + 1 / (1 + 10⁻¹¹ D¹²)
-
-The in vitro law [Pries1992] (μ₀.₄₅ = 220 e^(−1.3 D) + 3.2 − 2.44 e^(−0.06 D^0.645), no surface-layer term) is
-implemented for comparison.
 
 ### 6.2 Pressures at the boundary
 
@@ -499,6 +504,103 @@ after hundreds of milliseconds), a slow rotation
 of about 0.05°, and a focal plane that wanders smoothly by ±25 µm about 250 µm (assumed amplitude; it makes the
 sharpness of each layer change from frame to frame).
 
+## 8. Targets measured on the real bursts
+
+`synth/targets.py` measures every statistic below on a burst as the camera wrote it; the same code runs on the
+synthetic bursts, and `notebooks/synthetic.py` prints the two side by side. The real values are from burst
+2026-09-16_15-50-52, cropped to 720 × 1152 px (the crop the flow notebook uses), 140 frames at 32.19 fps, at
+3.26 µm/px; the longest fixation (91 frames) is registered by translation and averaged for the still statistics.
+
+The real values and their synthetic counterparts, statistic by statistic, are in
+[synthetic_conjunctiva_validation.md](synthetic_conjunctiva_validation.md) and in §7 of `notebooks/synthetic.py`.
+The values the generator takes directly from them: frame rate and exposure (manifest); motion step, saccade rate
+and excursion; the mains flicker and its white residual; photon-transfer gain, read noise, gamma and row offset;
+the background level; the texture band energies and the illumination falloff. The values it was fitted against:
+tortuosity, the diameter distribution and vessel density, contrast by calibre, sharpness and red-cell flicker.
+
+## 9. Assumptions and gaps
+
+| item | status | what the generator does |
+|---|---|---|
+| episclera thickness | not found | the episcleral plexus sits beneath conjunctiva + Tenon's (260–440 µm) |
+| perforator count, angle and calibre; ACA perforation distance and calibre | not found (a 2–5 mm band from the limbus is a bound from muscle-insertion distances, not a measurement) | 0.25 perforators per mm², 30–70°, calibre of the deep vessels |
+| conjunctival–episcleral communicating vessels per mm² | not counted in any source [Akagi2018] | 1.2 per mm², fitted so that a typical field holds a few |
+| angle of communicating vessels | oblique course reported, no angle measured [Asanad2021, Li2011] | 20–60° to the surface |
+| arteriole–venule pairing frequency in the conjunctiva | not found | every arteriole of 25 µm or more accompanied, fitted to the measured paired share and by eye (companions of smaller arterioles drew crisp double tracks the fine net of the recordings does not show); gap fitted to the measured pair spacing (the mesentery definition, within 15 µm [NelloreHarris2002], drew them touching) |
+| episcleral vessel count per mm of limbus | not found | 2.2 per mm, fitted to the measured diameter distribution |
+| episcleral and ACA velocities and pressures | not found | radial pressure gradient fitted to keep large-vessel speeds within the measured range |
+| conjunctival tortuosity in healthy eyes | not found (only diabetic sets) | meander, jitter and bends fitted to the measured tortuosity, curvature and jitter |
+| illumination spectrum | not recorded | spectral weights fitted to the measured contrast by calibre |
+| visible-wavelength optics of human conjunctiva and sclera | not found | veil length and scattering blur fitted to measured contrast and sharpness |
+| depth of focus and focal wander | not recorded | defocus 0.06 µm/µm, focus 250 µm, wander ±25 µm |
+| fractal dimension and bifurcation angles | published for slit lamp and retina | not imposed; measured on the images |
+| geometric drawing details | no anatomical counterpart | episcleral and deep curvature (0.0008 rad/µm, correlation 250 µm), side-branch angles (20-45° off the episcleral and deep vessels, 20-70° in the conjunctival trees), depth undulation of centrelines (5-10 µm), mesh lattice jitter (0.3 of the spacing) and stretch (1.0-1.3), anastomosis lengths (60-350 µm), conjunctival depth by calibre (`network._conjunctival_depth`), the renderer's nine depth slabs and three sub-exposures, glint sizes (1.2-3 px); all set by eye against the recordings and the measured targets |
+
+## 10. Parameter table
+
+Every field of `synth.anatomy.Anatomy`, `Physiology` and `Optics`, its default and its basis. Sections refer to
+this document.
+
+| parameter | default | basis |
+|---|---|---|
+| um_per_px | 3.26 | measured, §1.3 |
+| eye_radius_um, camera_tilt_deg | 12.5 mm, (0, 0) | [Choi2014, Jesus2017], §1.4 |
+| epithelium | 45 µm | [Zhang2013, Zhang2011, FengSimpson2008], §2.1 |
+| conjunctival_plexus | 50–230 µm | [Zhang2013, Akagi2018], §2.2 |
+| episcleral_plexus | 260–440 µm | [Zhang2013, FernandezVigo2021, Kumar2013, Akagi2018], §2.2 |
+| deep_plexus | 520–900 µm | [Olsen1998, Vurgese2012, Bizheva2011, Akagi2018], §2.2 |
+| capillary_diameter | 4.5–9 µm | [Moka2020, Koutsiaris2015, Neriyanuri2023], §3 |
+| terminal_arteriole_diameter | 9–12 µm | within 6–12 µm [Koutsiaris2010], §3 |
+| postcapillary_venule_diameter | 10–16 µm | within the 9–14 and 14–24 µm classes [Moka2020, Koutsiaris2015], §3 |
+| episcleral_artery_diameter | 40–80 µm | [MacKenzie2016], §3 |
+| episcleral_vein_diameter | 50–100 µm | [Asanad2021, Kim2024], §3 |
+| episcleral_vein_mean_sd | 61 ± 8 µm | drawn about the measured mean [Kim2024], within the range above, §3 |
+| max_arteriole_diameter, max_venule_diameter | 58 µm, 72 µm | inside the largest conjunctival arteriole (61 µm) and venule (75 µm) [Khansari2017], §3 |
+| deep_vessel_diameter | 20–50 µm | [Bizheva2011], §3 |
+| communicating_diameter | 10–20 µm | [Bizheva2011], §2.4 |
+| perforating_artery_diameter | 20–50 µm | [Bizheva2011], §2.4 |
+| murray_exponent_arterial | 2.6 | retinal arteries 2.59 [Luo2017]; within [Murray1926a, MayrovitzRoy1983], §4 |
+| murray_exponent_venous | 2.7 | within 1.95–3.14 [Luo2017, Murray1926a], §4 |
+| capillary_mesh_spacing | 285 µm | fitted to capillary length density [Kvernebo2022], §5 |
+| capillary_edge_drop | 0.18 | assumed (open polygons), §5 |
+| radial_bias | 0.15 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
+| arterial_trees_per_mm2, venous_trees_per_mm2 | 0.4, 0.4 | fitted, §5 |
+| av_pair_offset, av_pair_fraction | 50–110 µm, 0.2 | assumed, §4.1 and §9 |
+| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 20–60 µm, 1.3–1.5, 40 µm | fitted; fitted; fitted to the measured pair spacing; within [Yusufu2025]; fitted, §4.1 |
+| fine_jitter, large_jitter, bend_wiggle, width_variation, width_variation_large, wall_irregularity, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 0.03 / 0.5 per µm of calibre; 5 µm / 70 µm; CV 0.18 / 100 µm; CV 0.08 / 300 µm; 3 % / 14 µm; 5–25 % per vessel; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
+| anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
+| episcleral_vessels_per_mm | 2.2 | fitted to the measured diameters, §5 |
+| episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
+| deep_vessels_per_mm | 0.6 | assumed, §2.2 |
+| communicating_per_mm2, communicating_angle_deg | 1.2, 20–60° | fitted / assumed, §2.4 and §9 |
+| perforator_per_mm2, perforator_angle_deg | 0.25, 30–70° | assumed, §2.4 and §9 |
+| wiggle | per kind | fitted to the measured tortuosity, §5 |
+| growth_step, growth_influence, growth_kill, attractors_per_mm2, growth_persistence | 18 µm, 400 µm, 210 µm, 120 /mm², 0.8 | fitted to capillary velocity and arteriolar flow, §5 and §6.5 |
+| inflow_discharge_haematocrit | 0.40 | [SecombPries2013, Pries1990], §6.3 |
+| plasma_viscosity_mpas | 1.25 | [Pries1992], §6.1 |
+| rbc_volume_um3, rbc_diameter_um, rbc_thickness_um | 90, 7.8, 2.2 | [Bosschaart2014, Fedosov2010], §6.4 |
+| arterial_pressure_at_10um, _at_100um | 30, 50 mmHg | [Zweifach1974], §6.2 |
+| venous_pressure_at_10um, _at_100um | 14, 8 mmHg | [Williams1990, Hahn2004, Zeimer1983, Sit2011, Arora2017], §6.2 |
+| radial_pressure_gradient_mmhg_per_mm | 0.15 | direction [Meyer1988], value fitted, §6.2 |
+| heart_rate_hz, arterial_pulsatility, pulse_shape, pulse_harmonics, distensibility_per_mmhg | 1.1 Hz, 0.12, systolic + dicrotic wave, 4 harmonics, 0.002 / 0.03 / 0.3 per mmHg | [Neriyanuri2023]; fitted to [Koutsiaris2010, Zweifach1974, Hahn2004, Puyo2019], §6.3 |
+| cell_free_layer_um | 0.8–3.1 µm | [Kim2007], §6.4 |
+| profile_bluntness | 4 | [Tangelder1986], §6.4 |
+| aggregation_cv | 0.42 | [Ding2025], §6.4 |
+| clump_length_um, clump_amplitude | 25 µm, 0.25 | [Fedosov2010, Kim2007]; fitted to the measured flicker, §6.4 |
+| spectrum | nine bands | absorption [Bosschaart2014]; weights fitted to measured contrast, §7.1 |
+| double_pass | 2 | §7.1 |
+| scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 16 µm | fitted to contrast and edge steepness, §7.2 |
+| psf_sigma_px | 0.9 | measured bound ≤ 1.2 px, §7.2 |
+| defocus_um_per_um, focus_depth_um, focus_wander_um | 0.06, 250 µm, 25 µm | fitted to the fine vessels' edge steepness; assumed; §7.2 and §7.6 |
+| illumination_p5_p95, background_dn | 0.64 (fitted to the measured 0.73), 2650 DN | measured, §7.3 and §7.5 |
+| flicker_hz, flicker_amplitude, flicker_white | 8.77 Hz, 1.11 %, 0.12 % | measured (amplitude converted to linear light); white fitted, §7.3 |
+| texture_amplitudes | fitted amplitudes of the measured bands | measured, §7.3 |
+| exposure_s, fps | 12.838 ms, 32.19 | measured (manifest), §7.4 |
+| gain_dn_per_e, read_noise_e, gamma, ceiling_dn, row_offset_dn | 1.344, 6.8 e⁻, 0.8, 4091, 3.56 DN | measured, §7.5 |
+| motion_step_px, motion_bound_px, saccade_rate_hz, saccade_px, rotation_deg | 4.1 px, 60 px, 0.46 /s, 40–130 px, 0.05° | measured (step corrected for the estimator's under-read), §7.6 |
+| tube_um_per_px | 6 µm/px | at this magnification or coarser vessels are drawn as tubes of red-cell density (assumed), §11.9 |
+| glints | 4 | measured: a few eye-locked specular reflections per frame |
+
 ## 11. The whole anterior eye and its levels of detail
 
 `synth/eye.py` grows the network of the whole anterior eye from where its blood enters and leaves, over the curved
@@ -554,8 +656,9 @@ pull along the meridian (`coarse_radial_bias` 0.15 [Akagi2018]) and a persistenc
 (`coarse_growth_persistence`), both fitted so that a 2.5 mm field shows the spread of vessel orientations and the
 junction density of the recordings (§7: orientation order 0.15, 33 junctions per mm²); with a stronger pull the
 trunks crossed every field as parallel radial lines), so they meet and interleave around the watershed rather than
-at a fixed line. Their paths get the meander and bends of section 5, and half its calibre
-variation (trunks vary less in proportion than small vessels [Kiani1993]). Each anterior artery also
+at a fixed line. Their paths get the meander and bends of section 5, and its calibre
+variation along each vessel (`assign_calibres`, whose amplitude falls with calibre: trunks vary less in proportion
+than small vessels [Kiani1993]). Each anterior artery also
 sends a short branch forward to the limbal arcade, which drains through palisade hairpins 1.5–2.1 mm long
 [Kemenes2025, Haagdorens2017] into a limbal venous ring (35 µm); the forward branches' ends are joined around the
 limbus into the arterial arcade (18–28 µm) [VanBuskirk1989, Kemenes2025], so both rings run round the cornea.
@@ -730,102 +833,6 @@ targets so that different parts of the conjunctiva come under the camera.
   `Mapper.evaluate` counted a chart column for the arc it spans on the globe (`um_per_column`): they took every
   column as 4 µm, which overstates the along-limbus part of each error by up to about a third at the limbal edge
   of this region, so the figures above are upper bounds.
-
-## 8. Targets measured on the real bursts
-
-`synth/targets.py` measures every statistic below on a burst as the camera wrote it; the same code runs on the
-synthetic bursts, and `notebooks/synthetic.py` prints the two side by side. The real values are from burst
-2026-09-16_15-50-52, cropped to 720 × 1152 px (the crop the flow notebook uses), 140 frames at 32.19 fps, at
-3.26 µm/px; the longest fixation (91 frames) is registered by translation and averaged for the still statistics.
-
-The real values and their synthetic counterparts, statistic by statistic, are in
-[synthetic_conjunctiva_validation.md](synthetic_conjunctiva_validation.md) and in §7 of `notebooks/synthetic.py`.
-The values the generator takes directly from them: frame rate and exposure (manifest); motion step, saccade rate
-and excursion; the mains flicker and its white residual; photon-transfer gain, read noise, gamma and row offset;
-the background level; the texture band energies and the illumination falloff. The values it was fitted against:
-tortuosity, the diameter distribution and vessel density, contrast by calibre, sharpness and red-cell flicker.
-
-## 9. Assumptions and gaps
-
-| item | status | what the generator does |
-|---|---|---|
-| episclera thickness | not found | the episcleral plexus sits beneath conjunctiva + Tenon's (260–440 µm) |
-| perforator count, angle and calibre; ACA perforation distance and calibre | not found (a 2–5 mm band from the limbus is a bound from muscle-insertion distances, not a measurement) | 0.25 perforators per mm², 30–70°, calibre of the deep vessels |
-| conjunctival–episcleral communicating vessels per mm² | not counted in any source [Akagi2018] | 1.2 per mm², fitted so that a typical field holds a few |
-| angle of communicating vessels | oblique course reported, no angle measured [Asanad2021, Li2011] | 20–60° to the surface |
-| arteriole–venule pairing frequency in the conjunctiva | not found | every arteriole of 25 µm or more accompanied, fitted to the measured paired share and by eye (companions of smaller arterioles drew crisp double tracks the fine net of the recordings does not show); gap fitted to the measured pair spacing (the mesentery definition, within 15 µm [NelloreHarris2002], drew them touching) |
-| episcleral vessel count per mm of limbus | not found | 2.2 per mm, fitted to the measured diameter distribution |
-| episcleral and ACA velocities and pressures | not found | radial pressure gradient fitted to keep large-vessel speeds within the measured range |
-| conjunctival tortuosity in healthy eyes | not found (only diabetic sets) | meander, jitter and kinks fitted to the measured tortuosity, curvature and jitter |
-| illumination spectrum | not recorded | spectral weights fitted to the measured contrast by calibre |
-| visible-wavelength optics of human conjunctiva and sclera | not found | veil length and scattering blur fitted to measured contrast and sharpness |
-| depth of focus and focal wander | not recorded | defocus 0.06 µm/µm, focus 250 µm, wander ±25 µm |
-| fractal dimension and bifurcation angles | published for slit lamp and retina | not imposed; measured on the images |
-| geometric drawing details | no anatomical counterpart | episcleral and deep curvature (0.0008 rad/µm, correlation 250 µm), side-branch angles (20-45° off the episcleral and deep vessels, 20-70° in the conjunctival trees), depth undulation of centrelines (5-10 µm), mesh lattice jitter (0.3 of the spacing) and stretch (1.0-1.3), anastomosis lengths (60-350 µm), conjunctival depth by calibre (`network._conjunctival_depth`), the renderer's nine depth slabs and three sub-exposures, glint sizes (1.2-3 px); all set by eye against the recordings and the measured targets |
-
-## 10. Parameter table
-
-Every field of `synth.anatomy.Anatomy`, `Physiology` and `Optics`, its default and its basis. Sections refer to
-this document.
-
-| parameter | default | basis |
-|---|---|---|
-| um_per_px | 3.26 | measured, §1.3 |
-| eye_radius_um, camera_tilt_deg | 12.5 mm, (0, 0) | [Choi2014, Jesus2017], §1.4 |
-| limbus_distance_mm | 3.0 | assumed: bulbar field behind the palisade zone, §2.3 |
-| epithelium | 45 µm | [Zhang2013, Zhang2011, FengSimpson2008], §2.1 |
-| conjunctival_plexus | 50–230 µm | [Zhang2013, Akagi2018], §2.2 |
-| episcleral_plexus | 260–440 µm | [Zhang2013, FernandezVigo2021, Kumar2013, Akagi2018], §2.2 |
-| deep_plexus | 520–900 µm | [Olsen1998, Vurgese2012, Bizheva2011, Akagi2018], §2.2 |
-| capillary_diameter | 4.5–9 µm | [Moka2020, Koutsiaris2015, Neriyanuri2023], §3 |
-| terminal_arteriole_diameter | 9–12 µm | within 6–12 µm [Koutsiaris2010], §3 |
-| postcapillary_venule_diameter | 10–16 µm | within the 9–14 and 14–24 µm classes [Moka2020, Koutsiaris2015], §3 |
-| episcleral_artery_diameter | 40–80 µm | [MacKenzie2016], §3 |
-| episcleral_vein_diameter | 50–100 µm | [Asanad2021, Kim2024], §3 |
-| deep_vessel_diameter | 20–50 µm | [Bizheva2011], §3 |
-| communicating_diameter | 10–20 µm | [Bizheva2011], §2.4 |
-| perforating_artery_diameter | 20–50 µm | [Bizheva2011], §2.4 |
-| murray_exponent_arterial | 2.6 | retinal arteries 2.59 [Luo2017]; within [Murray1926a, MayrovitzRoy1983], §4 |
-| murray_exponent_venous | 2.7 | within 1.95–3.14 [Luo2017, Murray1926a], §4 |
-| capillary_mesh_spacing | 285 µm | fitted to capillary length density [Kvernebo2022], §5 |
-| capillary_edge_drop | 0.18 | assumed (open polygons), §5 |
-| radial_bias | 0.15 | radial course of conjunctival vessels [Akagi2018], strength fitted to the measured tortuosity, §5 |
-| arterial_trees_per_mm2, venous_trees_per_mm2 | 0.4, 0.4 | ratio [Cheung2001, Khansari2017]; number fitted, §3 and §5 |
-| av_pair_offset, av_pair_fraction | 50–110 µm, 0.2 | assumed, §4.1 and §9 |
-| pair_fraction, pair_min_diameter, pair_gap_um, pair_calibre_ratio, pair_max_venule_diameter | 1.0, 25 µm, 20–60 µm, 1.3–1.5, 40 µm | fitted; fitted; fitted to the measured pair spacing; within [Yusufu2025]; fitted, §4.1 |
-| fine_jitter, large_jitter, bend_wiggle, kinks, width_variation, width_variation_large, wall_irregularity, taper, episcleral_curvature, episcleral_heading_spread, path_straightening, branch_spacing_um, max_terminal_branch_um | 0.3 µm / 6 µm; 0.03 / 0.5 per µm of calibre; 5 µm / 70 µm; off; CV 0.18 / 100 µm; CV 0.08 / 300 µm; 3 % / 14 µm; 5–25 % per vessel; 0.0008 rad/µm; 0.8 rad; 0.4; 160 µm; 450 µm | fitted to the measured curvature, jitter and width variation; width CV within [Kiani1993, Shahidi2010], §5 |
-| anastomoses_per_mm2 | 2.0 | assumed (loops between trees), §5 |
-| episcleral_vessels_per_mm | 2.2 | fitted to the measured diameters, §5 |
-| episcleral_avas_per_mm2, ava_diameter | 0.75, 5–8 µm | [Selbach2005]; structure [RohenFunk1994], lumen assumed, §2.4 |
-| deep_vessels_per_mm | 0.6 | assumed, §2.2 |
-| communicating_per_mm2, communicating_angle_deg | 1.2, 20–60° | fitted / assumed, §2.4 and §9 |
-| perforator_per_mm2, perforator_angle_deg | 0.25, 30–70° | assumed, §2.4 and §9 |
-| wiggle | per kind | fitted to the measured tortuosity, §5 |
-| growth_step, growth_influence, growth_kill, attractors_per_mm2, growth_persistence, venous_kill_ratio | 18 µm, 400 µm, 210 µm, 120 /mm², 0.8, 1.0 | fitted to capillary velocity and arteriolar flow, §5 and §6.5 |
-| inflow_discharge_haematocrit | 0.40 | [SecombPries2013, Pries1990], §6.3 |
-| plasma_viscosity_mpas | 1.25 | [Pries1992], §6.1 |
-| rbc_volume_um3, rbc_diameter_um, rbc_thickness_um | 90, 7.8, 2.2 | [Bosschaart2014, Fedosov2010], §6.4 |
-| arterial_pressure_at_10um, _at_100um | 30, 50 mmHg | [Zweifach1974], §6.2 |
-| venous_pressure_at_10um, _at_100um | 14, 8 mmHg | [Williams1990, Hahn2004, Zeimer1983, Sit2011, Arora2017], §6.2 |
-| capillary_boundary_pressure | 15 mmHg | used only if a capillary leaves the domain, which the closed mesh prevents, §6.2 |
-| radial_pressure_gradient_mmhg_per_mm | 0.15 | direction [Meyer1988], value fitted, §6.2 |
-| heart_rate_hz, arterial_pulsatility, pulse_shape, distensibility_per_mmhg | 1.1 Hz, 0.12, systolic + dicrotic wave, 0.002 / 0.03 / 0.3 per mmHg | [Neriyanuri2023]; fitted to [Koutsiaris2010, Zweifach1974, Hahn2004, Puyo2019], §6.3 |
-| cell_free_layer_um | 0.8–3.1 µm | [Kim2007], §6.4 |
-| profile_bluntness | 4 | [Tangelder1986], §6.4 |
-| aggregation_cv | 0.42 | [Ding2025], §6.4 |
-| clump_length_um, clump_amplitude | 25 µm, 0.25 | [Fedosov2010, Kim2007]; fitted to the measured flicker, §6.4 |
-| spectrum | nine bands | absorption [Bosschaart2014]; weights fitted to measured contrast, §7.1 |
-| double_pass | 2 | §7.1 |
-| scatter_veil_length_um, scatter_blur_um_at_500 | 650 µm, 16 µm | fitted to contrast and edge steepness, §7.2 |
-| psf_sigma_px | 0.9 | measured bound ≤ 1.2 px, §7.2 |
-| defocus_um_per_um, focus_depth_um, focus_wander_um | 0.06, 250 µm, 25 µm | fitted to the fine vessels' edge steepness; assumed; §7.2 and §7.6 |
-| illumination_p5_p95, background_dn | 0.64 (fitted to the measured 0.73), 2650 DN | measured, §7.3 and §7.5 |
-| flicker_hz, flicker_amplitude, flicker_white | 8.77 Hz, 1.11 %, 0.12 % | measured (amplitude converted to linear light); white fitted, §7.3 |
-| texture_band_sd, texture_amplitudes | measured bands; fitted amplitudes | measured, §7.3 |
-| exposure_s, fps | 12.838 ms, 32.19 | measured (manifest), §7.4 |
-| gain_dn_per_e, read_noise_e, gamma, ceiling_dn, row_offset_dn | 1.344, 6.8 e⁻, 0.8, 4091, 3.56 DN | measured, §7.5 |
-| motion_step_px, motion_bound_px, saccade_rate_hz, saccade_px, rotation_deg | 4.1 px, 60 px, 0.46 /s, 40–130 px, 0.05° | measured (step corrected for the estimator's under-read), §7.6 |
-| glints | 4 | measured: a few eye-locked specular reflections per frame |
 
 ## References
 

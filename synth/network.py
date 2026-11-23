@@ -1,8 +1,9 @@
 """An anatomically constrained 3D microvessel network of the bulbar conjunctiva, episclera and sclera.
 
 Coordinates are micrometres: x along the limbus, y radially away from it, z depth below the epithelial surface
-(positive down). The network is generated in a domain larger than the camera's field by Scene.margin_um, so the
-vessels at the image border continue naturally and eye motion never shows an edge; where a vessel leaves the
+(positive down). The network is generated in a domain larger than the camera's field by Scene.margin_um, which a
+burst widens where its eye motion reaches further (synth.camera.cover_motion), so the vessels at the image border
+continue naturally and eye motion never shows an edge; where a vessel leaves the
 domain its end is a boundary node with a pressure set by its role and calibre (synth.haemodynamics).
 
 The layers, from the surface down (docs/synthetic_conjunctiva_anatomy.md §2):
@@ -600,7 +601,7 @@ def _conjunctival_trees(builder, rng, scene, domain, communicating, border_roots
             attractors = np.vstack([attractors[:keep], beside])
             inside = (attractors[:, 0] > x0) & (attractors[:, 0] < x1) & (attractors[:, 1] > y0) & (attractors[:, 1] < y1)
             attractors = attractors[inside]
-        kill = a.growth_kill * (a.venous_kill_ratio if venous else 1.0)
+        kill = a.growth_kill
         if not roots:
             trees[kind] = None
             continue
@@ -778,24 +779,12 @@ def _anastomoses(builder, rng, scene, domain, kind, count):
     return made
 
 
-def _bumps(rng, s, rate_per_um, amplitude, width):
-    """A sum of Gaussian bumps of random sign at Poisson positions along arclength s: local kinks."""
-    out = np.zeros_like(s)
-    if len(s) < 3 or rate_per_um <= 0:
-        return out
-    n = rng.poisson(rate_per_um * s[-1])
-    for centre in rng.uniform(0, s[-1], n):
-        out += rng.choice([-1.0, 1.0]) * amplitude * rng.uniform(0.5, 1.5) * np.exp(-0.5 * ((s - centre) / width) ** 2)
-    return out
-
-
 def _roughen(network_edges, rng, scene):
-    """Multi-scale irregularity on every segment, after the topology is final: a fine lateral jitter and sparse
-    kinks on top of each vessel's smooth meander, and a smooth random variation of the calibre along its length.
-    Both taper to nothing at the segment ends, so junctions stay where they are."""
+    """Multi-scale irregularity on every segment, after the topology is final: a fine lateral jitter and gentle
+    bends on top of each vessel's smooth meander, tapered to nothing at the segment ends, so junctions stay where
+    they are."""
     a = scene.anatomy
     jitter_amplitude, jitter_length = a.fine_jitter
-    kink_rate, kink_amplitude, kink_width = a.kinks
     for e in network_edges:
         if e.layer == "communicating" or e.kind == "arteriovenous anastomosis":
             continue
@@ -814,7 +803,6 @@ def _roughen(network_edges, rng, scene):
         length = jitter_length + a.large_jitter[1] * e.diameter
         offset = amplitude * _smooth_noise(rng, n, length / 2.0)
         if e.kind != "capillary":                      # capillaries stay smooth between their nodes
-            offset += _bumps(rng, s, kink_rate * 1e-3, kink_amplitude, kink_width)
             offset += a.bend_wiggle[0] * _smooth_noise(rng, n, a.bend_wiggle[1] / 2.0)
         scale = 0.0 if e.kind == "capillary" else 1.0          # capillaries: smooth bowed sides, no jitter
         pts[:, :2] += (scale * offset * taper)[:, None] * normal
@@ -1230,21 +1218,19 @@ def generate(scene: Scene) -> Network:
     return network
 
 
-def generate_fine(scene: Scene, domain, roots, seed, mesh=True) -> tuple:
+def generate_fine(scene: Scene, domain, roots, seed) -> tuple:
     """The fine vessels of one tile of the eye: conjunctival arteriolar and venular trees grown from the given roots
-    (points on the coarse trunks, see synth.eye), the capillary mesh between them, anastomoses, and the multi-scale
-    irregularity, all from one seed (the tile's), so a tile generated again is the same tile.
+    (points on the coarse trunks, see synth.eye), their anastomoses, and the multi-scale irregularity, all from one
+    seed (the tile's), so a tile generated again is the same tile. The capillaries are not drawn here: the eye joins
+    the trees' leaves (network.leaves) to one plexus over the whole conjunctiva.
 
     roots: dicts with venous, top (x, y, z µm in the tile's own coordinates) and heading (radians). Returns the
-    network (no boundary nodes) and, per root, its node (or None when its tree did not grow). mesh=False leaves out
-    the capillary mesh (the eye draws one plexus over the whole conjunctiva instead)."""
+    network (no boundary nodes) and, per root, its node (or None when its tree did not grow)."""
     rng = np.random.default_rng(seed)
     builder = _Builder()
     roots = [dict(r) for r in roots]
     made = _conjunctival_trees(builder, rng, scene, domain, roots, border_roots=False)
     leaves = made["arteriole"]["leaves"] + made["venule"]["leaves"]
-    if mesh:
-        _capillary_mesh(builder, rng, scene, domain, leaves)
     x0, x1, y0, y1 = domain
     n_anastomoses = rng.poisson(scene.anatomy.anastomoses_per_mm2 * (x1 - x0) * (y1 - y0) * 1e-6)
     _anastomoses(builder, rng, scene, domain, "arteriole", n_anastomoses // 2)
@@ -1266,8 +1252,8 @@ def generate_fine(scene: Scene, domain, roots, seed, mesh=True) -> tuple:
     root_nodes = [r.get("conjunctival_node") for r in roots]
     network = Network(np.asarray(builder.nodes) if builder.nodes else np.zeros((0, 3)), builder.edges, {}, domain,
                       domain, dict(builder.vessel_kind))
-    network.leaves = leaves               # the terminal arterioles and post-capillary venules (mesh=False: the caller
-    return network, root_nodes            # joins them to a capillary plexus of its own)
+    network.leaves = leaves               # the terminal arterioles and post-capillary venules
+    return network, root_nodes
 
 
 def _clean(network: Network) -> Network:
@@ -1290,8 +1276,9 @@ def _clean(network: Network) -> Network:
     remap = {old: new for new, old in enumerate(used)}
     for e in edges:
         e.u, e.v = remap[e.u], remap[e.v]
-    boundary = {remap[k]: role for k, role in network.boundary.items() if k in remap}
-    return Network(network.nodes[used], edges, boundary, network.domain, network.field_of_view, network.vessel_names)
+    kept = lambda by_node: {remap[k]: value for k, value in by_node.items() if k in remap}
+    return Network(network.nodes[used], edges, kept(network.boundary), network.domain, network.field_of_view,
+                   network.vessel_names, kept(network.boundary_offset), kept(network.boundary_pressure))
 
 
 

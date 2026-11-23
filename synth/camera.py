@@ -29,7 +29,7 @@ Image formation (docs §7):
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cv2
 import numpy as np
@@ -57,6 +57,9 @@ class Motion:
                 float(np.interp(t_frames, i, self.rotation)), float(np.interp(t_frames, i, self.focus)))
 
 
+MOTION_BUFFER_UM = 30.0         # network kept beyond the furthest the frames reach (blur and vessel width)
+
+
 def eye_motion(n_frames, scene: Scene, rng) -> Motion:
     """Fixational motion: a mean-reverting random walk with the measured step size, saccades at the measured rate,
     a slow rotation and a wandering focal plane."""
@@ -78,6 +81,29 @@ def eye_motion(n_frames, scene: Scene, rng) -> Motion:
     rotation = np.radians(o.rotation_deg) * np.cumsum(rng.normal(0, 1, n_frames)) / np.sqrt(max(n_frames, 1))
     focus = o.focus_depth_um + o.focus_wander_um * _smooth(rng, n_frames, 12.0)
     return Motion(x, y, rotation, focus, np.array(saccades, int))
+
+
+def burst_motion(n_frames, scene: Scene) -> Motion:
+    """The eye motion of a scene's burst of n_frames, drawn from the scene's seed."""
+    return eye_motion(n_frames, scene, np.random.default_rng([scene.seed, 2]))
+
+
+def motion_reach_um(motion: Motion, scene: Scene):
+    """How far beyond the field's edge (µm) a motion brings tissue into the frames: its largest translation plus
+    the rotation's reach at the corners."""
+    reach = np.hypot(motion.dx, motion.dy).max() + np.abs(motion.rotation).max() * np.hypot(scene.width_px, scene.height_px) / 2
+    return float(reach * scene.anatomy.um_per_px)
+
+
+def cover_motion(scene: Scene, motion: Motion) -> Scene:
+    """The scene with its margin widened, where the motion needs it, so that the network reaches MOTION_BUFFER_UM
+    past everything the frames show and no frame reveals the network's edge. The deepest vessels decide: on the
+    globe they are drawn nearer the field's centre than their surface coordinates (Renderer._globe)."""
+    a = scene.anatomy
+    half = max(scene.width_px, scene.height_px) * a.um_per_px / 2
+    drawn = 1.0 - a.deep_plexus[1] / scene.optics.eye_radius_um
+    needed = (half + motion_reach_um(motion, scene)) / drawn - half + MOTION_BUFFER_UM
+    return replace(scene, margin_um=max(scene.margin_um, needed))
 
 
 def _smooth(rng, n, width):

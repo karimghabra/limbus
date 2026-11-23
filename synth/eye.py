@@ -43,7 +43,7 @@ from scipy.spatial import SphericalVoronoi, cKDTree
 
 from .anatomy import Scene
 from .haemodynamics import Flow, solve
-from .network import (Edge, Network, _Builder, _noise_at, _prune_terminals, _segment, _smooth_noise, assign_calibres,
+from .network import (Edge, Network, _Builder, _clean, _noise_at, _prune_terminals, _segment, _smooth_noise, assign_calibres,
                       generate_fine, resample, wiggle)
 
 MUSCLES = {"superior": 0.0, "temporal": 90.0, "inferior": 180.0, "nasal": 270.0}   # clock angle of each rectus
@@ -819,7 +819,7 @@ def build_tile(eye: Eye, key):
                 attach.append((ei, kk))
                 have[venous] = True
                 break
-    net, root_nodes = generate_fine(eye.scene, domain, roots, _tile_seed(eye, key), mesh=False)
+    net, root_nodes = generate_fine(eye.scene, domain, roots, _tile_seed(eye, key))
     root_list = [(ei, k, node) for (ei, k), node in zip(attach, root_nodes) if node is not None]
     for e in net.edges:
         e.points = g.from_local(e.points, frame)
@@ -1058,35 +1058,7 @@ def build_whole(eye: Eye):
     edges = [e for i, e in enumerate(b.edges) if i not in drop]
     net = Network(np.asarray(b.nodes), edges, dict(b.boundary), (0, 0, 0, 0), (0, 0, 0, 0), dict(b.vessel_kind))
     net.boundary_pressure = dict(coarse.boundary_pressure)
-    return _keep_perfusable(net)
-
-
-def _keep_perfusable(net):
-    """Drop zero-length edges and the components that reach no boundary node (they could carry no flow)."""
-    n = len(net.nodes)
-    parent = np.arange(n)
-
-    def find(i):
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    edges = [e for e in net.edges if e.u != e.v and e.length > 1.0]
-    for e in edges:
-        ru, rv = find(e.u), find(e.v)
-        if ru != rv:
-            parent[ru] = rv
-    rooted = {find(k) for k in net.boundary}
-    edges = [e for e in edges if find(e.u) in rooted]
-    used = sorted({k for e in edges for k in (e.u, e.v)})
-    remap = {old: new for new, old in enumerate(used)}
-    for e in edges:
-        e.u, e.v = remap[e.u], remap[e.v]
-    out = Network(net.nodes[used], edges, {remap[k]: r for k, r in net.boundary.items() if k in remap}, net.domain,
-                  net.field_of_view, net.vessel_names)
-    out.boundary_pressure = {remap[k]: p for k, p in net.boundary_pressure.items() if k in remap}
-    return out
+    return _clean(net)
 
 
 def perfusion(eye: Eye, threshold_mm_s=0.005):
@@ -1229,22 +1201,26 @@ def summary(eye: Eye) -> dict:
 def simulate_view(eye: Eye, pose: Pose, n_frames=60, scene: Scene | None = None, fine=None, **kw):
     """A burst of one region of the eye: the view's network with inherited flows, its cells (or tubes at low
     magnification), rendered by the camera at that pose. fine: include the tiles (default: below 8 µm/px)."""
+    from .camera import burst_motion, cover_motion
     from .simulate import render_network
     import time as _time
 
     scene = view_scene(eye, pose, scene)
+    motion = burst_motion(n_frames, scene)
+    scene = cover_motion(scene, motion)
     if fine is None:
         fine = scene.anatomy.um_per_px < 8.0
     start = _time.perf_counter()
     net, flow = assemble_view(eye, pose, scene, fine=fine)
     timings = {"view assembly": _time.perf_counter() - start}
-    return render_network(scene, net, flow, n_frames, timings=timings, **kw)
+    return render_network(scene, net, flow, motion, n_frames, timings=timings, **kw)
 
 
 def overview(eye: Eye, um_per_px=20.0, size_px=(1300, 1000)):
     """The whole visible anterior eye at low magnification, seen from in front: the coarse network as tubes of mean
     red-cell density, one frame. Returns (frame uint16, extent in mm (left, right, bottom, top), outlines dict with
     the limbus and the lid margins in mm)."""
+    from .camera import burst_motion
     from .simulate import render_network
     a = eye.anatomy
     apex = -eye.globe.theta_limbus * eye.globe.R / 1000.0           # s of the corneal apex, mm
@@ -1254,7 +1230,8 @@ def overview(eye: Eye, um_per_px=20.0, size_px=(1300, 1000)):
                     width_px=size_px[0], height_px=size_px[1], margin_um=500.0)
     pose = Pose(s_mm=apex, clock_deg=0.0)
     net, flow = assemble_view(eye, pose, scene, fine=False)
-    result = render_network(scene, net, flow, n_frames=1, record_cells=False, record_masks=False, tubes=True)
+    result = render_network(scene, net, flow, burst_motion(1, scene), n_frames=1, record_cells=False, record_masks=False,
+                            tubes=True)
     w, h = size_px[0] * um_per_px / 2000.0, size_px[1] * um_per_px / 2000.0
     t = np.linspace(0, 2 * np.pi, 361)
     xs = np.linspace(-a.fissure_half_width_mm, a.fissure_half_width_mm, 200)

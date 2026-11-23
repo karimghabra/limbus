@@ -85,13 +85,11 @@ def export(eye, harmonics=4):
     return data
 
 
-def write_viewer(eye, path, inline_three=None, title=None, extra=None):
+def write_viewer(eye, path, inline_three=None, title=None):
     """Write the page for an eye. inline_three: a folder holding three.module.min.js and OrbitControls.js (r160) to
-    embed, for a page that needs no network. extra: more JSON-able fields for the page (e.g. a mapping plan)."""
+    embed, for a page that needs no network."""
     template = (Path(__file__).with_name("eyeview.html")).read_text()
     data = export(eye)
-    if extra:
-        data.update(extra)
     if inline_three:
         folder = Path(inline_three)
         modules = {"three": folder / "three.module.min.js", "three/OrbitControls.js": folder / "OrbitControls.js"}
