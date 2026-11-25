@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Package the LIMBUS reference TIFF bursts for a GitHub release.
 
-For each of the five reference bursts this script
+For each reference burst (BURSTS below) this script
 
   * writes <out>/<burst>.zip holding the burst folder (member names are
     "<burst>/<file>") with every file stored byte-identical (deflate, level 6,
@@ -74,6 +74,13 @@ BURSTS = [
         "name": "burst_2026-09-16_12-57-20",
         "description": "Thin strip geometry (little vertical capture range).",
         "expect": {"width": 1920, "height": 100, "pixel_format": "Mono12p", "fps": 149, "frames": 296},
+    },
+    {
+        "name": "burst_2026-09-16_15-22-26",
+        "description": ("Long short-ROI burst (~15 s at 74 fps, no frames dropped): the source of "
+                        "the 1522L/1522R vessel benchmark crops, and long enough for temporal "
+                        "analysis (red-cell flicker, flow)."),
+        "expect": {"width": 1920, "height": 500, "pixel_format": "Mono12", "fps": 74, "frames": 1105},
     },
 ]
 
