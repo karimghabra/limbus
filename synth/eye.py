@@ -28,7 +28,7 @@ once per eye:
   or as tubes carrying their mean red-cell density at low magnification (synth.camera).
 
 Eye coordinates: µm, the eye's centre at the origin, +z out of the cornea along the optical axis, +y superior, +x
-temporal (a right eye seen from in front: the clock angle runs superior 0°, temporal 90°, inferior 180°, nasal
+temporal (a left eye seen from in front: the clock angle runs superior 0°, temporal 90°, inferior 180°, nasal
 270°). A point of the globe is given by its distance s from the limbus along the surface (positive towards the
 fornix), its clock angle, and its depth below the surface.
 """

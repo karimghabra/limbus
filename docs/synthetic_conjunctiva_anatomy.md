@@ -183,9 +183,9 @@ calibre ratio is 1.1–1.2 [Khansari2016, Khansari2017].
 In the generator the terminal arterioles take 9–12 µm and the post-capillary venules 10–16 µm (uniform), the mesh
 capillaries 4.5–9 µm, and every larger conjunctival vessel takes its calibre from Murray's law upwards (section
 4), so the largest arteriole and venule of a tree follow from the tree's size; the anatomy check confirms they
-stay within the cited ranges. Episcleral arteries take 40–80 µm, veins 50–100 µm, deep vessels 20–50 µm, each
-constant along a named vessel, and a side branch takes Murray's share of its parent but no less than its class's
-cited minimum.
+stay within the cited ranges. Episcleral arteries take 40–80 µm, veins 50–100 µm, deep vessels 20–50 µm where a
+named vessel starts; past each side branch it narrows by Murray's law, and the side branch takes Murray's share of
+its parent, neither falling below its class's cited minimum.
 
 ## 4. Branching
 
@@ -607,7 +607,7 @@ this document.
 
 `synth/eye.py` grows the network of the whole anterior eye from where its blood enters and leaves, over the curved
 globe, and lets a camera look at any region of it. Positions on the globe are given by the distance s from the
-limbus along the surface, the clock angle (superior 0°, temporal 90°, inferior 180°, nasal 270°, a right eye seen
+limbus along the surface, the clock angle (superior 0°, temporal 90°, inferior 180°, nasal 270°, a left eye seen
 from in front) and the depth below the surface.
 
 ### 11.1 The globe and the cornea

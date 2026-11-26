@@ -7,7 +7,7 @@ while it fixates and between fixations, the lids that cover part of it, and burs
     burst = lamp.record(gaze=(-10.0, 5.0), n_frames=16) # the patient looks 10° nasal and 5° up: frames + truth
 
 Head coordinates: µm, the eye's centre at the origin, +z towards the camera in primary gaze, +y up, +x towards the
-temporal side (a right eye seen from in front, as synth.eye). Gaze (h, v) in degrees: h positive temporal, v
+temporal side (a left eye seen from in front, as synth.eye). Gaze (h, v) in degrees: h positive temporal, v
 positive up. The eye turns about its centre (the globe's centre stands for the centre of rotation, about 13 mm
 behind the cornea) by Listing's law: from the primary position about the axis perpendicular to both the primary and
 the new direction, so a gaze has no torsion of its own. The camera is fixed in the head (the patient rests on a chin
@@ -89,7 +89,8 @@ def patient(seed: int, fine_region=None, scene=None) -> Eye:
 
 @dataclass
 class Burst:
-    """One recording at a fixation, with its exact truth."""
+    """One recording at a fixation, with its exact truth. The frames' first row is the bottom (inferior) one, as in
+    synth.eye.overview: show them with imshow(frame, origin="lower")."""
     result: object                  # synth.simulate.Result (frames, network in the camera's coordinates, flow, ...)
     pose: Pose                      # where the camera's field lay on the globe in frame 0 (eye coordinates)
     gaze: np.ndarray                # (T, 2) degrees: the eye's actual gaze in every frame
@@ -196,7 +197,8 @@ class SlitLamp:
     # ---------------------------------------------------------------- recording
     def record(self, gaze, n_frames=16, previous=None, record_cells=False, record_masks=False, scene=None):
         """Ask the patient to look at gaze (h, v) degrees and record a burst once the eye has landed (the saccade
-        from the previous gaze takes its main-sequence duration). Returns a Burst with the frames and the truth."""
+        from the previous gaze takes its main-sequence duration). Returns a Burst with the frames and the truth; a
+        frame's first row is the bottom of the field (show it with origin="lower")."""
         scene = scene or self.scene
         fps = scene.optics.fps
         dt = 1.0 / fps

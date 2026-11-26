@@ -635,7 +635,7 @@ def _(media, mo, np, plt, show_figure, whole_eye):
         _burst = _lamp.record(_target, n_frames=8, previous=_previous)
         _mapper.add(_burst.result.frames, _target, _lamp)
         _axes[_k].imshow(media.od_to_gray(media.optical_density(_burst.result.frames[:1].astype("float32")))[0],
-                         cmap="gray")
+                         cmap="gray", origin="lower")
         _axes[_k].set_title(f"gaze ({_target[0]:.1f}°, {_target[1]:.1f}°): lids cover "
                             f"{100 * _burst.occlusion.mean():.0f} %")
         _previous = _target

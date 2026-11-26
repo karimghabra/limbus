@@ -369,6 +369,9 @@ def write_burst(result: Result, folder):
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=1), encoding="utf-8")
     truth = folder / "truth"
     truth.mkdir(exist_ok=True)
+    for name, present in (("cells.npz", result.cell_frames), ("masks.npz", result.masks)):
+        if not present:
+            (truth / name).unlink(missing_ok=True)
     (truth / "scene.json").write_text(json.dumps(_jsonable(asdict(scene)), indent=1), encoding="utf-8")
     (truth / "graph.json").write_text(json.dumps(graph_dict(result.network, result.flow)), encoding="utf-8")
     along = np.where(result.flow.flow >= 0, 1.0, -1.0)       # the graph's edges run along the mean flow

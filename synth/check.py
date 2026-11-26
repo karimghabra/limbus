@@ -2,8 +2,8 @@
 
 anatomy_report(scene, network, flow) measures each quantity on the ground truth (not on the images) and compares
 it with the range given in docs/synthetic_conjunctiva_anatomy.md, whose reference keys are quoted in "source".
-status is "within" or "outside"; quantities the literature reports without a usable range are listed as
-"reference" with the published value, for the reader to compare.
+status is "within", "outside", or "absent" when the network has nothing to measure; quantities the literature
+reports without a usable range are listed as "reference" with the published value, for the reader to compare.
 
 Ranges are the published range where one is given, and otherwise the published mean plus or minus two standard
 deviations (so a typical healthy subject lies inside); the docs say which, row by row.

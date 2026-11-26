@@ -188,7 +188,8 @@ class Mapper:
         return self._xyz
 
     def to_chart(self, s_um, clock):
-        return ((clock - self.c0) % 360.0) * math.pi / 180 * self.r_ref / self.um - 0.5, (s_um - self.s0) / self.um - 0.5
+        angle = (clock - self.c0 - self.span / 2 + 180.0) % 360.0 - 180.0 + self.span / 2
+        return angle * math.pi / 180 * self.r_ref / self.um - 0.5, (s_um - self.s0) / self.um - 0.5
 
     def um_per_column(self, s_um):
         """The arc along the limbus (µm) that one chart column spans at s_um from the limbus: the chart gives every

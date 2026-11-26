@@ -3,6 +3,7 @@
 usage: python -m pytest synth/tests            (from the repository root)
 """
 import json
+import math
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -316,6 +317,15 @@ def test_cell_truth_keeps_positions_in_a_wide_scene(burst, tmp_path):
     assert np.allclose(cells["origin_um"] + cells["xyz_decimicron"] / 10.0, xyz, atol=0.06)
 
 
+def test_rewritten_burst_drops_truth_it_no_longer_has(burst, tmp_path):
+    """Writing a burst without cells or masks into a folder that held them leaves no stale truth behind."""
+    result, _ = burst
+    folder = write_burst(result, tmp_path / "reused")
+    assert (folder / "truth" / "cells.npz").exists() and (folder / "truth" / "masks.npz").exists()
+    write_burst(replace(result, cell_frames=[], masks={}), folder)
+    assert not (folder / "truth" / "cells.npz").exists() and not (folder / "truth" / "masks.npz").exists()
+
+
 @pytest.mark.parametrize("um", [3.26, 6.5])
 def test_masks_cover_every_vessel_along_its_length(um):
     """The frame-0 vessel mask has no holes along a vessel, however thin it is drawn at the magnification, and
@@ -531,6 +541,17 @@ def test_patient_is_their_seed():
         gaze_module.Eye = original
     assert a["anatomy"] == b["anatomy"] and a["scene"] == b["scene"]
     assert a["anatomy"] != c["anatomy"]
+
+
+def test_chart_columns_continue_across_the_regions_first_clock_angle():
+    """A point just before the chart's first clock angle lies one arc step left of column -0.5, not a full turn to
+    the right: the arc r_ref * angle (radians) over um_per_px gives the column."""
+    from synth.eye import EyeAnatomy, Globe
+    from synth.mapping import Mapper
+    mapper = Mapper(Globe(EyeAnatomy()), region=((85.0, 93.0), (2.5, 3.8)), um_per_px=4.0)
+    step = math.radians(1.0) * mapper.r_ref / mapper.um
+    for clock, expected in ((84.0, -step - 0.5), (86.0, step - 0.5), (92.0, 7 * step - 0.5)):
+        assert mapper.to_chart(3000.0, clock)[0] == pytest.approx(expected)
 
 
 def test_slit_lamp_and_mapper(eye):
