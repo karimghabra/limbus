@@ -5,6 +5,7 @@
 | `foundation.py` | **The preprocessing**: one burst, from its TIFF frames to the cleaned, stabilized pictures that vessel annotation starts from, saved to one file at the end |
 | `flow.py` | **Flow without annotation**: why subtracting each pixel's temporal mean makes flow visible, the perfusion map, the centrelines of the perfused vessels, the red-cell velocity along each from kymographs, cross-checked by 2D cross-correlation, and a comparison of the backgrounds that can be removed |
 | `archive_vessel_annotation.py` | The vessel annotation that used to follow the preprocessing (sections 17–25), kept unchanged for reference; a different annotation algorithm is planned |
+| `synthetic.py` | **The synthetic conjunctiva**: an anatomical 3D vessel network, its blood flow, red cells and the camera; a synthetic burst with exact ground truth, compared statistic by statistic with a real one (`synth/`, `docs/synthetic_conjunctiva_anatomy.md`) |
 
 They are [marimo](https://marimo.io) notebooks: plain Python files that diff like code, run as scripts
 or apps, and are edited in the browser. To use them from another computer, live, see [LIVE.md](LIVE.md).
@@ -126,3 +127,24 @@ Measured on the lab PC with 6 threads, burst `2026-09-16_15-50-52` (140 frames o
 `notebooks/live.sh` gives the notebook server at most 12 GB (`LIMBUS_LIVE_MEMORY_MAX`) and 6 CPUs
 (`LIMBUS_LIVE_THREADS`), shared by every notebook open on it, so that a large run cannot starve the
 other work on the PC.
+
+## The synthetic conjunctiva
+
+`synthetic.py` builds a synthetic burst from anatomy and physiology with the `synth` package and writes it in the
+recorder's own format, so `foundation.py` and the flow analysis run on it unchanged, with a `truth/` folder of the
+exact answer beside the frames. Its sections: the parameters and their sources (§1), the 3D network (§2), blood flow
+with conservation at every junction (§3), the anatomy check against cited ranges (§4), red cells (§5), the camera
+and real and synthetic clips side by side (§6), the target statistics of a real and a synthetic burst through one
+estimator (§7), the ground truth (§8), a flow analysis of the synthetic burst against the truth (§9), and the
+whole anterior eye with its overview, a view at one pose and its 3D network (§10).
+
+```bash
+export LIMBUS_BURST="/mnt/d/Conjunctiva Code/limbus/recordings/burst_2026-09-16_15-50-52"   # the real burst to compare with
+SYNTH_SEED=1 SYNTH_FRAMES=120 marimo export html /path/to/limbus/notebooks/synthetic.py -o synthetic.html
+```
+
+It writes to `synthetic_outputs/` in the working directory. At the default 768 × 512 px and 120 frames it runs in
+about 4 minutes on 6 threads at a peak of about 3 GB, and the burst with its truth takes about 500 MB on disk
+(`truth/cells.npz`, every red cell the camera draws in every frame, is most of it). The specification is
+`docs/synthetic_conjunctiva_anatomy.md` and the validation `docs/synthetic_conjunctiva_validation.md`.
+

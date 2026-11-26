@@ -10,3 +10,4 @@ opencv-python-headless>=4.8
 scikit-image>=0.24
 matplotlib>=3.8
 pillow>=10
+plotly>=5             # the interactive 3D view of the synthetic network (synthetic.py)
