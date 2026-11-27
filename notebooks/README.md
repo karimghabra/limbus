@@ -18,9 +18,9 @@ Sections 0–17, one per step, each opening with what the step does, its setting
 | 0–9 | setup, loading, frame gating, motion, fixations, alignment, dust and glare, stabilization, mean frames | |
 | 10–13 | **the background**: fit and optical density, quiet pixels, the refit on the quiet pixels, the shading from frame to frame | the newer version, see below |
 | 14–16 | the smear of the temporal burst, its background, the two vessel pictures combined | |
-| 17 | **the result**, saved to `preprocessed/<burst folder>.npz` | 10 arrays |
+| 17 | **the result**, saved to `preprocessed/<burst folder>.npz` | 16 arrays |
 
-§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory: per fixation the still picture (`densities`, filled where there is no data, so mask it with `usable_pixels`), the cleaned smear, the two combined (`combined_sums`, which needs `usable_pixels` as well as its `NaN`) and the usable, background and quiet masks, with the maps between the fixations; the notebook's §17 text lists the keys.
+§17 saves what vessel annotation needs to `preprocessed/<burst folder>.npz` in the working directory: per fixation the still picture (`densities`, filled where there is no data, so mask it with `usable_pixels`), the cleaned smear, the two combined (`combined_sums`, which needs `usable_pixels` as well as its `NaN`) and the usable, background and quiet masks, with the maps between the fixations, and the kept frames, the fixations, their reference frames and every kept frame's shift, from which the alignment can be redone; the notebook's §17 text lists the keys.
 
 ### Where it comes from
 
@@ -104,6 +104,11 @@ marimo export html /path/to/limbus/notebooks/foundation.py -o foundation.html   
 
 `notebooks/pyproject.toml` sets marimo up for notebooks this heavy: opening one runs nothing, and a
 changed cell marks the cells after it stale instead of running them.
+
+`python notebooks/tests/test_foundation.py`, in the same environment, runs `foundation.py` end to end on
+small synthetic bursts in about 15 seconds. It checks that a glint in view does not get frames dropped, that
+blurred frames still are, that the saved shifts match the motion the burst was made with, and that a burst
+whose fixations are all short finishes instead of failing.
 
 ### Memory and time
 

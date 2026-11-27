@@ -329,6 +329,8 @@ def _(mo):
 
     Both are computed on a reduced copy of the frame (the mean of every 4 × 4 block), divided by its mean brightness so that exposure changes do not move them. The reduction matters: at full resolution both scores measure sensor noise and do not respond to blur. A frame is kept when **both** scores reach 80% of the burst's median.
 
+    **Glare is left out of the scores.** The Frangi filter scales its response to the strongest curvature in the frame, so a clipped glint would make every vessel of that frame look faint, and a long recording would lose every frame in which a glint is in view. Each frame's glare is found by the same test that §7 uses (`glare_in`: clipped, or standing out above the bright tissue around it, grown by `GLARE_GROW`). On the reduced copy it is filled with the median of the rest before filtering, and both scores and the brightness they are divided by are taken over the rest of the frame only. A frame without glare is scored exactly as before.
+
     | Output | Shape · type | Content |
     |---|---|---|
     | `gated_frames` | `(kept, rows, columns)` · `uint16` | the kept frames, in their recorded order |
@@ -336,6 +338,7 @@ def _(mo):
     | `frame_times` | `(kept,)` · `float` | when each kept frame was recorded, in seconds from the first frame; the gaps are longer where frames were dropped |
     | `sharpness`, `vesselness` | `(kept,)` · `float` | the kept frames' scores |
     | `all_sharpness`, `all_vesselness` | `(frames,)` · `float` | every recorded frame's scores |
+    | `all_glare_shares` | `(frames,)` · `float` | the share of each recorded frame's reduced copy left out of its scores as glare |
     | `thresholds` | `(2,)` | the two cut-offs |
 
     From here on, a frame number is a position in `gated_frames`.
@@ -344,14 +347,51 @@ def _(mo):
 
 
 @app.cell
+def _(cv2, np, percentile_filter):
+    # The glare test, shared by the frame gate (§2) and the removal of glare (§7, where these settings are explained)
+    SATURATION_LEVEL = 0.95  # fraction of the burst's largest value; from here up a pixel counts as clipped
+    GLARE_EXCESS = 0.08      # a pixel this much brighter than the bright tissue around it is glare as well
+    GLARE_GROW = 12          # pixels by which glare is grown, to take in its halo
+    BRIGHT_SCALE = 8         # the bright level of the tissue is read from frames reduced by this factor...
+    BRIGHT_WINDOW = 11       # ...over a window of this many reduced pixels each way
+
+
+    def disc_kernel(radius):
+        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
+
+
+    def bright_level(frame):
+        """Return a smooth picture of how bright the tissue between the vessels is around each pixel."""
+        height, width = frame.shape
+        reduced = cv2.resize(frame, (width // BRIGHT_SCALE, height // BRIGHT_SCALE), interpolation=cv2.INTER_AREA)
+        # the 95th percentile sits on the open tissue: vessels are darker, and glare fills too little of the window
+        level = cv2.GaussianBlur(percentile_filter(reduced, 95, size=BRIGHT_WINDOW, mode="nearest"), (0, 0), 1.5)
+        return cv2.resize(level, (width, height), interpolation=cv2.INTER_CUBIC)
+
+
+    def glare_in(frame, clipped_level):
+        """Return where a frame is clipped or stands out above the tissue around it, as a boolean image (not grown)."""
+        frame = frame.astype(np.float32)
+        stands_out = cv2.GaussianBlur(frame, (0, 0), 1) > (1 + GLARE_EXCESS) * bright_level(frame)
+        return (frame >= clipped_level) | stands_out
+
+    return GLARE_GROW, SATURATION_LEVEL, disc_kernel, glare_in
+
+
+@app.cell
 def _(
+    GLARE_GROW,
     INK_MUTED,
     INK_SECONDARY,
+    SATURATION_LEVEL,
     SERIES,
     ThreadPoolExecutor,
+    cv2,
+    disc_kernel,
     downscale_local_mean,
     fps,
     frangi,
+    glare_in,
     laplace,
     np,
     plt,
@@ -364,18 +404,33 @@ def _(
     VESSELNESS_CUTOFF = 0.8
 
 
+    gate_clipped_level = SATURATION_LEVEL * raw_burst.max()
+
+
     def score_frame(frame, downsample=GATE_DOWNSAMPLE, sigmas=GATE_SIGMAS):
-        """Return the Laplacian-variance sharpness and mean Frangi vesselness of one frame."""
+        """Return the Laplacian-variance sharpness and mean Frangi vesselness of one frame without its glare,
+        and the share of the reduced frame left out as glare."""
         # on downsample x downsample block means: at full resolution both scores measure sensor noise and do not
         # respond to blur. sigmas are in downsampled pixels.
         small = downscale_local_mean(frame, (downsample, downsample))
-        small = small / small.mean()  # divide out brightness so exposure changes don't move the scores
-        return laplace(small).var(), frangi(small, sigmas=sigmas, black_ridges=True).mean()
+        # glare, reduced like the frame and grown as in §7: frangi scales its response to the frame's strongest
+        # curvature, so a clipped glint left in would make the whole frame's vessels look faint
+        glare = downscale_local_mean(glare_in(frame, gate_clipped_level), (downsample, downsample)) > 0
+        if glare.any():
+            glare = cv2.dilate(glare.astype(np.uint8), disc_kernel(-(-GLARE_GROW // downsample))) > 0
+        clear = ~glare
+        if not clear.any():
+            return 0.0, 0.0, 1.0  # nothing but glare: no tissue to score
+        if glare.any():
+            small = np.where(glare, np.median(small[clear]), small)
+        small = small / small[clear].mean()  # divide out brightness so exposure changes don't move the scores
+        vesselness = frangi(small, sigmas=sigmas, black_ridges=True)
+        return laplace(small)[clear].var(), vesselness[clear].mean(), glare.mean()
 
 
-    print(f"Scoring {len(raw_burst)} frames for sharpness and vesselness on {workers} threads...")
+    print(f"Scoring {len(raw_burst)} frames for sharpness and vesselness, without their glare, on {workers} threads...")
     with ThreadPoolExecutor(max_workers=workers) as _pool:
-        all_sharpness, all_vesselness = np.array(list(_pool.map(score_frame, raw_burst))).T
+        all_sharpness, all_vesselness, all_glare_shares = np.array(list(_pool.map(score_frame, raw_burst))).T
 
     thresholds = (SHARPNESS_CUTOFF * np.median(all_sharpness), VESSELNESS_CUTOFF * np.median(all_vesselness))
     _keep = (all_sharpness >= thresholds[0]) & (all_vesselness >= thresholds[1])
@@ -386,6 +441,8 @@ def _(
 
     print(f"Recorded frames: {len(raw_burst)} | kept: {len(gated_frames)} | dropped: {np.flatnonzero(~_keep).tolist()}")
     print(f"Sharpness threshold: {thresholds[0]:.3e} | Vesselness threshold: {thresholds[1]:.3e}")
+    print(f"Glare left out of the scores: {np.mean(all_glare_shares > 0) * 100:.0f}% of the frames have some, "
+          f"{np.median(all_glare_shares) * 100:.2f}% of a frame in the median, {all_glare_shares.max() * 100:.2f}% at most")
 
     # every recorded frame's two scores against their cut-offs; the dropped frames are marked
     recorded = np.arange(len(raw_burst))
@@ -399,7 +456,7 @@ def _(
     _axes[0].legend()
     _figure.tight_layout()
     plt.show()
-    return frame_times, gated_frames, gated_indices, sharpness, vesselness
+    return all_glare_shares, frame_times, gated_frames, gated_indices, sharpness, vesselness
 
 
 @app.cell(hide_code=True)
@@ -811,53 +868,36 @@ def _(mo):
     - it is clipped, at `SATURATION_LEVEL` of the burst's largest value or above, or
     - it is more than `GLARE_EXCESS` brighter than the bright tissue around it. That level (`bright_level`) is the 95th percentile of the brightness in a window around the pixel. Vessels are darker than it and open tissue just reaches it, so only glare stands clear of it.
 
-    Glare is then grown by `GLARE_GROW` pixels to take in its halo. A pixel that is too bright in nearly every frame is not glare but a stuck sensor pixel, and is kept apart.
+    Glare is then grown by `GLARE_GROW` pixels to take in its halo. A pixel that is too bright in nearly every frame is not glare but a stuck sensor pixel, and is kept apart. The test itself (`glare_in`) and its settings are defined in §2, whose frame gate leaves glare out of its scores in the same way.
     """)
     return
 
 
 @app.cell
 def _(
+    GLARE_GROW,
+    SATURATION_LEVEL,
     ThreadPoolExecutor,
     cv2,
+    disc_kernel,
     frame_height,
     frame_shape,
     frame_width,
     gated_frames,
+    glare_in,
     np,
     num_frames,
-    percentile_filter,
     workers,
 ):
-    SATURATION_LEVEL = 0.95  # fraction of the burst's largest value; from here up a pixel counts as clipped
-    GLARE_EXCESS = 0.08      # a pixel this much brighter than the bright tissue around it is glare as well
-    GLARE_GROW = 12          # pixels by which glare is grown, to take in its halo
+    # SATURATION_LEVEL, GLARE_EXCESS, GLARE_GROW, BRIGHT_SCALE and BRIGHT_WINDOW are set with glare_in(), in §2
     STUCK_FRACTION = 0.9     # a pixel that is too bright in this fraction of the frames is stuck, not glare
-    BRIGHT_SCALE = 8         # the bright level of the tissue is read from frames reduced by this factor...
-    BRIGHT_WINDOW = 11       # ...over a window of this many reduced pixels each way
 
     clipped_level = SATURATION_LEVEL * gated_frames.max()
 
 
-    def disc_kernel(radius):
-        return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * radius + 1, 2 * radius + 1))
-
-
-    def bright_level(frame):
-        """Return a smooth picture of how bright the tissue between the vessels is around each pixel."""
-        reduced = cv2.resize(
-            frame, (frame_width // BRIGHT_SCALE, frame_height // BRIGHT_SCALE), interpolation=cv2.INTER_AREA
-        )
-        # the 95th percentile sits on the open tissue: vessels are darker, and glare fills too little of the window
-        level = cv2.GaussianBlur(percentile_filter(reduced, 95, size=BRIGHT_WINDOW, mode="nearest"), (0, 0), 1.5)
-        return cv2.resize(level, (frame_width, frame_height), interpolation=cv2.INTER_CUBIC)
-
-
     def too_bright(index):
         """Return the pixels of a frame that are clipped or stand out above the tissue, as flat indices."""
-        frame = gated_frames[index].astype(np.float32)
-        stands_out = cv2.GaussianBlur(frame, (0, 0), 1) > (1 + GLARE_EXCESS) * bright_level(frame)
-        return np.flatnonzero((frame >= clipped_level) | stands_out)
+        return np.flatnonzero(glare_in(gated_frames[index], clipped_level))
 
 
     with ThreadPoolExecutor(max_workers=workers) as _pool:
@@ -2095,9 +2135,15 @@ def _(
 
     _judged = frames_counted >= MIN_FRAMES
     activity = np.sqrt(squares / np.maximum(frames_counted, 1))
-    # the noise floor is where the quiet pixels sit: the peak of the histogram
-    _histogram, _edges = np.histogram(activity[_judged], bins=400, range=(0, np.percentile(activity[_judged], 99)))
-    noise_floor = _edges[np.argmax(_histogram):][:2].mean()
+    if _judged.any():
+        # the noise floor is where the quiet pixels sit: the peak of the histogram
+        _histogram, _edges = np.histogram(activity[_judged], bins=400, range=(0, np.percentile(activity[_judged], 99)))
+        noise_floor = _edges[np.argmax(_histogram):][:2].mean()
+    else:
+        # every fixation is too short: no pixel is judged, so none is quiet or changing and §12 keeps §10's background
+        noise_floor = np.nan
+        print(f"No pixel is judged: a pixel needs MIN_FRAMES = {MIN_FRAMES} frames, and these fixations give at most "
+              f"{frames_counted.max():.0f}. Nothing counts as quiet or changing, so §12 keeps §10's background.")
     fluctuation_ratio = np.where(_judged, activity / noise_floor, np.nan).astype(np.float32)
 
     changing = apply_hysteresis_threshold(np.nan_to_num(fluctuation_ratio), *ACTIVE_LEVELS)
@@ -2117,9 +2163,11 @@ def _(
         changing_pixels.append(masks[0])
         quiet_pixels.append(masks[1])
 
+    _judged_share = max(_judged.sum(), 1)  # no pixel judged: report 0% of them changing and quiet
     print(f"Fluctuation measured on up to {frames_counted.max():.0f} frames per pixel"
           f"{f', slow movement over {SLOW_WINDOW} frames removed' if SLOW_WINDOW >= 2 else ''}, {_judged.mean() * 100:.1f}% of the "
-          f"pixels judged | of those, {changing[_judged].mean() * 100:.1f}% change and {quiet[_judged].mean() * 100:.1f}% are quiet")
+          f"pixels judged | of those, {changing[_judged].sum() / _judged_share * 100:.1f}% change and "
+          f"{quiet[_judged].sum() / _judged_share * 100:.1f}% are quiet")
 
     # show the fluctuation and the quiet pixels, in the anchor's frame
     _figure, _axes = plt.subplots(1, 2, figsize=(16, 5.3))
@@ -2776,17 +2824,23 @@ def _(mo):
     mo.md(r"""
     ## 17 · Save the result
 
-    What vessel annotation needs from this notebook goes into one file, `preprocessed/<burst folder>.npz` in the working directory, so that an annotation notebook can start from it without running this one. The per-fixation pictures are stacked along a first axis of length *fixations*; each lies in its own fixation's reference frame, and `to_anchor[n]` maps the anchor's frame onto fixation `n`'s.
+    What vessel annotation needs from this notebook, and what it takes to redo the alignment, goes into one file, `preprocessed/<burst folder>.npz` in the working directory, so that an annotation notebook can start from it without running this one. The per-fixation pictures are stacked along a first axis of length *fixations*; each lies in its own fixation's reference frame, and `to_anchor[n]` maps the anchor's frame onto fixation `n`'s.
 
     | Key | Shape · type | Content |
     |---|---|---|
     | `burst`, `fps`, `anchor` | scalars | the burst's folder, its frame rate, the anchor fixation's number |
+    | `gated_indices`, `frame_times` | `(kept,)` · `int`, `float` | each kept frame's number in the recording, and when it was recorded, in seconds (§2) |
+    | `fixation_starts`, `fixation_lengths` | `(fixations,)` · `int` | each fixation's first frame and its number of frames; its frames are consecutive (§4) |
+    | `references` | `(fixations,)` · `int` | each fixation's reference frame (§5) |
+    | `shifts` | `(kept, 2)` | `(dy, dx)` of each kept frame from its fixation's reference frame (§5) |
     | `to_anchor` | `(fixations, 3, 3)` | the map from the anchor's `(x, y)` to each fixation's (§6) |
     | `densities` | `(fixations, rows, columns)` · `float32` | **the still picture**: the optical density of the mean frame, $B - \ln(\text{mean})$, vessels bright on 0 (§12) |
     | `usable_pixels`, `background_pixels` | same · `bool` | the pixels with data, and those the background was fitted on (§12) |
     | `quiet_pixels` | same · `bool` | what does not change over time (§11) |
     | `cleaned_smears` | same · `float32` | the fluctuation over time with its background removed (§14, §15) |
     | `combined_sums` | same · `float32` | the still picture and the cleaned smear together, in multiples of the background noise (§16) |
+
+    Frame numbers in `fixation_starts` and `references` are positions in `gated_indices`, as everywhere in this notebook, and row `i` of `shifts` belongs to kept frame `i`: fixation `n`'s frames are `fixation_starts[n]` to `fixation_starts[n] + fixation_lengths[n] - 1`. Shifting a frame back by its shift puts it on its fixation's reference frame, as §5 and §8 do, and `to_anchor` then carries it to the anchor's frame: with these keys the alignment of every kept frame can be redone from the recording.
 
     `NaN` marks where the smear has no value, in `cleaned_smears` and `combined_sums`. `densities` has no `NaN`: a pixel without data is filled from the nearest usable one, so mask it with `usable_pixels`. `combined_sums` contains that filled density wherever the smear has a value, so its data area is `np.isfinite(combined_sums) & usable_pixels`. To read the result elsewhere:
 
@@ -2809,6 +2863,8 @@ def _(
     final_background_fits,
     fixations,
     fps,
+    frame_times,
+    gated_indices,
     np,
     quiet_pixels,
     target_folder,
@@ -2822,6 +2878,12 @@ def _(
         "burst": str(target_folder),
         "fps": float(fps),
         "anchor": anchor,
+        "gated_indices": gated_indices,
+        "frame_times": frame_times,
+        "fixation_starts": np.array([_fixation["frames"][0] for _fixation in fixations]),
+        "fixation_lengths": np.array([len(_fixation["frames"]) for _fixation in fixations]),
+        "references": np.array([_fixation["reference"] for _fixation in fixations]),
+        "shifts": np.concatenate([_fixation["shifts"] for _fixation in fixations]),
         "to_anchor": np.stack([anchor_to_reference(_fixation) for _fixation in fixations]),
         "densities": _stacked(_fit["OD"] for _fit in final_background_fits),
         "usable_pixels": _stacked((_fit["ok"] for _fit in final_background_fits), bool),
