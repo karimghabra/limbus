@@ -922,7 +922,7 @@ def _(
           f"({np.median(glare_counts) / (frame_height * frame_width) * 100:.2f}% of a frame)")
     print(f"Stuck pixels (too bright in at least {STUCK_FRACTION:.0%} of the frames): {stuck_pixels.sum()}"
           + "".join(f" at (x {x}, y {y})" for y, x in np.argwhere(stuck_pixels)[:5]))
-    return disc_kernel, glare_pixels, stuck_pixels
+    return glare_pixels, stuck_pixels
 
 
 @app.cell(hide_code=True)
